@@ -250,3 +250,65 @@ func GetGroupExpenses(c *gin.Context, db *db.DB) {
 		},
 	})
 }
+
+func GetUserExpenses(c *gin.Context, db *db.DB) {
+	userID, ok := middleware.GetUserID(c)
+	if !ok {
+		c.JSON(401, gin.H{"error": "unauthorized"})
+		return
+	}
+
+	limitStr := c.DefaultQuery("limit", "20")
+	offsetStr := c.DefaultQuery("offset", "0")
+
+	limit, err := strconv.Atoi(limitStr)
+	if err != nil || limit < 1 {
+		limit = 20
+	}
+	offset, err := strconv.Atoi(offsetStr)
+	if err != nil || offset < 0 {
+		offset = 0
+	}
+
+	rows, err := db.Pool.Query(c.Request.Context(),
+		`SELECT DISTINCT e.id, e.group_id, e.description, e.total_amount, e.paid_by, e.created_at
+		FROM expenses e
+		LEFT JOIN expense_splits es ON e.id = es.expense_id
+		WHERE e.paid_by = $1 OR es.user_id = $1
+		ORDER BY e.created_at DESC
+		LIMIT $2 OFFSET $3`, userID, limit, offset)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "failed to get expenses"})
+		return
+	}
+	defer rows.Close()
+
+	var expenses []Expense
+	for rows.Next() {
+		var exp Expense
+		if err := rows.Scan(&exp.ID, &exp.GroupID, &exp.Description, &exp.TotalAmount, &exp.PaidBy, &exp.CreatedAt); err != nil {
+			c.JSON(500, gin.H{"error": "failed to scan expense"})
+			return
+		}
+		expenses = append(expenses, exp)
+	}
+
+	var totalCount int
+	err = db.Pool.QueryRow(c.Request.Context(),
+		`SELECT COUNT(DISTINCT e.id) FROM expenses e
+		LEFT JOIN expense_splits es ON e.id = es.expense_id
+		WHERE e.paid_by = $1 OR es.user_id = $1`, userID).Scan(&totalCount)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "failed to get total count"})
+		return
+	}
+
+	c.JSON(200, gin.H{
+		"expenses": expenses,
+		"pagination": gin.H{
+			"limit":  limit,
+			"offset": offset,
+			"total":  totalCount,
+		},
+	})
+}

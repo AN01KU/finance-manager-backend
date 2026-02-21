@@ -24,3 +24,15 @@ func UserExists(ctx context.Context, db *db.DB, userID uuid.UUID) (bool, error) 
 		userID).Scan(&exists)
 	return exists, err
 }
+
+// GetUserByEmail gets a user by email
+func GetUserByEmail(ctx context.Context, db *db.DB, email string) (uuid.UUID, bool, error) {
+	var userID uuid.UUID
+	err := db.Pool.QueryRow(ctx,
+		"SELECT id FROM users WHERE email = $1",
+		email).Scan(&userID)
+	if err != nil {
+		return uuid.Nil, false, nil
+	}
+	return userID, true, nil
+}

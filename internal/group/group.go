@@ -25,7 +25,7 @@ type CreateGroupRequest struct {
 }
 
 type AddMemberRequest struct {
-	UserID uuid.UUID `json:"user_id" validate:"required"`
+	Email string `json:"email" validate:"required,email"`
 }
 
 type Balance struct {
@@ -121,15 +121,19 @@ func AddMember(c *gin.Context, db *db.DB) {
 		return
 	}
 
-	// Check if user exists
-	exists, err := helpers.UserExists(c.Request.Context(), db, req.UserID)
-	if err != nil || !exists {
-		c.JSON(400, gin.H{"error": "user does not exist"})
+	// Check if user exists by email
+	userID, exists, err := helpers.GetUserByEmail(c.Request.Context(), db, req.Email)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "database error"})
+		return
+	}
+	if !exists {
+		c.JSON(404, gin.H{"error": "user not found with this email"})
 		return
 	}
 
 	// Check if already member
-	exists, err = helpers.IsGroupMember(c.Request.Context(), db, groupID, req.UserID)
+	exists, err = helpers.IsGroupMember(c.Request.Context(), db, groupID, userID)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "database error"})
 		return
@@ -141,7 +145,7 @@ func AddMember(c *gin.Context, db *db.DB) {
 
 	// Add member
 	_, err = db.Pool.Exec(c.Request.Context(),
-		"INSERT INTO group_members (group_id, user_id) VALUES ($1, $2)", groupID, req.UserID)
+		"INSERT INTO group_members (group_id, user_id) VALUES ($1, $2)", groupID, userID)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "failed to add member"})
 		return
@@ -262,4 +266,36 @@ func GetBalances(c *gin.Context, db *db.DB) {
 	}
 
 	c.JSON(200, balances)
+}
+
+func GetUserGroups(c *gin.Context, db *db.DB) {
+	userID, ok := middleware.GetUserID(c)
+	if !ok {
+		c.JSON(401, gin.H{"error": "unauthorized"})
+		return
+	}
+
+	rows, err := db.Pool.Query(c.Request.Context(),
+		`SELECT g.id, g.name, g.created_by, g.created_at 
+		FROM groups g 
+		JOIN group_members gm ON g.id = gm.group_id 
+		WHERE gm.user_id = $1 
+		ORDER BY g.created_at DESC`, userID)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "failed to get groups"})
+		return
+	}
+	defer rows.Close()
+
+	var groups []Group
+	for rows.Next() {
+		var g Group
+		if err := rows.Scan(&g.ID, &g.Name, &g.CreatedBy, &g.CreatedAt); err != nil {
+			c.JSON(500, gin.H{"error": "failed to scan group"})
+			return
+		}
+		groups = append(groups, g)
+	}
+
+	c.JSON(200, groups)
 }

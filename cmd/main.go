@@ -112,10 +112,12 @@ func main() {
 		protected.POST("/groups", func(c *gin.Context) { group.CreateGroup(c, database) })
 		protected.POST("/groups/:id/add-member", func(c *gin.Context) { group.AddMember(c, database) })
 		protected.GET("/groups/:id/balances", func(c *gin.Context) { group.GetBalances(c, database) })
+		protected.GET("/groups", func(c *gin.Context) { group.GetUserGroups(c, database) })
 
 		// Group Expenses
 		protected.POST("/expenses", func(c *gin.Context) { expense.CreateExpense(c, database) })
 		protected.GET("/groups/:id/expenses", func(c *gin.Context) { expense.GetGroupExpenses(c, database) })
+		protected.GET("/expenses", func(c *gin.Context) { expense.GetUserExpenses(c, database) })
 
 		// Settlements
 		protected.POST("/settlements", func(c *gin.Context) { settlement.CreateSettlement(c, database) })
