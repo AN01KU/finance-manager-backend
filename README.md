@@ -88,6 +88,7 @@ Content-Type: application/json
 
 {
   "email": "user@example.com",
+  "username": "johndoe",
   "password": "securepassword"
 }
 
@@ -97,6 +98,7 @@ Response:
   "user": {
     "id": "550e8400-e29b-41d4-a716-446655440000",
     "email": "user@example.com",
+    "username": "johndoe",
     "created_at": "2025-01-26T12:00:00Z"
   }
 }
@@ -112,7 +114,7 @@ Content-Type: application/json
   "password": "securepassword"
 }
 
-Response: Same as signup
+Response: Same as signup (includes username in user object)
 ```
 
 ### Groups
@@ -136,6 +138,55 @@ Response:
 }
 ```
 
+#### Get User Groups
+```bash
+GET /groups
+Authorization: Bearer <token>
+
+Response:
+[
+  {
+    "id": "650e8400-e29b-41d4-a716-446655440000",
+    "name": "Weekend Trip",
+    "created_by": "550e8400-e29b-41d4-a716-446655440000",
+    "created_at": "2025-01-26T12:00:00Z"
+  }
+]
+```
+
+#### Get Group Details
+```bash
+GET /groups/:id
+Authorization: Bearer <token>
+
+Response:
+{
+  "group": {
+    "id": "650e8400-e29b-41d4-a716-446655440000",
+    "name": "Weekend Trip",
+    "created_by": "550e8400-e29b-41d4-a716-446655440000",
+    "created_at": "2025-01-26T12:00:00Z",
+    "members": [
+      {
+        "user_id": "550e8400-e29b-41d4-a716-446655440000",
+        "email": "user@example.com",
+        "username": "johndoe"
+      }
+    ],
+    "expenses": [
+      {
+        "id": "850e8400-e29b-41d4-a716-446655440000",
+        "description": "Dinner",
+        "total_amount": "100.00",
+        "paid_by": "550e8400-e29b-41d4-a716-446655440000",
+        "created_at": "2025-01-26T12:00:00Z"
+      }
+    ]
+  },
+  "is_member": true
+}
+```
+
 #### Add Member
 ```bash
 POST /groups/:id/add-member
@@ -143,12 +194,17 @@ Authorization: Bearer <token>
 Content-Type: application/json
 
 {
-  "user_id": "750e8400-e29b-41d4-a716-446655440000"
+  "email": "member@example.com"
 }
 
 Response:
 {
   "message": "member added"
+}
+
+Error (user not found):
+{
+  "error": "user not found with this email"
 }
 ```
 
@@ -191,6 +247,35 @@ Response:
 #### Get Group Expenses
 ```bash
 GET /groups/:id/expenses?limit=50&offset=0
+Authorization: Bearer <token>
+
+Query Parameters:
+- limit: Number of expenses to return (default: 50, max: 100)
+- offset: Number of expenses to skip for pagination (default: 0)
+
+Response:
+{
+  "expenses": [
+    {
+      "id": "850e8400-e29b-41d4-a716-446655440000",
+      "group_id": "650e8400-e29b-41d4-a716-446655440000",
+      "description": "Dinner",
+      "total_amount": "100.00",
+      "paid_by": "550e8400-e29b-41d4-a716-446655440000",
+      "created_at": "2025-01-26T12:00:00Z"
+    }
+  ],
+  "pagination": {
+    "limit": 50,
+    "offset": 0,
+    "total": 150
+  }
+}
+```
+
+#### Get User Expenses
+```bash
+GET /expenses?limit=50&offset=0
 Authorization: Bearer <token>
 
 Query Parameters:
@@ -386,7 +471,7 @@ Authorization: Bearer <token>
 Content-Type: application/json
 
 {
-  "category_id": "b50e8400-e29b-41d4-a716-446655440000",
+  "category": "Groceries",
   "amount": "45.50",
   "description": "Weekly grocery shopping",
   "notes": "Bought vegetables and fruits",
@@ -394,13 +479,13 @@ Content-Type: application/json
 }
 
 # Description and notes are optional
-# Category can be null for uncategorized expenses
+# Category can be null/empty for uncategorized expenses
 
 Response:
 {
   "id": "c50e8400-e29b-41d4-a716-446655440000",
   "user_id": "550e8400-e29b-41d4-a716-446655440000",
-  "category_id": "b50e8400-e29b-41d4-a716-446655440000",
+  "category": "Groceries",
   "amount": "45.50",
   "description": "Weekly grocery shopping",
   "notes": "Bought vegetables and fruits",
@@ -412,13 +497,13 @@ Response:
 
 #### List Personal Expenses
 ```bash
-GET /personal-expenses?limit=50&offset=0&category_id=xxx&start_date=2026-02-01&end_date=2026-02-28
+GET /personal-expenses?limit=50&offset=0&category=Groceries&start_date=2026-02-01&end_date=2026-02-28
 Authorization: Bearer <token>
 
 Query Parameters:
 - limit: Number of expenses to return (default: 50, max: 100)
 - offset: Number of expenses to skip for pagination
-- category_id: Filter by category UUID
+- category: Filter by category name (string)
 - start_date: Filter expenses from this date (YYYY-MM-DD)
 - end_date: Filter expenses up to this date (YYYY-MM-DD)
 
@@ -428,7 +513,7 @@ Response:
     {
       "id": "c50e8400-e29b-41d4-a716-446655440000",
       "user_id": "550e8400-e29b-41d4-a716-446655440000",
-      "category_id": "b50e8400-e29b-41d4-a716-446655440000",
+      "category": "Groceries",
       "amount": "45.50",
       "description": "Weekly grocery shopping",
       "notes": "Bought vegetables and fruits",
@@ -541,6 +626,7 @@ Response:
 ### users
 - `id` (UUID): Primary key
 - `email` (VARCHAR): Unique email address
+- `username` (VARCHAR): Unique username
 - `password_hash` (VARCHAR): Bcrypt hash
 - `created_at` (TIMESTAMP): Creation time
 
@@ -600,7 +686,7 @@ Response:
 ### personal_expenses
 - `id` (UUID): Primary key
 - `user_id` (UUID): Foreign key
-- `category_id` (UUID): Foreign key (nullable)
+- `category` (VARCHAR): Category name (nullable)
 - `amount` (DECIMAL): Expense amount
 - `description` (VARCHAR): Optional description
 - `notes` (TEXT): Optional notes
@@ -614,7 +700,7 @@ Response:
 ```bash
 curl -X POST http://localhost:8080/auth/signup \
   -H "Content-Type: application/json" \
-  -d '{"email":"alice@example.com","password":"password123"}'
+  -d '{"email":"alice@example.com","username":"alice","password":"password123"}'
 ```
 
 ### 2. Login

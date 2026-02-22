@@ -110,9 +110,10 @@ func main() {
 	{
 		// Groups
 		protected.POST("/groups", func(c *gin.Context) { group.CreateGroup(c, database) })
+		protected.GET("/groups", func(c *gin.Context) { group.GetUserGroups(c, database) })
+		protected.GET("/groups/:id", func(c *gin.Context) { group.GetGroup(c, database) })
 		protected.POST("/groups/:id/add-member", func(c *gin.Context) { group.AddMember(c, database) })
 		protected.GET("/groups/:id/balances", func(c *gin.Context) { group.GetBalances(c, database) })
-		protected.GET("/groups", func(c *gin.Context) { group.GetUserGroups(c, database) })
 
 		// Group Expenses
 		protected.POST("/expenses", func(c *gin.Context) { expense.CreateExpense(c, database) })

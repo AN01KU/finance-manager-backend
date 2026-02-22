@@ -299,3 +299,109 @@ func GetUserGroups(c *gin.Context, db *db.DB) {
 
 	c.JSON(200, groups)
 }
+
+type GroupMember struct {
+	UserID   uuid.UUID `json:"user_id"`
+	Email    string    `json:"email"`
+	Username string    `json:"username"`
+}
+
+type GroupExpense struct {
+	ID          uuid.UUID       `json:"id"`
+	Description string          `json:"description"`
+	TotalAmount decimal.Decimal `json:"total_amount"`
+	PaidBy      uuid.UUID       `json:"paid_by"`
+	CreatedAt   time.Time       `json:"created_at"`
+}
+
+type GroupDetails struct {
+	ID        uuid.UUID      `json:"id"`
+	Name      string         `json:"name"`
+	CreatedBy uuid.UUID      `json:"created_by"`
+	CreatedAt time.Time      `json:"created_at"`
+	Members   []GroupMember  `json:"members"`
+	Expenses  []GroupExpense `json:"expenses"`
+}
+
+func GetGroup(c *gin.Context, db *db.DB) {
+	userID, ok := middleware.GetUserID(c)
+	if !ok {
+		c.JSON(401, gin.H{"error": "unauthorized"})
+		return
+	}
+
+	groupIDStr := c.Param("id")
+	groupID, err := uuid.Parse(groupIDStr)
+	if err != nil {
+		c.JSON(400, gin.H{"error": "invalid group id"})
+		return
+	}
+
+	// Get group details
+	var g Group
+	err = db.Pool.QueryRow(c.Request.Context(),
+		"SELECT id, name, created_by, created_at FROM groups WHERE id = $1",
+		groupID).Scan(&g.ID, &g.Name, &g.CreatedBy, &g.CreatedAt)
+	if err != nil {
+		c.JSON(404, gin.H{"error": "group not found"})
+		return
+	}
+
+	// Get members
+	memberRows, err := db.Pool.Query(c.Request.Context(),
+		`SELECT u.id, u.email, u.username 
+		FROM users u 
+		JOIN group_members gm ON u.id = gm.user_id 
+		WHERE gm.group_id = $1`, groupID)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "failed to get members"})
+		return
+	}
+	defer memberRows.Close()
+
+	var members []GroupMember
+	for memberRows.Next() {
+		var m GroupMember
+		if err := memberRows.Scan(&m.UserID, &m.Email, &m.Username); err != nil {
+			c.JSON(500, gin.H{"error": "failed to scan member"})
+			return
+		}
+		members = append(members, m)
+	}
+
+	// Get expenses
+	expenseRows, err := db.Pool.Query(c.Request.Context(),
+		`SELECT id, description, total_amount, paid_by, created_at 
+		FROM expenses 
+		WHERE group_id = $1 
+		ORDER BY created_at DESC`, groupID)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "failed to get expenses"})
+		return
+	}
+	defer expenseRows.Close()
+
+	var expenses []GroupExpense
+	for expenseRows.Next() {
+		var e GroupExpense
+		if err := expenseRows.Scan(&e.ID, &e.Description, &e.TotalAmount, &e.PaidBy, &e.CreatedAt); err != nil {
+			c.JSON(500, gin.H{"error": "failed to scan expense"})
+			return
+		}
+		expenses = append(expenses, e)
+	}
+
+	// Check if current user is a member
+	isMember := false
+	for _, m := range members {
+		if m.UserID == userID {
+			isMember = true
+			break
+		}
+	}
+
+	c.JSON(200, gin.H{
+		"group":     GroupDetails{g.ID, g.Name, g.CreatedBy, g.CreatedAt, members, expenses},
+		"is_member": isMember,
+	})
+}

@@ -17,7 +17,7 @@ import (
 type PersonalExpense struct {
 	ID          uuid.UUID       `json:"id" db:"id"`
 	UserID      uuid.UUID       `json:"user_id" db:"user_id"`
-	CategoryID  *uuid.UUID      `json:"category_id,omitempty" db:"category_id"`
+	Category    *string         `json:"category,omitempty" db:"category"`
 	Amount      decimal.Decimal `json:"amount" db:"amount"`
 	Description *string         `json:"description,omitempty" db:"description"`
 	Notes       *string         `json:"notes,omitempty" db:"notes"`
@@ -27,15 +27,15 @@ type PersonalExpense struct {
 }
 
 type CreateExpenseRequest struct {
-	CategoryID  *uuid.UUID `json:"category_id,omitempty"`
-	Amount      string     `json:"amount" validate:"required,numeric"`
-	Description *string    `json:"description,omitempty" validate:"omitempty,max=255"`
-	Notes       *string    `json:"notes,omitempty"`
-	ExpenseDate time.Time  `json:"expense_date" validate:"required"`
+	Category    *string   `json:"category,omitempty" validate:"omitempty,max=50"`
+	Amount      string    `json:"amount" validate:"required,numeric"`
+	Description *string   `json:"description,omitempty" validate:"omitempty,max=255"`
+	Notes       *string   `json:"notes,omitempty"`
+	ExpenseDate time.Time `json:"expense_date" validate:"required"`
 }
 
 type UpdateExpenseRequest struct {
-	CategoryID  *uuid.UUID `json:"category_id,omitempty"`
+	Category    *string    `json:"category,omitempty" validate:"omitempty,max=50"`
 	Amount      *string    `json:"amount,omitempty" validate:"omitempty,numeric"`
 	Description *string    `json:"description,omitempty" validate:"omitempty,max=255"`
 	Notes       *string    `json:"notes,omitempty"`
@@ -73,27 +73,13 @@ func CreateExpense(c *gin.Context, db *db.DB) {
 		return
 	}
 
-	if req.CategoryID != nil {
-		var ownerID uuid.UUID
-		err := db.Pool.QueryRow(c.Request.Context(),
-			`SELECT user_id FROM expense_categories WHERE id = $1`, req.CategoryID).Scan(&ownerID)
-		if err != nil {
-			c.JSON(400, gin.H{"error": "invalid category"})
-			return
-		}
-		if ownerID != userID {
-			c.JSON(403, gin.H{"error": "category does not belong to user"})
-			return
-		}
-	}
-
 	var expense PersonalExpense
 	err = db.Pool.QueryRow(c.Request.Context(),
-		`INSERT INTO personal_expenses (user_id, category_id, amount, description, notes, expense_date, updated_at) 
+		`INSERT INTO personal_expenses (user_id, category, amount, description, notes, expense_date, updated_at) 
 		 VALUES ($1, $2, $3, $4, $5, $6, NOW()) 
-		 RETURNING id, user_id, category_id, amount, description, notes, expense_date, created_at, updated_at`,
-		userID, req.CategoryID, amount, req.Description, req.Notes, req.ExpenseDate).Scan(
-		&expense.ID, &expense.UserID, &expense.CategoryID, &expense.Amount, &expense.Description,
+		 RETURNING id, user_id, category, amount, description, notes, expense_date, created_at, updated_at`,
+		userID, req.Category, amount, req.Description, req.Notes, req.ExpenseDate).Scan(
+		&expense.ID, &expense.UserID, &expense.Category, &expense.Amount, &expense.Description,
 		&expense.Notes, &expense.ExpenseDate, &expense.CreatedAt, &expense.UpdatedAt)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "failed to create expense"})
@@ -131,13 +117,11 @@ func ListExpenses(c *gin.Context, db *db.DB) {
 	args := []interface{}{userID}
 	argCount := 2
 
-	if categoryIDStr := c.Query("category_id"); categoryIDStr != "" {
-		if categoryID, err := uuid.Parse(categoryIDStr); err == nil {
-			query += fmt.Sprintf(" AND category_id = $%d", argCount)
-			countQuery += fmt.Sprintf(" AND category_id = $%d", argCount)
-			args = append(args, categoryID)
-			argCount++
-		}
+	if categoryStr := c.Query("category"); categoryStr != "" {
+		query += fmt.Sprintf(" AND category = $%d", argCount)
+		countQuery += fmt.Sprintf(" AND category = $%d", argCount)
+		args = append(args, categoryStr)
+		argCount++
 	}
 
 	if startDateStr := c.Query("start_date"); startDateStr != "" {
@@ -178,7 +162,7 @@ func ListExpenses(c *gin.Context, db *db.DB) {
 	var expenses []PersonalExpense
 	for rows.Next() {
 		var exp PersonalExpense
-		if err := rows.Scan(&exp.ID, &exp.UserID, &exp.CategoryID, &exp.Amount, &exp.Description,
+		if err := rows.Scan(&exp.ID, &exp.UserID, &exp.Category, &exp.Amount, &exp.Description,
 			&exp.Notes, &exp.ExpenseDate, &exp.CreatedAt, &exp.UpdatedAt); err != nil {
 			c.JSON(500, gin.H{"error": "failed to scan expense"})
 			return
@@ -216,10 +200,10 @@ func GetExpense(c *gin.Context, db *db.DB) {
 
 	var expense PersonalExpense
 	err = db.Pool.QueryRow(c.Request.Context(),
-		`SELECT id, user_id, category_id, amount, description, notes, expense_date, created_at, updated_at 
+		`SELECT id, user_id, category, amount, description, notes, expense_date, created_at, updated_at 
 		 FROM personal_expenses 
 		 WHERE id = $1 AND user_id = $2`,
-		expenseID, userID).Scan(&expense.ID, &expense.UserID, &expense.CategoryID, &expense.Amount,
+		expenseID, userID).Scan(&expense.ID, &expense.UserID, &expense.Category, &expense.Amount,
 		&expense.Description, &expense.Notes, &expense.ExpenseDate, &expense.CreatedAt, &expense.UpdatedAt)
 	if err != nil {
 		c.JSON(404, gin.H{"error": "expense not found"})
@@ -282,27 +266,13 @@ func UpdateExpense(c *gin.Context, db *db.DB) {
 		return
 	}
 
-	if req.CategoryID != nil {
-		var categoryOwnerID uuid.UUID
-		err := db.Pool.QueryRow(c.Request.Context(),
-			`SELECT user_id FROM expense_categories WHERE id = $1`, req.CategoryID).Scan(&categoryOwnerID)
-		if err != nil {
-			c.JSON(400, gin.H{"error": "invalid category"})
-			return
-		}
-		if categoryOwnerID != userID {
-			c.JSON(403, gin.H{"error": "category does not belong to user"})
-			return
-		}
-	}
-
 	query := `UPDATE personal_expenses SET updated_at = NOW()`
 	args := []interface{}{}
 	argCount := 1
 
-	if req.CategoryID != nil {
-		query += fmt.Sprintf(", category_id = $%d", argCount)
-		args = append(args, req.CategoryID)
+	if req.Category != nil {
+		query += fmt.Sprintf(", category = $%d", argCount)
+		args = append(args, req.Category)
 		argCount++
 	}
 	if parsedAmount != nil {
@@ -331,12 +301,12 @@ func UpdateExpense(c *gin.Context, db *db.DB) {
 		return
 	}
 
-	query += fmt.Sprintf(" WHERE id = $%d RETURNING id, user_id, category_id, amount, description, notes, expense_date, created_at, updated_at", argCount)
+	query += fmt.Sprintf(" WHERE id = $%d RETURNING id, user_id, category, amount, description, notes, expense_date, created_at, updated_at", argCount)
 	args = append(args, expenseID)
 
 	var expense PersonalExpense
 	err = db.Pool.QueryRow(c.Request.Context(), query, args...).Scan(
-		&expense.ID, &expense.UserID, &expense.CategoryID, &expense.Amount, &expense.Description,
+		&expense.ID, &expense.UserID, &expense.Category, &expense.Amount, &expense.Description,
 		&expense.Notes, &expense.ExpenseDate, &expense.CreatedAt, &expense.UpdatedAt)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "failed to update expense"})
