@@ -15,6 +15,7 @@ import (
 
 type SignupRequest struct {
 	Email    string `json:"email" validate:"required,email"`
+	Username string `json:"username" validate:"required,min=3"`
 	Password string `json:"password" validate:"required,min=6"`
 }
 
@@ -75,8 +76,8 @@ func Signup(c *gin.Context, service *AuthService) {
 	// Insert user
 	var u user.User
 	err = db.Pool.QueryRow(c.Request.Context(),
-		"INSERT INTO users (email, password_hash) VALUES ($1, $2) RETURNING id, email, created_at",
-		req.Email, string(hash)).Scan(&u.ID, &u.Email, &u.CreatedAt)
+		"INSERT INTO users (email, username, password_hash) VALUES ($1, $2, $3) RETURNING id, email, username, created_at",
+		req.Email, req.Username, string(hash)).Scan(&u.ID, &u.Email, &u.Username, &u.CreatedAt)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "failed to create user"})
 		return
@@ -109,8 +110,8 @@ func Login(c *gin.Context, service *AuthService) {
 	// Get user
 	var u user.User
 	err := db.Pool.QueryRow(c.Request.Context(),
-		"SELECT id, email, password_hash, created_at FROM users WHERE email = $1", req.Email).Scan(
-		&u.ID, &u.Email, &u.PasswordHash, &u.CreatedAt)
+		"SELECT id, email, username, password_hash, created_at FROM users WHERE email = $1", req.Email).Scan(
+		&u.ID, &u.Email, &u.Username, &u.PasswordHash, &u.CreatedAt)
 	if err != nil {
 		c.JSON(401, gin.H{"error": "invalid credentials"})
 		return
