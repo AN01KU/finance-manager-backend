@@ -9,30 +9,31 @@ import (
 	"github.com/shopspring/decimal"
 
 	"github.com/yanonymousV2/finance-manager-backend/internal/db"
+	"github.com/yanonymousV2/finance-manager-backend/internal/helpers"
 	"github.com/yanonymousV2/finance-manager-backend/internal/middleware"
 )
 
 type CategorySpending struct {
-	CategoryID   *uuid.UUID      `json:"category_id"`
-	CategoryName *string         `json:"category_name"`
-	TotalAmount  decimal.Decimal `json:"total_amount"`
-	ExpenseCount int             `json:"expense_count"`
+	CategoryID   *uuid.UUID            `json:"category_id"`
+	CategoryName *string               `json:"category_name"`
+	TotalAmount  helpers.StringDecimal `json:"total_amount"`
+	ExpenseCount int                   `json:"expense_count"`
 }
 
 type MonthlyDashboard struct {
-	Month             int                `json:"month"`
-	Year              int                `json:"year"`
-	Budget            *decimal.Decimal   `json:"budget"`
-	TotalSpent        decimal.Decimal    `json:"total_spent"`
-	RemainingBudget   *decimal.Decimal   `json:"remaining_budget"`
-	DaysInMonth       int                `json:"days_in_month"`
-	DaysElapsed       int                `json:"days_elapsed"`
-	DaysRemaining     int                `json:"days_remaining"`
-	DailyAverageSpent decimal.Decimal    `json:"daily_average_spent"`
-	ProjectedSpending *decimal.Decimal   `json:"projected_spending"`
-	IsOverBudget      bool               `json:"is_over_budget"`
-	ExpenseCount      int                `json:"expense_count"`
-	CategoryBreakdown []CategorySpending `json:"category_breakdown"`
+	Month             int                    `json:"month"`
+	Year              int                    `json:"year"`
+	Budget            *helpers.StringDecimal `json:"budget"`
+	TotalSpent        helpers.StringDecimal  `json:"total_spent"`
+	RemainingBudget   *helpers.StringDecimal `json:"remaining_budget"`
+	DaysInMonth       int                    `json:"days_in_month"`
+	DaysElapsed       int                    `json:"days_elapsed"`
+	DaysRemaining     int                    `json:"days_remaining"`
+	DailyAverageSpent helpers.StringDecimal  `json:"daily_average_spent"`
+	ProjectedSpending *helpers.StringDecimal `json:"projected_spending"`
+	IsOverBudget      bool                   `json:"is_over_budget"`
+	ExpenseCount      int                    `json:"expense_count"`
+	CategoryBreakdown []CategorySpending     `json:"category_breakdown"`
 }
 
 func GetMonthlyDashboard(c *gin.Context, db *db.DB) {
@@ -65,13 +66,13 @@ func GetMonthlyDashboard(c *gin.Context, db *db.DB) {
 	startDate := time.Date(year, time.Month(month), 1, 0, 0, 0, 0, time.UTC)
 	endDate := startDate.AddDate(0, 1, 0)
 
-	var budget *decimal.Decimal
 	var budgetAmount decimal.Decimal
+	var budget *helpers.StringDecimal
 	err := db.Pool.QueryRow(c.Request.Context(),
-		`SELECT amount FROM monthly_budgets WHERE user_id = $1 AND month = $2 AND year = $3`,
+		`SELECT COALESCE(amount, 0) FROM monthly_budgets WHERE user_id = $1 AND month = $2 AND year = $3`,
 		userID, month, year).Scan(&budgetAmount)
 	if err == nil {
-		budget = &budgetAmount
+		budget = &helpers.StringDecimal{budgetAmount}
 	}
 
 	var totalSpent decimal.Decimal
@@ -87,11 +88,10 @@ func GetMonthlyDashboard(c *gin.Context, db *db.DB) {
 	}
 
 	rows, err := db.Pool.Query(c.Request.Context(),
-		`SELECT pe.category_id, ec.name, COALESCE(SUM(pe.amount), 0), COUNT(*) 
+		`SELECT pe.category, pe.category, COALESCE(SUM(pe.amount), 0), COUNT(*) 
 		 FROM personal_expenses pe 
-		 LEFT JOIN expense_categories ec ON pe.category_id = ec.id 
 		 WHERE pe.user_id = $1 AND pe.expense_date >= $2 AND pe.expense_date < $3 
-		 GROUP BY pe.category_id, ec.name 
+		 GROUP BY pe.category 
 		 ORDER BY SUM(pe.amount) DESC`,
 		userID, startDate, endDate)
 	if err != nil {
@@ -103,10 +103,12 @@ func GetMonthlyDashboard(c *gin.Context, db *db.DB) {
 	var categoryBreakdown []CategorySpending
 	for rows.Next() {
 		var cs CategorySpending
-		if err := rows.Scan(&cs.CategoryID, &cs.CategoryName, &cs.TotalAmount, &cs.ExpenseCount); err != nil {
+		var catName string
+		if err := rows.Scan(&cs.CategoryID, &catName, &cs.TotalAmount, &cs.ExpenseCount); err != nil {
 			c.JSON(500, gin.H{"error": "failed to scan category breakdown"})
 			return
 		}
+		cs.CategoryName = &catName
 		categoryBreakdown = append(categoryBreakdown, cs)
 	}
 
@@ -129,31 +131,36 @@ func GetMonthlyDashboard(c *gin.Context, db *db.DB) {
 		daysRemaining = 0
 	}
 
-	dailyAverageSpent := decimal.Zero
+	dailyAverageSpent := helpers.StringDecimal{decimal.Zero}
 	if daysElapsed > 0 {
-		dailyAverageSpent = totalSpent.Div(decimal.NewFromInt(int64(daysElapsed)))
+		dailyAverageSpent = helpers.StringDecimal{totalSpent.Div(decimal.NewFromInt(int64(daysElapsed)))}
 	}
 
-	var remainingBudget *decimal.Decimal
-	var projectedSpending *decimal.Decimal
+	var remainingBudget *helpers.StringDecimal
+	var projectedSpending *helpers.StringDecimal
 	var isOverBudget bool
 
 	if budget != nil {
-		remaining := budget.Sub(totalSpent)
+		remaining := helpers.StringDecimal{budgetAmount.Sub(totalSpent)}
 		remainingBudget = &remaining
-		isOverBudget = remaining.IsNegative()
+		isOverBudget = budgetAmount.LessThan(totalSpent)
 
 		if daysElapsed > 0 {
-			projected := dailyAverageSpent.Mul(decimal.NewFromInt(int64(daysInMonth)))
+			projected := helpers.StringDecimal{dailyAverageSpent.Decimal.Mul(decimal.NewFromInt(int64(daysInMonth)))}
 			projectedSpending = &projected
 		}
+	}
+
+	if projectedSpending == nil {
+		zero := helpers.StringDecimal{decimal.Zero}
+		projectedSpending = &zero
 	}
 
 	dashboard := MonthlyDashboard{
 		Month:             month,
 		Year:              year,
 		Budget:            budget,
-		TotalSpent:        totalSpent,
+		TotalSpent:        helpers.StringDecimal{totalSpent},
 		RemainingBudget:   remainingBudget,
 		DaysInMonth:       daysInMonth,
 		DaysElapsed:       daysElapsed,

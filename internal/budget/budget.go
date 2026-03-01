@@ -10,17 +10,18 @@ import (
 	"github.com/shopspring/decimal"
 
 	"github.com/yanonymousV2/finance-manager-backend/internal/db"
+	"github.com/yanonymousV2/finance-manager-backend/internal/helpers"
 	"github.com/yanonymousV2/finance-manager-backend/internal/middleware"
 )
 
 type MonthlyBudget struct {
-	ID        uuid.UUID       `json:"id" db:"id"`
-	UserID    uuid.UUID       `json:"user_id" db:"user_id"`
-	Amount    decimal.Decimal `json:"amount" db:"amount"`
-	Month     int             `json:"month" db:"month"`
-	Year      int             `json:"year" db:"year"`
-	CreatedAt time.Time       `json:"created_at" db:"created_at"`
-	UpdatedAt time.Time       `json:"updated_at" db:"updated_at"`
+	ID        uuid.UUID             `json:"id" db:"id"`
+	UserID    uuid.UUID             `json:"user_id" db:"user_id"`
+	Amount    helpers.StringDecimal `json:"amount" db:"amount"`
+	Month     int                   `json:"month" db:"month"`
+	Year      int                   `json:"year" db:"year"`
+	CreatedAt time.Time             `json:"created_at" db:"created_at"`
+	UpdatedAt time.Time             `json:"updated_at" db:"updated_at"`
 }
 
 type SetBudgetRequest struct {

@@ -11,19 +11,20 @@ import (
 	"github.com/shopspring/decimal"
 
 	"github.com/yanonymousV2/finance-manager-backend/internal/db"
+	"github.com/yanonymousV2/finance-manager-backend/internal/helpers"
 	"github.com/yanonymousV2/finance-manager-backend/internal/middleware"
 )
 
 type PersonalExpense struct {
-	ID          uuid.UUID       `json:"id" db:"id"`
-	UserID      uuid.UUID       `json:"user_id" db:"user_id"`
-	Category    *string         `json:"category,omitempty" db:"category"`
-	Amount      decimal.Decimal `json:"amount" db:"amount"`
-	Description *string         `json:"description,omitempty" db:"description"`
-	Notes       *string         `json:"notes,omitempty" db:"notes"`
-	ExpenseDate time.Time       `json:"expense_date" db:"expense_date"`
-	CreatedAt   time.Time       `json:"created_at" db:"created_at"`
-	UpdatedAt   time.Time       `json:"updated_at" db:"updated_at"`
+	ID          uuid.UUID             `json:"id" db:"id"`
+	UserID      uuid.UUID             `json:"user_id" db:"user_id"`
+	Category    *string               `json:"category,omitempty" db:"category"`
+	Amount      helpers.StringDecimal `json:"amount" db:"amount"`
+	Description *string               `json:"description,omitempty" db:"description"`
+	Notes       *string               `json:"notes,omitempty" db:"notes"`
+	ExpenseDate time.Time             `json:"expense_date" db:"expense_date"`
+	CreatedAt   time.Time             `json:"created_at" db:"created_at"`
+	UpdatedAt   time.Time             `json:"updated_at" db:"updated_at"`
 }
 
 type CreateExpenseRequest struct {
@@ -110,7 +111,7 @@ func ListExpenses(c *gin.Context, db *db.DB) {
 		}
 	}
 
-	query := `SELECT id, user_id, category_id, amount, description, notes, expense_date, created_at, updated_at 
+	query := `SELECT id, user_id, category, amount, description, notes, expense_date, created_at, updated_at 
 		      FROM personal_expenses 
 		      WHERE user_id = $1`
 	countQuery := `SELECT COUNT(*) FROM personal_expenses WHERE user_id = $1`

@@ -15,19 +15,20 @@ import (
 )
 
 type Expense struct {
-	ID          uuid.UUID       `json:"id" db:"id"`
-	GroupID     uuid.UUID       `json:"group_id" db:"group_id"`
-	Description string          `json:"description" db:"description"`
-	TotalAmount decimal.Decimal `json:"total_amount" db:"total_amount"`
-	PaidBy      uuid.UUID       `json:"paid_by" db:"paid_by"`
-	CreatedAt   time.Time       `json:"created_at" db:"created_at"`
-	Splits      []ExpenseSplit  `json:"splits,omitempty"`
+	ID          uuid.UUID             `json:"id" db:"id"`
+	GroupID     uuid.UUID             `json:"group_id" db:"group_id"`
+	Description string                `json:"description" db:"description"`
+	TotalAmount helpers.StringDecimal `json:"total_amount" db:"total_amount"`
+	PaidBy      uuid.UUID             `json:"paid_by" db:"paid_by"`
+	CreatedAt   time.Time             `json:"created_at" db:"created_at"`
+	Splits      []ExpenseSplit        `json:"splits,omitempty"`
+	Category    string                `json:"category" db:"category"`
 }
 
 type ExpenseSplit struct {
-	ExpenseID uuid.UUID       `json:"expense_id" db:"expense_id"`
-	UserID    uuid.UUID       `json:"user_id" db:"user_id"`
-	Amount    decimal.Decimal `json:"amount" db:"amount"`
+	ExpenseID uuid.UUID             `json:"expense_id" db:"expense_id"`
+	UserID    uuid.UUID             `json:"user_id" db:"user_id"`
+	Amount    helpers.StringDecimal `json:"amount" db:"amount"`
 }
 
 type CreateExpenseRequest struct {
@@ -35,6 +36,7 @@ type CreateExpenseRequest struct {
 	Description string                      `json:"description" validate:"required"`
 	TotalAmount string                      `json:"total_amount" validate:"required,numeric"`
 	Splits      []CreateExpenseSplitRequest `json:"splits" validate:"required,min=1,dive"`
+	Category    string                      `json:"category" validate:"required"`
 }
 
 type CreateExpenseSplitRequest struct {
@@ -139,8 +141,8 @@ func CreateExpense(c *gin.Context, db *db.DB) {
 	// Insert expense
 	var exp Expense
 	err = tx.QueryRow(c.Request.Context(),
-		"INSERT INTO expenses (group_id, description, total_amount, paid_by) VALUES ($1, $2, $3, $4) RETURNING id, group_id, description, total_amount, paid_by, created_at",
-		groupID, req.Description, totalAmount, userID).Scan(&exp.ID, &exp.GroupID, &exp.Description, &exp.TotalAmount, &exp.PaidBy, &exp.CreatedAt)
+		"INSERT INTO expenses (group_id, description, total_amount, paid_by, category) VALUES ($1, $2, $3, $4, $5) RETURNING id, group_id, description, total_amount, paid_by, created_at, category",
+		groupID, req.Description, totalAmount, userID, req.Category).Scan(&exp.ID, &exp.GroupID, &exp.Description, &exp.TotalAmount, &exp.PaidBy, &exp.CreatedAt, &exp.Category)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "failed to create expense"})
 		return
@@ -169,7 +171,7 @@ func CreateExpense(c *gin.Context, db *db.DB) {
 		exp.Splits[i] = ExpenseSplit{
 			ExpenseID: exp.ID,
 			UserID:    split.UserID,
-			Amount:    split.Amount,
+			Amount:    helpers.StringDecimal{split.Amount},
 		}
 	}
 
@@ -214,7 +216,7 @@ func GetGroupExpenses(c *gin.Context, db *db.DB) {
 
 	// Get expenses with pagination
 	rows, err := db.Pool.Query(c.Request.Context(),
-		"SELECT id, group_id, description, total_amount, paid_by, created_at FROM expenses WHERE group_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3",
+		"SELECT id, group_id, description, total_amount, paid_by, created_at, category FROM expenses WHERE group_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3",
 		groupID, limit, offset)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "failed to get expenses"})
@@ -225,7 +227,7 @@ func GetGroupExpenses(c *gin.Context, db *db.DB) {
 	var expenses []Expense
 	for rows.Next() {
 		var exp Expense
-		if err := rows.Scan(&exp.ID, &exp.GroupID, &exp.Description, &exp.TotalAmount, &exp.PaidBy, &exp.CreatedAt); err != nil {
+		if err := rows.Scan(&exp.ID, &exp.GroupID, &exp.Description, &exp.TotalAmount, &exp.PaidBy, &exp.CreatedAt, &exp.Category); err != nil {
 			c.JSON(500, gin.H{"error": "failed to scan expense"})
 			return
 		}
@@ -271,7 +273,7 @@ func GetUserExpenses(c *gin.Context, db *db.DB) {
 	}
 
 	rows, err := db.Pool.Query(c.Request.Context(),
-		`SELECT DISTINCT e.id, e.group_id, e.description, e.total_amount, e.paid_by, e.created_at
+		`SELECT DISTINCT e.id, e.group_id, e.description, e.total_amount, e.paid_by, e.created_at, e.category
 		FROM expenses e
 		LEFT JOIN expense_splits es ON e.id = es.expense_id
 		WHERE e.paid_by = $1 OR es.user_id = $1
@@ -286,7 +288,7 @@ func GetUserExpenses(c *gin.Context, db *db.DB) {
 	var expenses []Expense
 	for rows.Next() {
 		var exp Expense
-		if err := rows.Scan(&exp.ID, &exp.GroupID, &exp.Description, &exp.TotalAmount, &exp.PaidBy, &exp.CreatedAt); err != nil {
+		if err := rows.Scan(&exp.ID, &exp.GroupID, &exp.Description, &exp.TotalAmount, &exp.PaidBy, &exp.CreatedAt, &exp.Category); err != nil {
 			c.JSON(500, gin.H{"error": "failed to scan expense"})
 			return
 		}

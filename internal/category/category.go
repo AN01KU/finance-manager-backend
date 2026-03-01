@@ -16,15 +16,15 @@ type ExpenseCategory struct {
 	ID        uuid.UUID `json:"id" db:"id"`
 	UserID    uuid.UUID `json:"user_id" db:"user_id"`
 	Name      string    `json:"name" db:"name"`
-	Color     *string   `json:"color,omitempty" db:"color"`
-	Icon      *string   `json:"icon,omitempty" db:"icon"`
+	Color     string    `json:"color" db:"color"`
+	Icon      string    `json:"icon" db:"icon"`
 	CreatedAt time.Time `json:"created_at" db:"created_at"`
 }
 
 type CreateCategoryRequest struct {
-	Name  string  `json:"name" validate:"required,min=1,max=100"`
-	Color *string `json:"color,omitempty" validate:"omitempty,len=7"`
-	Icon  *string `json:"icon,omitempty" validate:"omitempty,max=50"`
+	Name  string `json:"name" validate:"required,min=1,max=100"`
+	Color string `json:"color" validate:"omitempty,len=7"`
+	Icon  string `json:"icon" validate:"omitempty,max=50"`
 }
 
 type UpdateCategoryRequest struct {
@@ -54,11 +54,19 @@ func CreateCategory(c *gin.Context, db *db.DB) {
 	}
 
 	var category ExpenseCategory
+	color := req.Color
+	icon := req.Icon
+	if color == "" {
+		color = "#000000"
+	}
+	if icon == "" {
+		icon = "category"
+	}
 	err := db.Pool.QueryRow(c.Request.Context(),
 		`INSERT INTO expense_categories (user_id, name, color, icon) 
 		 VALUES ($1, $2, $3, $4) 
-		 RETURNING id, user_id, name, color, icon, created_at`,
-		userID, req.Name, req.Color, req.Icon).Scan(
+		 RETURNING id, user_id, name, COALESCE(color, ''), COALESCE(icon, ''), created_at`,
+		userID, req.Name, color, icon).Scan(
 		&category.ID, &category.UserID, &category.Name, &category.Color, &category.Icon, &category.CreatedAt)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "failed to create category"})
@@ -77,7 +85,7 @@ func ListCategories(c *gin.Context, db *db.DB) {
 	}
 
 	rows, err := db.Pool.Query(c.Request.Context(),
-		`SELECT id, user_id, name, color, icon, created_at 
+		`SELECT id, user_id, name, COALESCE(color, ''), COALESCE(icon, ''), created_at 
 		 FROM expense_categories 
 		 WHERE user_id = $1 
 		 ORDER BY name ASC`,
@@ -172,7 +180,7 @@ func UpdateCategory(c *gin.Context, db *db.DB) {
 	}
 
 	// Remove trailing comma and add WHERE clause
-	query = query[:len(query)-2] + fmt.Sprintf(" WHERE id = $%d RETURNING id, user_id, name, color, icon, created_at", argCount)
+	query = query[:len(query)-2] + fmt.Sprintf(" WHERE id = $%d RETURNING id, user_id, name, COALESCE(color, ''), COALESCE(icon, ''), created_at", argCount)
 	args = append(args, categoryID)
 
 	var category ExpenseCategory

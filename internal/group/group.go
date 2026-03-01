@@ -29,8 +29,8 @@ type AddMemberRequest struct {
 }
 
 type Balance struct {
-	UserID uuid.UUID       `json:"user_id"`
-	Amount decimal.Decimal `json:"amount"`
+	UserID uuid.UUID             `json:"user_id"`
+	Amount helpers.StringDecimal `json:"amount"`
 }
 
 func CreateGroup(c *gin.Context, db *db.DB) {
@@ -252,17 +252,17 @@ func GetBalances(c *gin.Context, db *db.DB) {
 			return
 		}
 		if bal, ok := members[from]; ok {
-			members[from] = bal.Sub(amt)
+			members[from] = bal.Add(amt)
 		}
 		if bal, ok := members[to]; ok {
-			members[to] = bal.Add(amt)
+			members[to] = bal.Sub(amt)
 		}
 	}
 
 	// Convert to slice
 	var balances []Balance
 	for uid, amt := range members {
-		balances = append(balances, Balance{UserID: uid, Amount: amt})
+		balances = append(balances, Balance{UserID: uid, Amount: helpers.StringDecimal{amt}})
 	}
 
 	c.JSON(200, balances)
@@ -307,11 +307,11 @@ type GroupMember struct {
 }
 
 type GroupExpense struct {
-	ID          uuid.UUID       `json:"id"`
-	Description string          `json:"description"`
-	TotalAmount decimal.Decimal `json:"total_amount"`
-	PaidBy      uuid.UUID       `json:"paid_by"`
-	CreatedAt   time.Time       `json:"created_at"`
+	ID          uuid.UUID             `json:"id"`
+	Description string                `json:"description"`
+	TotalAmount helpers.StringDecimal `json:"total_amount"`
+	PaidBy      uuid.UUID             `json:"paid_by"`
+	CreatedAt   time.Time             `json:"created_at"`
 }
 
 type GroupDetails struct {
