@@ -113,6 +113,7 @@ func main() {
 		protected.GET("/groups", func(c *gin.Context) { group.GetUserGroups(c, database) })
 		protected.GET("/groups/:id", func(c *gin.Context) { group.GetGroup(c, database) })
 		protected.POST("/groups/:id/add-member", func(c *gin.Context) { group.AddMember(c, database) })
+		protected.GET("/groups/:id/members", func(c *gin.Context) { group.GetMembers(c, database) })
 		protected.GET("/groups/:id/balances", func(c *gin.Context) { group.GetBalances(c, database) })
 
 		// Group Expenses

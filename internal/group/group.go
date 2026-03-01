@@ -300,10 +300,61 @@ func GetUserGroups(c *gin.Context, db *db.DB) {
 	c.JSON(200, groups)
 }
 
+func GetMembers(c *gin.Context, db *db.DB) {
+	userID, ok := middleware.GetUserID(c)
+	if !ok {
+		c.JSON(401, gin.H{"error": "unauthorized"})
+		return
+	}
+
+	groupIDStr := c.Param("id")
+	groupID, err := uuid.Parse(groupIDStr)
+	if err != nil {
+		c.JSON(400, gin.H{"error": "invalid group id"})
+		return
+	}
+
+	isMember, err := helpers.IsGroupMember(c.Request.Context(), db, groupID, userID)
+	if err != nil || !isMember {
+		c.JSON(403, gin.H{"error": "not a member of the group"})
+		return
+	}
+
+	rows, err := db.Pool.Query(c.Request.Context(),
+		`SELECT u.id, u.email, u.username, gm.created_at
+		 FROM users u
+		 JOIN group_members gm ON u.id = gm.user_id
+		 WHERE gm.group_id = $1
+		 ORDER BY gm.created_at ASC`,
+		groupID)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "failed to get members"})
+		return
+	}
+	defer rows.Close()
+
+	var members []GroupMember
+	for rows.Next() {
+		var m GroupMember
+		if err := rows.Scan(&m.UserID, &m.Email, &m.Username, &m.CreatedAt); err != nil {
+			c.JSON(500, gin.H{"error": "failed to scan member"})
+			return
+		}
+		members = append(members, m)
+	}
+
+	if members == nil {
+		members = []GroupMember{}
+	}
+
+	c.JSON(200, gin.H{"members": members})
+}
+
 type GroupMember struct {
-	UserID   uuid.UUID `json:"user_id"`
-	Email    string    `json:"email"`
-	Username string    `json:"username"`
+	UserID    uuid.UUID `json:"id"`
+	Email     string    `json:"email"`
+	Username  string    `json:"username"`
+	CreatedAt time.Time `json:"createdAt"`
 }
 
 type GroupExpense struct {
