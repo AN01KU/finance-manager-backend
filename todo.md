@@ -1,251 +1,160 @@
-Backend Fixes Needed
-
-🔴 1. decimal.Decimal serializes as JSON number — iOS expects JSON string
-
-This is the biggest cross-cutting issue. shopspring/decimal marshals as 1234.56 (number), but every iOS model declares amounts as String and expects "1234.56" (quoted string).
-
-Affected files/structs:
-
-File
-Fields
-expense/expense.go
-Expense.TotalAmount, ExpenseSplit.Amount
-group/group.go
-Balance.Amount
-settlement/settlement.go
-Settlement.Amount
-budget/budget.go
-MonthlyBudget.Amount
-personalexpense/expense.go
-PersonalExpense.Amount
-dashboard/dashboard.go
-MonthlyDashboard.TotalSpent, .Budget, .RemainingBudget, .DailyAverageSpent, .ProjectedSpending, CategorySpending.TotalAmount
-
-Fix: Create a StringDecimal wrapper type that marshals/unmarshals as a JSON string:
-
-// internal/helpers/decimal.go
-type StringDecimal struct {
-    decimal.Decimal
-}
-
-func (d StringDecimal) MarshalJSON() ([]byte, error) {
-    return []byte(`"` + d.String() + `"`), nil
-}
-
-func (d *StringDecimal) UnmarshalJSON(data []byte) error {
-    s := strings.Trim(string(data), `"`)
-    dec, err := decimal.NewFromString(s)
-    if err != nil {
-        return err
-    }
-    d.Decimal = dec
-    return nil
-}
-
-Then replace all decimal.Decimal JSON fields with StringDecimal.
+# Backend TODO — API Restructure + Fixes
 
 ---
 
-🔴 2. Shared expenses table missing category column
-
-iOS sends category in CreateSharedExpenseRequest and expects it back in SharedExpense. The expenses DB table and Go structs have no category field.
-
-Files: expense/expense.go, needs new migration
-
-Fix:
-
-New migration: ALTER TABLE expenses ADD COLUMN category VARCHAR(50);
-Add Category string json:"category" to Expense struct
-Add Category string json:"category" to CreateExpenseRequest struct
-Update INSERT/SELECT queries to include category
-
----
-
-🔴 3. personalexpense/expense.go ListExpenses — SQL references dropped category_id column
-
-Line 113:
-
-SELECT id, user_id, category_id, amount, ...
-
-Migration 000003 dropped category_id and added category VARCHAR(50).
-
-Fix: Change category_id → category in the SELECT.
-
----
-
-🔴 4. dashboard/dashboard.go — SQL references dropped category_id and invalid JOIN
-
-Lines 90-95:
-
-SELECT pe.category_id, ec.name, ...
-FROM personal_expenses pe
-LEFT JOIN expense_categories ec ON pe.category_id = ec.id
-
-category_id no longer exists. The category column is now a plain VARCHAR, not a FK.
-
-Fix: Change to:
-
-SELECT pe.category, pe.category, COALESCE(SUM(pe.amount), 0), COUNT(*)
-FROM personal_expenses pe
-WHERE pe.user_id = $1 AND pe.expense_date >= $2 AND pe.expense_date < $3
-GROUP BY pe.category
-ORDER BY SUM(pe.amount) DESC
-
-And map category to both CategoryID (set to nil) and CategoryName.
-
-Actually, iOS expects:
-
-struct CategoryBreakdown: Decodable, Sendable {
-    let categoryId: UUID?
-    let categoryName: String?
-    let totalAmount: String
-    let expenseCount: Int
-}
-
-So category_id can be null and category_name should be the string category name.
-
----
-
-🔴 5. Settlement balance logic is reversed in group/group.go GetBalances
-
-Lines 254-259:
-
-members[from] = bal.Sub(amt)  // Wrong
-members[to] = bal.Add(amt)    // Wrong
-
-When from_user pays to_user, from's debt decreases (balance should go up), to's credit decreases (balance should go down).
-
-Fix:
-
-members[from] = bal.Add(amt)
-members[to] = bal.Sub(amt)
-
----
-
-🔴 6. Category color/icon use *string + omitempty — iOS expects non-optional String
-
-File: category/category.go
-
-Go's ExpenseCategory:
-
-Color *string `json:"color,omitempty"`
-Icon  *string `json:"icon,omitempty"`
-
-iOS's CategoryResponse:
-
-let color: String  // non-optional
-let icon: String   // non-optional
-
-If color or icon is null in DB, Go omits the field, iOS decode fails.
-
-Fix: Change to non-pointer with no omitempty:
-
-Color string `json:"color"`
-Icon  string `json:"icon"`
-
-And ensure DB defaults (e.g., COALESCE(color, '') in queries or DEFAULT '' in schema).
-
----
-
-🔴 7. Dashboard projected_spending can be null — iOS expects non-optional String
-
-File: dashboard/dashboard.go
-
-Go returns ProjectedSpending *decimal.Decimal which can be nil. iOS has:
-
-let projectedSpending: String  // non-optional!
-
-Fix: Always return a value — default to "0" when no budget or no days elapsed:
-
-if projectedSpending == nil {
-    zero := StringDecimal{decimal.Zero}
-    projectedSpending = &zero
-}
-
----
-
-🔴 6. Category color/icon use *string + omitempty — iOS expects non-optional String
-
-File: category/category.go
-
-Go's ExpenseCategory:
-
-Color *string `json:"color,omitempty"`
-Icon  *string `json:"icon,omitempty"`
-
-iOS's CategoryResponse:
-
-let color: String  // non-optional
-let icon: String   // non-optional
-
-If color or icon is null in DB, Go omits the field, iOS decode fails.
-
-Fix: Change to non-pointer with no omitempty:
-
-Color string `json:"color"`
-Icon  string `json:"icon"`
-
-And ensure DB defaults (e.g., COALESCE(color, '') in queries or DEFAULT '' in schema).
-
----
-
-🔴 7. Dashboard projected_spending can be null — iOS expects non-optional String
-
-File: dashboard/dashboard.go
-
-Go returns ProjectedSpending *decimal.Decimal which can be nil. iOS has:
-
-let projectedSpending: String  // non-optional!
-
-Fix: Always return a value — default to "0" when no budget or no days elapsed:
-
-if projectedSpending == nil {
-    zero := StringDecimal{decimal.Zero}
-    projectedSpending = &zero
-}
-
----
-
+## 🔵 API Restructure: Rich Responses (Eliminate N+1 Calls)
+
+### 1. `GET /groups` — Return full metadata with members & balances
+
+**Current:** Returns `[{id, name, created_by, created_at}]` — iOS makes 3 extra calls per group.
+
+**Target response:**
+```json
+[
+  {
+    "id": "uuid",
+    "name": "Trip Fund",
+    "created_by": "uuid",
+    "created_at": "2025-01-01T00:00:00Z",
+    "members": [
+      { "id": "uuid", "email": "a@b.com", "username": "alice", "created_at": "..." }
+    ],
+    "balances": [
+      { "user_id": "uuid", "amount": "150.00" }
+    ]
+  }
+]
 ```
-Summary Table
 
-#
-Severity
-File(s)
-Issue
-1
-🔴 Critical
-All handlers
-decimal.Decimal → JSON number, iOS expects string
-2
-🔴 Critical
-expense/expense.go + migration
-Shared expenses missing category
-3
-🔴 Critical
-personalexpense/expense.go:113
-SQL uses dropped category_id column
-4
-🔴 Critical
-dashboard/dashboard.go:90
-SQL uses dropped category_id + invalid JOIN
-5
-🔴 Critical
-group/group.go:254-259
-Settlement balance Add/Sub reversed
-6
-🔴 Breaking
-category/category.go
-color/icon omitted when null → iOS decode fails
-7
-🔴 Breaking
-dashboard/dashboard.go
-projected_spending null → iOS decode fails
-8
-🟡 Medium
-category/category.go
-Request field types: pointer vs value
-9
-🟡 Medium
-settlement/settlement.go
-Amount field type + broken validator
+**Files:** `internal/group/group.go` — Update `GetUserGroups()`:
+- [ ] Add `Members []GroupMember` and `Balances []Balance` to a new `GroupWithDetails` response struct
+- [ ] After fetching groups, batch-fetch all members for those group IDs in one query
+- [ ] Batch-fetch all balances (or compute inline)
+- [ ] Return the enriched response
+
+**Note:** Expenses are intentionally NOT embedded — they stay at `GET /groups/:id/expenses` since they're paginated and loaded on-demand.
+
+---
+
+### 2. `GET /groups/:id/members` — Response wrapper mismatch
+
+**Current:** Returns `{"members": [...]}` but iOS was trying to decode as `[APIUser]`.
+
+**Fix (iOS side done):** iOS now decodes `GroupMembersResponse` wrapper. Backend is fine as-is.
+
+- [x] iOS updated to decode `{"members": [...]}` wrapper
+
+---
+
+## 🔄 Recurring Expenses Enhancements
+
+### 3. Add `days_of_week` field for weekly recurring expenses
+
+**Current:** Only `day_of_month` exists. Weekly recurring has no way to specify which days.
+
+**Target:** Add `days_of_week INTEGER[]` column (array of ints: 0=Sun, 1=Mon, ..., 6=Sat).
+
+**Files:**
+- [ ] New migration: `ALTER TABLE personal_expenses ADD COLUMN days_of_week INTEGER[];`
+- [ ] `internal/personalexpense/expense.go`:
+  - Add `DaysOfWeek []int` to `PersonalExpense` struct
+  - Add `DaysOfWeek []int` to `CreateExpenseRequest` and `UpdateExpenseRequest`
+  - Update all INSERT/SELECT/UPDATE queries to include `days_of_week`
+  - Validate: if `frequency == "weekly"`, `days_of_week` must be non-empty with values 0-6
+
+---
+
+### 4. Add `?recurring=true/false` filter to `GET /personal-expenses`
+
+**Current:** No way to filter by recurring status.
+
+**Files:** `internal/personalexpense/expense.go` — Update `ListExpenses()`:
+- [ ] Parse `recurring` query param
+- [ ] Add `AND is_recurring = $N` to query and count query when present
+
+---
+
+## 🔴 Critical Existing Bugs (from previous audit)
+
+### 5. `decimal.Decimal` serializes as JSON number — iOS expects string
+
+**Status:** Already fixed with `helpers.StringDecimal` wrapper — verify all fields use it.
+
+- [x] Expense.TotalAmount, ExpenseSplit.Amount
+- [x] Balance.Amount
+- [x] Settlement.Amount
+- [x] MonthlyBudget.Amount
+- [x] PersonalExpense.Amount
+- [x] Dashboard fields
+
+---
+
+### 6. Settlement balance logic in `GetBalances`
+
+Lines 254-259 in `group.go`:
+```go
+members[from] = bal.Add(amt)  // from_user paid, their balance goes up
+members[to] = bal.Sub(amt)    // to_user received, their balance goes down
+```
+
+- [x] Already fixed — verify with test
+
+---
+
+### 7. Category `color`/`icon` — `*string` + `omitempty` causes iOS decode failure
+
+**File:** `internal/category/category.go`
+
+- [ ] Change `Color *string` → `Color string` (no pointer, no omitempty)
+- [ ] Change `Icon *string` → `Icon string`
+- [ ] Use `COALESCE(color, '') AS color` in SELECT queries
+- [ ] Or add `DEFAULT ''` to DB column
+
+---
+
+### 8. Dashboard `projected_spending` null handling
+
+**File:** `internal/dashboard/dashboard.go`
+
+- [x] Already has nil → zero fallback at line 154-157
+
+---
+
+## 🟡 API Design Improvements
+
+### 9. `GET /groups/:id` — already returns full detail, but verify consistency
+
+**Current:** Returns `{group: {id, name, members, expenses}, is_member: true}`.
+
+- [ ] Ensure `GroupDetails` struct includes `Balances` too (currently missing)
+- [ ] Add `Balances []Balance` to `GroupDetails` and compute in `GetGroup()`
+
+---
+
+### 10. Pagination consistency
+
+- [ ] `GET /personal-expenses` ✅ has pagination
+- [ ] `GET /groups/:id/expenses` ✅ has pagination
+- [ ] `GET /budgets` ❌ no pagination (low priority — users won't have hundreds)
+- [ ] `GET /categories` ❌ no pagination (low priority — typically < 20)
+
+---
+
+### 11. Error response consistency
+
+All errors should follow `{"error": "message"}` format consistently.
+- [ ] Audit all handlers return consistent error shape
+
+---
+
+## 📋 Summary — Priority Order
+
+| # | Priority | Task | Files |
+|---|----------|------|-------|
+| 1 | 🔴 P0 | Rich `GET /groups` (members + balances inline) | `group/group.go` |
+| 3 | 🔴 P0 | Add `days_of_week` for weekly recurring | migration + `personalexpense/expense.go` |
+| 4 | 🟡 P1 | Add `?recurring` filter to personal expenses | `personalexpense/expense.go` |
+| 7 | 🟡 P1 | Fix category color/icon null handling | `category/category.go` |
+| 9 | 🟡 P1 | Add balances to `GET /groups/:id` response | `group/group.go` |
+| 10 | 🟢 P2 | Pagination for budgets/categories | `budget/budget.go`, `category/category.go` |
+| 11 | 🟢 P2 | Error response consistency audit | All handlers |
