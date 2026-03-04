@@ -27,10 +27,10 @@
 ```
 
 **Files:** `internal/group/group.go` — Update `GetUserGroups()`:
-- [ ] Add `Members []GroupMember` and `Balances []Balance` to a new `GroupWithDetails` response struct
-- [ ] After fetching groups, batch-fetch all members for those group IDs in one query
-- [ ] Batch-fetch all balances (or compute inline)
-- [ ] Return the enriched response
+- [x] Add `Members []GroupMember` and `Balances []Balance` to a new `GroupWithDetails` response struct
+- [x] After fetching groups, batch-fetch all members for those group IDs in one query
+- [x] Batch-fetch all balances (or compute inline)
+- [x] Return the enriched response
 
 **Note:** Expenses are intentionally NOT embedded — they stay at `GET /groups/:id/expenses` since they're paginated and loaded on-demand.
 
@@ -55,8 +55,8 @@
 **Target:** Add `days_of_week INTEGER[]` column (array of ints: 0=Sun, 1=Mon, ..., 6=Sat).
 
 **Files:**
-- [ ] New migration: `ALTER TABLE personal_expenses ADD COLUMN days_of_week INTEGER[];`
-- [ ] `internal/personalexpense/expense.go`:
+- [x] New migration: `ALTER TABLE personal_expenses ADD COLUMN days_of_week INTEGER[];`
+- [x] `internal/personalexpense/expense.go`:
   - Add `DaysOfWeek []int` to `PersonalExpense` struct
   - Add `DaysOfWeek []int` to `CreateExpenseRequest` and `UpdateExpenseRequest`
   - Update all INSERT/SELECT/UPDATE queries to include `days_of_week`
@@ -69,8 +69,8 @@
 **Current:** No way to filter by recurring status.
 
 **Files:** `internal/personalexpense/expense.go` — Update `ListExpenses()`:
-- [ ] Parse `recurring` query param
-- [ ] Add `AND is_recurring = $N` to query and count query when present
+- [x] Parse `recurring` query param
+- [x] Add `AND is_recurring = $N` to query and count query when present
 
 ---
 
@@ -105,10 +105,10 @@ members[to] = bal.Sub(amt)    // to_user received, their balance goes down
 
 **File:** `internal/category/category.go`
 
-- [ ] Change `Color *string` → `Color string` (no pointer, no omitempty)
-- [ ] Change `Icon *string` → `Icon string`
-- [ ] Use `COALESCE(color, '') AS color` in SELECT queries
-- [ ] Or add `DEFAULT ''` to DB column
+- [x] Change `Color *string` → `Color string` (no pointer, no omitempty)
+- [x] Change `Icon *string` → `Icon string`
+- [x] Use `COALESCE(color, '') AS color` in SELECT queries
+- [x] Or add `DEFAULT ''` to DB column
 
 ---
 
@@ -126,8 +126,8 @@ members[to] = bal.Sub(amt)    // to_user received, their balance goes down
 
 **Current:** Returns `{group: {id, name, members, expenses}, is_member: true}`.
 
-- [ ] Ensure `GroupDetails` struct includes `Balances` too (currently missing)
-- [ ] Add `Balances []Balance` to `GroupDetails` and compute in `GetGroup()`
+- [x] Ensure `GroupDetails` struct includes `Balances` too (currently missing)
+- [x] Add `Balances []Balance` to `GroupDetails` and compute in `GetGroup()`
 
 ---
 
