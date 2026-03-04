@@ -377,7 +377,10 @@ func GetUserGroups(c *gin.Context, db *db.DB) {
 	}
 	defer splitRows.Close()
 
-	splitsByUser := make(map[uuid.UUID]decimal.Decimal)
+	splitsByGroup := make(map[uuid.UUID][]struct {
+		userID uuid.UUID
+		amount decimal.Decimal
+	})
 	for splitRows.Next() {
 		var userID, groupID uuid.UUID
 		var amount decimal.Decimal
@@ -385,7 +388,10 @@ func GetUserGroups(c *gin.Context, db *db.DB) {
 			c.JSON(500, gin.H{"error": "failed to scan split"})
 			return
 		}
-		splitsByUser[userID] = splitsByUser[userID].Add(amount)
+		splitsByGroup[groupID] = append(splitsByGroup[groupID], struct {
+			userID uuid.UUID
+			amount decimal.Decimal
+		}{userID, amount})
 	}
 
 	settlementRows, err := db.Pool.Query(c.Request.Context(),
@@ -434,9 +440,9 @@ func GetUserGroups(c *gin.Context, db *db.DB) {
 			}
 		}
 
-		for userID, splitAmt := range splitsByUser {
-			if _, ok := memberBalances[userID]; ok {
-				memberBalances[userID] = memberBalances[userID].Sub(splitAmt)
+		for _, split := range splitsByGroup[g.ID] {
+			if _, ok := memberBalances[split.userID]; ok {
+				memberBalances[split.userID] = memberBalances[split.userID].Sub(split.amount)
 			}
 		}
 
