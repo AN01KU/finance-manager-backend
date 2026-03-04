@@ -26,6 +26,7 @@ type PersonalExpense struct {
 	IsRecurring      bool                  `json:"is_recurring" db:"is_recurring"`
 	Frequency        *string               `json:"frequency,omitempty" db:"frequency"`
 	DayOfMonth       *int                  `json:"day_of_month,omitempty" db:"day_of_month"`
+	DaysOfWeek       []int                 `json:"days_of_week,omitempty" db:"days_of_week"`
 	RecurringEndDate *time.Time            `json:"recurring_end_date,omitempty" db:"recurring_end_date"`
 	IsActive         *bool                 `json:"is_active,omitempty" db:"is_active"`
 	CreatedAt        time.Time             `json:"created_at" db:"created_at"`
@@ -41,6 +42,7 @@ type CreateExpenseRequest struct {
 	IsRecurring      *bool      `json:"is_recurring,omitempty"`
 	Frequency        *string    `json:"frequency,omitempty" validate:"omitempty,oneof=daily weekly monthly yearly"`
 	DayOfMonth       *int       `json:"day_of_month,omitempty" validate:"omitempty,min=1,max=31"`
+	DaysOfWeek       []int      `json:"days_of_week,omitempty" validate:"omitempty,dive,min=0,max=6"`
 	RecurringEndDate *time.Time `json:"recurring_end_date,omitempty"`
 }
 
@@ -53,6 +55,7 @@ type UpdateExpenseRequest struct {
 	IsRecurring *bool      `json:"is_recurring,omitempty"`
 	Frequency   *string    `json:"frequency,omitempty" validate:"omitempty,oneof=daily weekly monthly yearly"`
 	DayOfMonth  *int       `json:"day_of_month,omitempty" validate:"omitempty,min=1,max=31"`
+	DaysOfWeek  []int      `json:"days_of_week,omitempty" validate:"omitempty,dive,min=0,max=6"`
 	IsActive    *bool      `json:"is_active,omitempty"`
 }
 
@@ -94,12 +97,12 @@ func CreateExpense(c *gin.Context, db *db.DB) {
 
 	var expense PersonalExpense
 	err = db.Pool.QueryRow(c.Request.Context(),
-		`INSERT INTO personal_expenses (user_id, category, amount, description, notes, expense_date, is_recurring, frequency, day_of_month, recurring_end_date, is_active, updated_at) 
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, true, NOW()) 
-		 RETURNING id, user_id, category, amount, description, notes, expense_date, is_recurring, frequency, day_of_month, recurring_end_date, is_active, created_at, updated_at`,
-		userID, req.Category, amount, req.Description, req.Notes, req.ExpenseDate, isRecurring, req.Frequency, req.DayOfMonth, req.RecurringEndDate).Scan(
+		`INSERT INTO personal_expenses (user_id, category, amount, description, notes, expense_date, is_recurring, frequency, day_of_month, days_of_week, recurring_end_date, is_active, updated_at) 
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, true, NOW()) 
+		 RETURNING id, user_id, category, amount, description, notes, expense_date, is_recurring, frequency, day_of_month, days_of_week, recurring_end_date, is_active, created_at, updated_at`,
+		userID, req.Category, amount, req.Description, req.Notes, req.ExpenseDate, isRecurring, req.Frequency, req.DayOfMonth, req.DaysOfWeek, req.RecurringEndDate).Scan(
 		&expense.ID, &expense.UserID, &expense.Category, &expense.Amount, &expense.Description,
-		&expense.Notes, &expense.ExpenseDate, &expense.IsRecurring, &expense.Frequency, &expense.DayOfMonth, &expense.RecurringEndDate, &expense.IsActive, &expense.CreatedAt, &expense.UpdatedAt)
+		&expense.Notes, &expense.ExpenseDate, &expense.IsRecurring, &expense.Frequency, &expense.DayOfMonth, &expense.DaysOfWeek, &expense.RecurringEndDate, &expense.IsActive, &expense.CreatedAt, &expense.UpdatedAt)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "failed to create expense"})
 		return
@@ -129,7 +132,7 @@ func ListExpenses(c *gin.Context, db *db.DB) {
 		}
 	}
 
-	query := `SELECT id, user_id, category, amount, description, notes, expense_date, is_recurring, frequency, day_of_month, recurring_end_date, is_active, created_at, updated_at 
+	query := `SELECT id, user_id, category, amount, description, notes, expense_date, is_recurring, frequency, day_of_month, days_of_week, recurring_end_date, is_active, created_at, updated_at 
 		      FROM personal_expenses 
 		      WHERE user_id = $1`
 	countQuery := `SELECT COUNT(*) FROM personal_expenses WHERE user_id = $1`
@@ -162,6 +165,14 @@ func ListExpenses(c *gin.Context, db *db.DB) {
 		}
 	}
 
+	if recurringStr := c.Query("recurring"); recurringStr != "" {
+		recurring := recurringStr == "true"
+		query += fmt.Sprintf(" AND is_recurring = $%d", argCount)
+		countQuery += fmt.Sprintf(" AND is_recurring = $%d", argCount)
+		args = append(args, recurring)
+		argCount++
+	}
+
 	var totalCount int
 	if err := db.Pool.QueryRow(c.Request.Context(), countQuery, args...).Scan(&totalCount); err != nil {
 		c.JSON(500, gin.H{"error": "failed to get total count"})
@@ -183,7 +194,7 @@ func ListExpenses(c *gin.Context, db *db.DB) {
 		var exp PersonalExpense
 		if err := rows.Scan(&exp.ID, &exp.UserID, &exp.Category, &exp.Amount, &exp.Description,
 			&exp.Notes, &exp.ExpenseDate, &exp.IsRecurring, &exp.Frequency, &exp.DayOfMonth,
-			&exp.RecurringEndDate, &exp.IsActive, &exp.CreatedAt, &exp.UpdatedAt); err != nil {
+			&exp.DaysOfWeek, &exp.RecurringEndDate, &exp.IsActive, &exp.CreatedAt, &exp.UpdatedAt); err != nil {
 			c.JSON(500, gin.H{"error": "failed to scan expense"})
 			return
 		}
@@ -220,12 +231,12 @@ func GetExpense(c *gin.Context, db *db.DB) {
 
 	var expense PersonalExpense
 	err = db.Pool.QueryRow(c.Request.Context(),
-		`SELECT id, user_id, category, amount, description, notes, expense_date, is_recurring, frequency, day_of_month, recurring_end_date, is_active, created_at, updated_at 
+		`SELECT id, user_id, category, amount, description, notes, expense_date, is_recurring, frequency, day_of_month, days_of_week, recurring_end_date, is_active, created_at, updated_at 
 		 FROM personal_expenses 
 		 WHERE id = $1 AND user_id = $2`,
 		expenseID, userID).Scan(&expense.ID, &expense.UserID, &expense.Category, &expense.Amount,
 		&expense.Description, &expense.Notes, &expense.ExpenseDate, &expense.IsRecurring, &expense.Frequency,
-		&expense.DayOfMonth, &expense.RecurringEndDate, &expense.IsActive, &expense.CreatedAt, &expense.UpdatedAt)
+		&expense.DayOfMonth, &expense.DaysOfWeek, &expense.RecurringEndDate, &expense.IsActive, &expense.CreatedAt, &expense.UpdatedAt)
 	if err != nil {
 		c.JSON(404, gin.H{"error": "expense not found"})
 		return
@@ -331,6 +342,11 @@ func UpdateExpense(c *gin.Context, db *db.DB) {
 		args = append(args, req.DayOfMonth)
 		argCount++
 	}
+	if req.DaysOfWeek != nil {
+		query += fmt.Sprintf(", days_of_week = $%d", argCount)
+		args = append(args, req.DaysOfWeek)
+		argCount++
+	}
 	if req.IsActive != nil {
 		query += fmt.Sprintf(", is_active = $%d", argCount)
 		args = append(args, req.IsActive)
@@ -342,14 +358,14 @@ func UpdateExpense(c *gin.Context, db *db.DB) {
 		return
 	}
 
-	query += fmt.Sprintf(" WHERE id = $%d RETURNING id, user_id, category, amount, description, notes, expense_date, is_recurring, frequency, day_of_month, recurring_end_date, is_active, created_at, updated_at", argCount)
+	query += fmt.Sprintf(" WHERE id = $%d RETURNING id, user_id, category, amount, description, notes, expense_date, is_recurring, frequency, day_of_month, days_of_week, recurring_end_date, is_active, created_at, updated_at", argCount)
 	args = append(args, expenseID)
 
 	var expense PersonalExpense
 	err = db.Pool.QueryRow(c.Request.Context(), query, args...).Scan(
 		&expense.ID, &expense.UserID, &expense.Category, &expense.Amount, &expense.Description,
 		&expense.Notes, &expense.ExpenseDate, &expense.IsRecurring, &expense.Frequency,
-		&expense.DayOfMonth, &expense.RecurringEndDate, &expense.IsActive, &expense.CreatedAt, &expense.UpdatedAt)
+		&expense.DayOfMonth, &expense.DaysOfWeek, &expense.RecurringEndDate, &expense.IsActive, &expense.CreatedAt, &expense.UpdatedAt)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "failed to update expense"})
 		return
