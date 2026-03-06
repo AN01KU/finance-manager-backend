@@ -314,11 +314,11 @@ func GetUserGroups(c *gin.Context, db *db.DB) {
 	}
 
 	memberRows, err := db.Pool.Query(c.Request.Context(),
-		`SELECT gm.group_id, u.id, u.email, u.username, gm.created_at
+		`SELECT gm.group_id, u.id, u.email, u.username, gm.joined_at
 		 FROM group_members gm
 		 JOIN users u ON gm.user_id = u.id
 		 WHERE gm.group_id = ANY($1)
-		 ORDER BY gm.group_id, gm.created_at`,
+		 ORDER BY gm.group_id, gm.joined_at`,
 		groupIDs)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "failed to get members"})
@@ -494,11 +494,11 @@ func GetMembers(c *gin.Context, db *db.DB) {
 	}
 
 	rows, err := db.Pool.Query(c.Request.Context(),
-		`SELECT u.id, u.email, u.username, gm.created_at
+		`SELECT u.id, u.email, u.username, gm.joined_at
 		 FROM users u
 		 JOIN group_members gm ON u.id = gm.user_id
 		 WHERE gm.group_id = $1
-		 ORDER BY gm.created_at ASC`,
+		 ORDER BY gm.joined_at ASC`,
 		groupID)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "failed to get members"})

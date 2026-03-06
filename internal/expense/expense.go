@@ -141,8 +141,8 @@ func CreateExpense(c *gin.Context, db *db.DB) {
 	// Insert expense
 	var exp Expense
 	err = tx.QueryRow(c.Request.Context(),
-		"INSERT INTO expenses (group_id, description, total_amount, paid_by, category) VALUES ($1, $2, $3, $4, $5) RETURNING id, group_id, description, total_amount, paid_by, created_at, category",
-		groupID, req.Description, totalAmount, userID, req.Category).Scan(&exp.ID, &exp.GroupID, &exp.Description, &exp.TotalAmount, &exp.PaidBy, &exp.CreatedAt, &exp.Category)
+		"INSERT INTO expenses (group_id, description, total_amount, paid_by) VALUES ($1, $2, $3, $4) RETURNING id, group_id, description, total_amount, paid_by, created_at",
+		groupID, req.Description, totalAmount, userID).Scan(&exp.ID, &exp.GroupID, &exp.Description, &exp.TotalAmount, &exp.PaidBy, &exp.CreatedAt)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "failed to create expense"})
 		return
@@ -216,7 +216,7 @@ func GetGroupExpenses(c *gin.Context, db *db.DB) {
 
 	// Get expenses with pagination
 	rows, err := db.Pool.Query(c.Request.Context(),
-		"SELECT id, group_id, description, total_amount, paid_by, created_at, category FROM expenses WHERE group_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3",
+		"SELECT id, group_id, description, total_amount, paid_by, created_at FROM expenses WHERE group_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3",
 		groupID, limit, offset)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "failed to get expenses"})
@@ -227,7 +227,7 @@ func GetGroupExpenses(c *gin.Context, db *db.DB) {
 	var expenses []Expense
 	for rows.Next() {
 		var exp Expense
-		if err := rows.Scan(&exp.ID, &exp.GroupID, &exp.Description, &exp.TotalAmount, &exp.PaidBy, &exp.CreatedAt, &exp.Category); err != nil {
+		if err := rows.Scan(&exp.ID, &exp.GroupID, &exp.Description, &exp.TotalAmount, &exp.PaidBy, &exp.CreatedAt); err != nil {
 			c.JSON(500, gin.H{"error": "failed to scan expense"})
 			return
 		}
@@ -288,7 +288,7 @@ func GetUserExpenses(c *gin.Context, db *db.DB) {
 	var expenses []Expense
 	for rows.Next() {
 		var exp Expense
-		if err := rows.Scan(&exp.ID, &exp.GroupID, &exp.Description, &exp.TotalAmount, &exp.PaidBy, &exp.CreatedAt, &exp.Category); err != nil {
+		if err := rows.Scan(&exp.ID, &exp.GroupID, &exp.Description, &exp.TotalAmount, &exp.PaidBy, &exp.CreatedAt); err != nil {
 			c.JSON(500, gin.H{"error": "failed to scan expense"})
 			return
 		}
