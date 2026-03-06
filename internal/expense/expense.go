@@ -1,6 +1,7 @@
 package expense
 
 import (
+	"log"
 	"strconv"
 	"time"
 
@@ -216,9 +217,10 @@ func GetGroupExpenses(c *gin.Context, db *db.DB) {
 
 	// Get expenses with pagination
 	rows, err := db.Pool.Query(c.Request.Context(),
-		"SELECT id, group_id, description, total_amount, paid_by, created_at FROM expenses WHERE group_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3",
+		"SELECT id, group_id, description, total_amount, paid_by, created_at, COALESCE(category, '') FROM expenses WHERE group_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3",
 		groupID, limit, offset)
 	if err != nil {
+		log.Printf("failed to get expenses: %v", err)
 		c.JSON(500, gin.H{"error": "failed to get expenses"})
 		return
 	}
@@ -227,11 +229,44 @@ func GetGroupExpenses(c *gin.Context, db *db.DB) {
 	var expenses []Expense
 	for rows.Next() {
 		var exp Expense
-		if err := rows.Scan(&exp.ID, &exp.GroupID, &exp.Description, &exp.TotalAmount, &exp.PaidBy, &exp.CreatedAt); err != nil {
+		if err := rows.Scan(&exp.ID, &exp.GroupID, &exp.Description, &exp.TotalAmount, &exp.PaidBy, &exp.CreatedAt, &exp.Category); err != nil {
+			log.Printf("failed to scan expense: %v", err)
 			c.JSON(500, gin.H{"error": "failed to scan expense"})
 			return
 		}
 		expenses = append(expenses, exp)
+	}
+
+	// Fetch splits for all expenses
+	if len(expenses) > 0 {
+		expenseIDs := make([]uuid.UUID, len(expenses))
+		for i, exp := range expenses {
+			expenseIDs[i] = exp.ID
+		}
+
+		splitRows, err := db.Pool.Query(c.Request.Context(),
+			"SELECT expense_id, user_id, amount FROM expense_splits WHERE expense_id = ANY($1)",
+			expenseIDs)
+		if err != nil {
+			log.Printf("failed to get splits: %v", err)
+			c.JSON(500, gin.H{"error": "failed to get splits"})
+			return
+		}
+		defer splitRows.Close()
+
+		splitsMap := make(map[uuid.UUID][]ExpenseSplit)
+		for splitRows.Next() {
+			var split ExpenseSplit
+			if err := splitRows.Scan(&split.ExpenseID, &split.UserID, &split.Amount); err != nil {
+				c.JSON(500, gin.H{"error": "failed to scan split"})
+				return
+			}
+			splitsMap[split.ExpenseID] = append(splitsMap[split.ExpenseID], split)
+		}
+
+		for i := range expenses {
+			expenses[i].Splits = splitsMap[expenses[i].ID]
+		}
 	}
 
 	// Get total count for pagination metadata
@@ -239,6 +274,7 @@ func GetGroupExpenses(c *gin.Context, db *db.DB) {
 	err = db.Pool.QueryRow(c.Request.Context(),
 		"SELECT COUNT(*) FROM expenses WHERE group_id = $1", groupID).Scan(&totalCount)
 	if err != nil {
+		log.Printf("failed to get total count: %v", err)
 		c.JSON(500, gin.H{"error": "failed to get total count"})
 		return
 	}
@@ -273,7 +309,7 @@ func GetUserExpenses(c *gin.Context, db *db.DB) {
 	}
 
 	rows, err := db.Pool.Query(c.Request.Context(),
-		`SELECT DISTINCT e.id, e.group_id, e.description, e.total_amount, e.paid_by, e.created_at, e.category
+		`SELECT DISTINCT e.id, e.group_id, e.description, e.total_amount, e.paid_by, e.created_at, COALESCE(e.category, '')
 		FROM expenses e
 		LEFT JOIN expense_splits es ON e.id = es.expense_id
 		WHERE e.paid_by = $1 OR es.user_id = $1
@@ -288,7 +324,7 @@ func GetUserExpenses(c *gin.Context, db *db.DB) {
 	var expenses []Expense
 	for rows.Next() {
 		var exp Expense
-		if err := rows.Scan(&exp.ID, &exp.GroupID, &exp.Description, &exp.TotalAmount, &exp.PaidBy, &exp.CreatedAt); err != nil {
+		if err := rows.Scan(&exp.ID, &exp.GroupID, &exp.Description, &exp.TotalAmount, &exp.PaidBy, &exp.CreatedAt, &exp.Category); err != nil {
 			c.JSON(500, gin.H{"error": "failed to scan expense"})
 			return
 		}
