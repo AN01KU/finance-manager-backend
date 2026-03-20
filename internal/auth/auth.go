@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -38,6 +39,7 @@ type Claims struct {
 type AuthService struct {
 	DB        *db.DB
 	JWTSecret string
+	OnSignup  func(ctx context.Context, userID uuid.UUID) // called after user creation
 }
 
 func Signup(c *gin.Context, service *AuthService) {
@@ -83,6 +85,11 @@ func Signup(c *gin.Context, service *AuthService) {
 		return
 	}
 
+	// Run post-signup hook (e.g., seed predefined categories)
+	if service.OnSignup != nil {
+		service.OnSignup(c.Request.Context(), u.ID)
+	}
+
 	// Generate token
 	token, err := generateToken(u.ID, u.Email, service.JWTSecret)
 	if err != nil {
@@ -91,6 +98,30 @@ func Signup(c *gin.Context, service *AuthService) {
 	}
 
 	c.JSON(201, AuthResponse{Token: token, User: u})
+}
+
+func GetMe(c *gin.Context, service *AuthService) {
+	val, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(401, gin.H{"error": "unauthorized"})
+		return
+	}
+	userID, ok := val.(uuid.UUID)
+	if !ok {
+		c.JSON(401, gin.H{"error": "unauthorized"})
+		return
+	}
+
+	var u user.User
+	err := service.DB.Pool.QueryRow(c.Request.Context(),
+		"SELECT id, email, username, created_at FROM users WHERE id = $1", userID).Scan(
+		&u.ID, &u.Email, &u.Username, &u.CreatedAt)
+	if err != nil {
+		c.JSON(404, gin.H{"error": "user not found"})
+		return
+	}
+
+	c.JSON(200, u)
 }
 
 func Login(c *gin.Context, service *AuthService) {

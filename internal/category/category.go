@@ -1,6 +1,7 @@
 package category
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -12,28 +13,83 @@ import (
 	"github.com/yanonymousV2/finance-manager-backend/internal/middleware"
 )
 
-type ExpenseCategory struct {
-	ID        uuid.UUID `json:"id" db:"id"`
-	UserID    uuid.UUID `json:"user_id" db:"user_id"`
-	Name      string    `json:"name" db:"name"`
-	Color     string    `json:"color" db:"color"`
-	Icon      string    `json:"icon" db:"icon"`
-	CreatedAt time.Time `json:"created_at" db:"created_at"`
+type CustomCategory struct {
+	ID            uuid.UUID `json:"id"`
+	UserID        uuid.UUID `json:"user_id"`
+	Name          string    `json:"name"`
+	Icon          string    `json:"icon"`
+	Color         string    `json:"color"`
+	IsHidden      bool      `json:"is_hidden"`
+	IsPredefined  bool      `json:"is_predefined"`
+	PredefinedKey *string   `json:"predefined_key,omitempty"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
 }
 
 type CreateCategoryRequest struct {
 	Name  string `json:"name" validate:"required,min=1,max=100"`
-	Color string `json:"color" validate:"omitempty,len=7"`
-	Icon  string `json:"icon" validate:"omitempty,max=50"`
+	Icon  string `json:"icon" validate:"required,max=50"`
+	Color string `json:"color" validate:"required,len=7"`
 }
 
 type UpdateCategoryRequest struct {
-	Name  *string `json:"name,omitempty" validate:"omitempty,min=1,max=100"`
-	Color *string `json:"color,omitempty" validate:"omitempty,len=7"`
-	Icon  *string `json:"icon,omitempty" validate:"omitempty,max=50"`
+	Name     *string `json:"name,omitempty" validate:"omitempty,min=1,max=100"`
+	Icon     *string `json:"icon,omitempty" validate:"omitempty,max=50"`
+	Color    *string `json:"color,omitempty" validate:"omitempty,len=7"`
+	IsHidden *bool   `json:"is_hidden,omitempty"`
 }
 
-// CreateCategory creates a new expense category
+type predefinedCategory struct {
+	Key   string
+	Name  string
+	Icon  string
+	Color string
+}
+
+var predefinedCategories = []predefinedCategory{
+	{"foodDining", "Food & Dining", "fork.knife.circle.fill", "#FF6B6B"},
+	{"transport", "Transport", "car.circle.fill", "#4ECDC4"},
+	{"housing", "Housing", "house.circle.fill", "#45B7D1"},
+	{"healthMedical", "Health & Medical", "cross.case.circle.fill", "#96CEB4"},
+	{"shopping", "Shopping", "bag.circle.fill", "#FFEAA7"},
+	{"utilities", "Utilities", "bolt.square.fill", "#DDA15E"},
+	{"entertainment", "Entertainment", "gamecontroller.circle.fill", "#BC6C25"},
+	{"travel", "Travel", "airplane.circle.fill", "#8E44AD"},
+	{"workProfessional", "Work & Professional", "briefcase.circle.fill", "#34495E"},
+	{"education", "Education", "book.circle.fill", "#3498DB"},
+	{"debtPayments", "Debt & Payments", "creditcard.circle.fill", "#2C3E50"},
+	{"booksMedia", "Books & Media", "book.closed.circle.fill", "#E74C3C"},
+	{"familyKids", "Family & Kids", "figure.2.and.child.holdinghands", "#F39C12"},
+	{"gifts", "Gifts", "gift.circle.fill", "#E91E63"},
+	{"other", "Other", "ellipsis.circle.fill", "#95A5A6"},
+}
+
+// SeedPredefinedCategories inserts the predefined categories for a user.
+func SeedPredefinedCategories(ctx context.Context, database *db.DB, userID uuid.UUID) error {
+	query := `INSERT INTO custom_categories (user_id, name, icon, color, is_hidden, is_predefined, predefined_key) VALUES `
+	args := []interface{}{}
+	argCount := 1
+
+	for i, cat := range predefinedCategories {
+		if i > 0 {
+			query += ", "
+		}
+		query += fmt.Sprintf("($%d, $%d, $%d, $%d, $%d, $%d, $%d)",
+			argCount, argCount+1, argCount+2, argCount+3, argCount+4, argCount+5, argCount+6)
+		args = append(args, userID, cat.Name, cat.Icon, cat.Color, false, true, cat.Key)
+		argCount += 7
+	}
+
+	query += ` ON CONFLICT (user_id, name) DO NOTHING`
+
+	_, err := database.Pool.Exec(ctx, query, args...)
+	if err != nil {
+		return fmt.Errorf("failed to seed predefined categories: %w", err)
+	}
+	return nil
+}
+
+// CreateCategory creates a new custom category
 func CreateCategory(c *gin.Context, db *db.DB) {
 	userID, ok := middleware.GetUserID(c)
 	if !ok {
@@ -53,21 +109,14 @@ func CreateCategory(c *gin.Context, db *db.DB) {
 		return
 	}
 
-	var category ExpenseCategory
-	color := req.Color
-	icon := req.Icon
-	if color == "" {
-		color = "#000000"
-	}
-	if icon == "" {
-		icon = "category"
-	}
+	var category CustomCategory
 	err := db.Pool.QueryRow(c.Request.Context(),
-		`INSERT INTO expense_categories (user_id, name, color, icon) 
-		 VALUES ($1, $2, $3, $4) 
-		 RETURNING id, user_id, name, COALESCE(color, ''), COALESCE(icon, ''), created_at`,
-		userID, req.Name, color, icon).Scan(
-		&category.ID, &category.UserID, &category.Name, &category.Color, &category.Icon, &category.CreatedAt)
+		`INSERT INTO custom_categories (user_id, name, icon, color, is_hidden, is_predefined, predefined_key)
+		 VALUES ($1, $2, $3, $4, false, false, NULL)
+		 RETURNING id, user_id, name, icon, color, is_hidden, is_predefined, predefined_key, created_at, updated_at`,
+		userID, req.Name, req.Icon, req.Color).Scan(
+		&category.ID, &category.UserID, &category.Name, &category.Icon, &category.Color,
+		&category.IsHidden, &category.IsPredefined, &category.PredefinedKey, &category.CreatedAt, &category.UpdatedAt)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "failed to create category"})
 		return
@@ -85,10 +134,10 @@ func ListCategories(c *gin.Context, db *db.DB) {
 	}
 
 	rows, err := db.Pool.Query(c.Request.Context(),
-		`SELECT id, user_id, name, COALESCE(color, ''), COALESCE(icon, ''), created_at 
-		 FROM expense_categories 
-		 WHERE user_id = $1 
-		 ORDER BY name ASC`,
+		`SELECT id, user_id, name, icon, color, is_hidden, is_predefined, predefined_key, created_at, updated_at
+		 FROM custom_categories
+		 WHERE user_id = $1
+		 ORDER BY is_predefined DESC, name ASC`,
 		userID)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "failed to retrieve categories"})
@@ -96,10 +145,11 @@ func ListCategories(c *gin.Context, db *db.DB) {
 	}
 	defer rows.Close()
 
-	var categories []ExpenseCategory
+	var categories []CustomCategory
 	for rows.Next() {
-		var cat ExpenseCategory
-		if err := rows.Scan(&cat.ID, &cat.UserID, &cat.Name, &cat.Color, &cat.Icon, &cat.CreatedAt); err != nil {
+		var cat CustomCategory
+		if err := rows.Scan(&cat.ID, &cat.UserID, &cat.Name, &cat.Icon, &cat.Color,
+			&cat.IsHidden, &cat.IsPredefined, &cat.PredefinedKey, &cat.CreatedAt, &cat.UpdatedAt); err != nil {
 			c.JSON(500, gin.H{"error": "failed to scan category"})
 			return
 		}
@@ -107,7 +157,7 @@ func ListCategories(c *gin.Context, db *db.DB) {
 	}
 
 	if categories == nil {
-		categories = []ExpenseCategory{}
+		categories = []CustomCategory{}
 	}
 
 	c.JSON(200, categories)
@@ -143,7 +193,7 @@ func UpdateCategory(c *gin.Context, db *db.DB) {
 	// Check if category belongs to user
 	var ownerID uuid.UUID
 	err = db.Pool.QueryRow(c.Request.Context(),
-		`SELECT user_id FROM expense_categories WHERE id = $1`, categoryID).Scan(&ownerID)
+		`SELECT user_id FROM custom_categories WHERE id = $1`, categoryID).Scan(&ownerID)
 	if err != nil {
 		c.JSON(404, gin.H{"error": "category not found"})
 		return
@@ -154,7 +204,7 @@ func UpdateCategory(c *gin.Context, db *db.DB) {
 	}
 
 	// Build update query dynamically
-	query := `UPDATE expense_categories SET `
+	query := `UPDATE custom_categories SET `
 	args := []interface{}{}
 	argCount := 1
 
@@ -163,14 +213,19 @@ func UpdateCategory(c *gin.Context, db *db.DB) {
 		args = append(args, *req.Name)
 		argCount++
 	}
+	if req.Icon != nil {
+		query += fmt.Sprintf("icon = $%d, ", argCount)
+		args = append(args, *req.Icon)
+		argCount++
+	}
 	if req.Color != nil {
 		query += fmt.Sprintf("color = $%d, ", argCount)
 		args = append(args, *req.Color)
 		argCount++
 	}
-	if req.Icon != nil {
-		query += fmt.Sprintf("icon = $%d, ", argCount)
-		args = append(args, *req.Icon)
+	if req.IsHidden != nil {
+		query += fmt.Sprintf("is_hidden = $%d, ", argCount)
+		args = append(args, *req.IsHidden)
 		argCount++
 	}
 
@@ -179,13 +234,14 @@ func UpdateCategory(c *gin.Context, db *db.DB) {
 		return
 	}
 
-	// Remove trailing comma and add WHERE clause
-	query = query[:len(query)-2] + fmt.Sprintf(" WHERE id = $%d RETURNING id, user_id, name, COALESCE(color, ''), COALESCE(icon, ''), created_at", argCount)
+	query += fmt.Sprintf("updated_at = NOW() ")
+	query += fmt.Sprintf("WHERE id = $%d RETURNING id, user_id, name, icon, color, is_hidden, is_predefined, predefined_key, created_at, updated_at", argCount)
 	args = append(args, categoryID)
 
-	var category ExpenseCategory
+	var category CustomCategory
 	err = db.Pool.QueryRow(c.Request.Context(), query, args...).Scan(
-		&category.ID, &category.UserID, &category.Name, &category.Color, &category.Icon, &category.CreatedAt)
+		&category.ID, &category.UserID, &category.Name, &category.Icon, &category.Color,
+		&category.IsHidden, &category.IsPredefined, &category.PredefinedKey, &category.CreatedAt, &category.UpdatedAt)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "failed to update category"})
 		return
@@ -209,10 +265,11 @@ func DeleteCategory(c *gin.Context, db *db.DB) {
 		return
 	}
 
-	// Check if category belongs to user
+	// Check if category belongs to user and get predefined_key
 	var ownerID uuid.UUID
+	var predefinedKey *string
 	err = db.Pool.QueryRow(c.Request.Context(),
-		`SELECT user_id FROM expense_categories WHERE id = $1`, categoryID).Scan(&ownerID)
+		`SELECT user_id, predefined_key FROM custom_categories WHERE id = $1`, categoryID).Scan(&ownerID, &predefinedKey)
 	if err != nil {
 		c.JSON(404, gin.H{"error": "category not found"})
 		return
@@ -222,8 +279,13 @@ func DeleteCategory(c *gin.Context, db *db.DB) {
 		return
 	}
 
+	if predefinedKey != nil && *predefinedKey == "other" {
+		c.JSON(400, gin.H{"error": "cannot delete the 'Other' category"})
+		return
+	}
+
 	_, err = db.Pool.Exec(c.Request.Context(),
-		`DELETE FROM expense_categories WHERE id = $1`, categoryID)
+		`DELETE FROM custom_categories WHERE id = $1`, categoryID)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "failed to delete category"})
 		return

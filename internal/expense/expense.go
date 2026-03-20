@@ -1,7 +1,7 @@
 package expense
 
 import (
-	"log"
+	"fmt"
 	"strconv"
 	"time"
 
@@ -16,33 +16,44 @@ import (
 )
 
 type Expense struct {
-	ID          uuid.UUID             `json:"id" db:"id"`
-	GroupID     uuid.UUID             `json:"group_id" db:"group_id"`
-	Description string                `json:"description" db:"description"`
-	TotalAmount helpers.StringDecimal `json:"total_amount" db:"total_amount"`
-	PaidBy      uuid.UUID             `json:"paid_by" db:"paid_by"`
-	CreatedAt   time.Time             `json:"created_at" db:"created_at"`
-	Splits      []ExpenseSplit        `json:"splits,omitempty"`
-	Category    string                `json:"category" db:"category"`
-}
-
-type ExpenseSplit struct {
-	ExpenseID uuid.UUID             `json:"expense_id" db:"expense_id"`
-	UserID    uuid.UUID             `json:"user_id" db:"user_id"`
-	Amount    helpers.StringDecimal `json:"amount" db:"amount"`
+	ID                 uuid.UUID            `json:"id" db:"id"`
+	UserID             uuid.UUID            `json:"user_id" db:"user_id"`
+	Amount             helpers.StringDecimal `json:"amount" db:"amount"`
+	Category           string               `json:"category" db:"category"`
+	Date               time.Time            `json:"date" db:"date"`
+	Time               *time.Time           `json:"time,omitempty" db:"time"`
+	Description        *string              `json:"description,omitempty" db:"description"`
+	Notes              *string              `json:"notes,omitempty" db:"notes"`
+	CreatedAt          time.Time            `json:"created_at" db:"created_at"`
+	UpdatedAt          time.Time            `json:"updated_at" db:"updated_at"`
+	IsDeleted          bool                 `json:"is_deleted" db:"is_deleted"`
+	RecurringExpenseID *uuid.UUID           `json:"recurring_expense_id,omitempty" db:"recurring_expense_id"`
+	GroupID            *uuid.UUID           `json:"group_id,omitempty" db:"group_id"`
+	GroupName          *string              `json:"group_name,omitempty" db:"group_name"`
 }
 
 type CreateExpenseRequest struct {
-	GroupID     uuid.UUID                   `json:"group_id" validate:"required"`
-	Description string                      `json:"description" validate:"required"`
-	TotalAmount string                      `json:"total_amount" validate:"required,numeric"`
-	Splits      []CreateExpenseSplitRequest `json:"splits" validate:"required,min=1,dive"`
-	Category    string                      `json:"category" validate:"required"`
+	Amount             string     `json:"amount" validate:"required,numeric"`
+	Category           string     `json:"category" validate:"required,max=50"`
+	Date               time.Time  `json:"date" validate:"required"`
+	Time               *time.Time `json:"time,omitempty"`
+	Description        *string    `json:"description,omitempty" validate:"omitempty,max=255"`
+	Notes              *string    `json:"notes,omitempty"`
+	RecurringExpenseID *uuid.UUID `json:"recurring_expense_id,omitempty"`
+	GroupID            *uuid.UUID `json:"group_id,omitempty"`
+	GroupName          *string    `json:"group_name,omitempty"`
 }
 
-type CreateExpenseSplitRequest struct {
-	UserID uuid.UUID `json:"user_id" validate:"required"`
-	Amount string    `json:"amount" validate:"required,numeric"`
+type UpdateExpenseRequest struct {
+	Amount             *string    `json:"amount,omitempty" validate:"omitempty,numeric"`
+	Category           *string    `json:"category,omitempty" validate:"omitempty,max=50"`
+	Date               *time.Time `json:"date,omitempty"`
+	Time               *time.Time `json:"time,omitempty"`
+	Description        *string    `json:"description,omitempty" validate:"omitempty,max=255"`
+	Notes              *string    `json:"notes,omitempty"`
+	RecurringExpenseID *uuid.UUID `json:"recurring_expense_id,omitempty"`
+	GroupID            *uuid.UUID `json:"group_id,omitempty"`
+	GroupName          *string    `json:"group_name,omitempty"`
 }
 
 func CreateExpense(c *gin.Context, db *db.DB) {
@@ -64,144 +75,42 @@ func CreateExpense(c *gin.Context, db *db.DB) {
 		return
 	}
 
-	// Parse total amount
-	totalAmount, err := decimal.NewFromString(req.TotalAmount)
+	amount, err := decimal.NewFromString(req.Amount)
 	if err != nil {
-		c.JSON(400, gin.H{"error": "invalid total amount format"})
+		c.JSON(400, gin.H{"error": "invalid amount format"})
 		return
 	}
 
-	if totalAmount.LessThanOrEqual(decimal.Zero) {
-		c.JSON(400, gin.H{"error": "total amount must be greater than 0"})
+	if amount.LessThanOrEqual(decimal.Zero) {
+		c.JSON(400, gin.H{"error": "amount must be greater than 0"})
 		return
 	}
 
-	groupID := req.GroupID
-
-	// Check if user is member of group
-	isMember, err := helpers.IsGroupMember(c.Request.Context(), db, groupID, userID)
-	if err != nil || !isMember {
-		c.JSON(403, gin.H{"error": "not a member of the group"})
-		return
-	}
-
-	// Validate splits: all users are members, sum == total
-	splitSum := decimal.Zero
-	userIDs := make(map[uuid.UUID]bool)
-	parsedSplits := make([]struct {
-		UserID uuid.UUID
-		Amount decimal.Decimal
-	}, len(req.Splits))
-
-	for i, split := range req.Splits {
-		if userIDs[split.UserID] {
-			c.JSON(400, gin.H{"error": "duplicate user in splits"})
-			return
-		}
-		userIDs[split.UserID] = true
-
-		// Parse split amount
-		amount, err := decimal.NewFromString(split.Amount)
-		if err != nil {
-			c.JSON(400, gin.H{"error": "invalid split amount format"})
-			return
-		}
-
-		if amount.LessThan(decimal.Zero) {
-			c.JSON(400, gin.H{"error": "split amount cannot be negative"})
-			return
-		}
-
-		parsedSplits[i].UserID = split.UserID
-		parsedSplits[i].Amount = amount
-		splitSum = splitSum.Add(amount)
-	}
-
-	if !splitSum.Equal(totalAmount) {
-		c.JSON(400, gin.H{"error": "splits sum does not match total amount"})
-		return
-	}
-
-	// Check all users are members
-	for uid := range userIDs {
-		isMember, err = helpers.IsGroupMember(c.Request.Context(), db, groupID, uid)
-		if err != nil || !isMember {
-			c.JSON(400, gin.H{"error": "all split users must be group members"})
-			return
-		}
-	}
-
-	// Start transaction
-	tx, err := db.Pool.Begin(c.Request.Context())
-	if err != nil {
-		c.JSON(500, gin.H{"error": "failed to start transaction"})
-		return
-	}
-	defer tx.Rollback(c.Request.Context())
-
-	// Insert expense
-	var exp Expense
-	err = tx.QueryRow(c.Request.Context(),
-		"INSERT INTO expenses (group_id, description, total_amount, paid_by) VALUES ($1, $2, $3, $4) RETURNING id, group_id, description, total_amount, paid_by, created_at",
-		groupID, req.Description, totalAmount, userID).Scan(&exp.ID, &exp.GroupID, &exp.Description, &exp.TotalAmount, &exp.PaidBy, &exp.CreatedAt)
+	var expense Expense
+	err = db.Pool.QueryRow(c.Request.Context(),
+		`INSERT INTO expenses (user_id, amount, category, date, time, description, notes, recurring_expense_id, group_id, group_name, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())
+		 RETURNING id, user_id, amount, category, date, time, description, notes, created_at, updated_at, is_deleted, recurring_expense_id, group_id, group_name`,
+		userID, amount, req.Category, req.Date, req.Time, req.Description, req.Notes, req.RecurringExpenseID, req.GroupID, req.GroupName).Scan(
+		&expense.ID, &expense.UserID, &expense.Amount, &expense.Category, &expense.Date, &expense.Time,
+		&expense.Description, &expense.Notes, &expense.CreatedAt, &expense.UpdatedAt, &expense.IsDeleted,
+		&expense.RecurringExpenseID, &expense.GroupID, &expense.GroupName)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "failed to create expense"})
 		return
 	}
 
-	// Insert splits
-	for _, split := range parsedSplits {
-		_, err = tx.Exec(c.Request.Context(),
-			"INSERT INTO expense_splits (expense_id, user_id, amount) VALUES ($1, $2, $3)",
-			exp.ID, split.UserID, split.Amount)
-		if err != nil {
-			c.JSON(500, gin.H{"error": "failed to create expense split"})
-			return
-		}
-	}
-
-	// Commit
-	if err := tx.Commit(c.Request.Context()); err != nil {
-		c.JSON(500, gin.H{"error": "failed to commit transaction"})
-		return
-	}
-
-	// Load splits for response
-	exp.Splits = make([]ExpenseSplit, len(parsedSplits))
-	for i, split := range parsedSplits {
-		exp.Splits[i] = ExpenseSplit{
-			ExpenseID: exp.ID,
-			UserID:    split.UserID,
-			Amount:    helpers.StringDecimal{split.Amount},
-		}
-	}
-
-	c.JSON(201, exp)
+	c.JSON(201, expense)
 }
 
-func GetGroupExpenses(c *gin.Context, db *db.DB) {
+func ListExpenses(c *gin.Context, db *db.DB) {
 	userID, ok := middleware.GetUserID(c)
 	if !ok {
 		c.JSON(401, gin.H{"error": "unauthorized"})
 		return
 	}
 
-	groupIDStr := c.Param("id")
-	groupID, err := uuid.Parse(groupIDStr)
-	if err != nil {
-		c.JSON(400, gin.H{"error": "invalid group id"})
-		return
-	}
-
-	// Check if user is member of group
-	isMember, err := helpers.IsGroupMember(c.Request.Context(), db, groupID, userID)
-	if err != nil || !isMember {
-		c.JSON(403, gin.H{"error": "not a member of the group"})
-		return
-	}
-
-	// Parse pagination parameters
-	limit := 50 // default
+	limit := 50
 	if limitStr := c.Query("limit"); limitStr != "" {
 		if l, err := strconv.Atoi(limitStr); err == nil && l > 0 && l <= 100 {
 			limit = l
@@ -215,13 +124,82 @@ func GetGroupExpenses(c *gin.Context, db *db.DB) {
 		}
 	}
 
-	// Get expenses with pagination
-	rows, err := db.Pool.Query(c.Request.Context(),
-		"SELECT id, group_id, description, total_amount, paid_by, created_at, COALESCE(category, '') FROM expenses WHERE group_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3",
-		groupID, limit, offset)
+	query := `SELECT id, user_id, amount, category, date, time, description, notes, created_at, updated_at, is_deleted, recurring_expense_id, group_id, group_name
+		      FROM expenses
+		      WHERE user_id = $1`
+	countQuery := `SELECT COUNT(*) FROM expenses WHERE user_id = $1`
+	args := []interface{}{userID}
+	argCount := 2
+
+	// Default: filter out deleted unless explicitly requested
+	if isDeletedStr := c.Query("is_deleted"); isDeletedStr == "true" {
+		query += fmt.Sprintf(" AND is_deleted = $%d", argCount)
+		countQuery += fmt.Sprintf(" AND is_deleted = $%d", argCount)
+		args = append(args, true)
+		argCount++
+	} else {
+		query += fmt.Sprintf(" AND is_deleted = $%d", argCount)
+		countQuery += fmt.Sprintf(" AND is_deleted = $%d", argCount)
+		args = append(args, false)
+		argCount++
+	}
+
+	if categoryStr := c.Query("category"); categoryStr != "" {
+		query += fmt.Sprintf(" AND category = $%d", argCount)
+		countQuery += fmt.Sprintf(" AND category = $%d", argCount)
+		args = append(args, categoryStr)
+		argCount++
+	}
+
+	if startDateStr := c.Query("start_date"); startDateStr != "" {
+		if startDate, err := time.Parse("2006-01-02", startDateStr); err == nil {
+			query += fmt.Sprintf(" AND date >= $%d", argCount)
+			countQuery += fmt.Sprintf(" AND date >= $%d", argCount)
+			args = append(args, startDate)
+			argCount++
+		}
+	}
+
+	if endDateStr := c.Query("end_date"); endDateStr != "" {
+		if endDate, err := time.Parse("2006-01-02", endDateStr); err == nil {
+			endDate = endDate.Add(24 * time.Hour)
+			query += fmt.Sprintf(" AND date < $%d", argCount)
+			countQuery += fmt.Sprintf(" AND date < $%d", argCount)
+			args = append(args, endDate)
+			argCount++
+		}
+	}
+
+	if groupIDStr := c.Query("group_id"); groupIDStr != "" {
+		if groupID, err := uuid.Parse(groupIDStr); err == nil {
+			query += fmt.Sprintf(" AND group_id = $%d", argCount)
+			countQuery += fmt.Sprintf(" AND group_id = $%d", argCount)
+			args = append(args, groupID)
+			argCount++
+		}
+	}
+
+	if recurringIDStr := c.Query("recurring_expense_id"); recurringIDStr != "" {
+		if recurringID, err := uuid.Parse(recurringIDStr); err == nil {
+			query += fmt.Sprintf(" AND recurring_expense_id = $%d", argCount)
+			countQuery += fmt.Sprintf(" AND recurring_expense_id = $%d", argCount)
+			args = append(args, recurringID)
+			argCount++
+		}
+	}
+
+	var totalCount int
+	if err := db.Pool.QueryRow(c.Request.Context(), countQuery, args...).Scan(&totalCount); err != nil {
+		c.JSON(500, gin.H{"error": "failed to get total count"})
+		return
+	}
+
+	query += fmt.Sprintf(" ORDER BY date DESC, created_at DESC LIMIT $%d OFFSET $%d", argCount, argCount+1)
+	args = append(args, limit, offset)
+
+	rows, err := db.Pool.Query(c.Request.Context(), query, args...)
 	if err != nil {
-		log.Printf("failed to get expenses: %v", err)
-		c.JSON(500, gin.H{"error": "failed to get expenses"})
+		c.JSON(500, gin.H{"error": "failed to retrieve expenses"})
 		return
 	}
 	defer rows.Close()
@@ -229,58 +207,21 @@ func GetGroupExpenses(c *gin.Context, db *db.DB) {
 	var expenses []Expense
 	for rows.Next() {
 		var exp Expense
-		if err := rows.Scan(&exp.ID, &exp.GroupID, &exp.Description, &exp.TotalAmount, &exp.PaidBy, &exp.CreatedAt, &exp.Category); err != nil {
-			log.Printf("failed to scan expense: %v", err)
+		if err := rows.Scan(&exp.ID, &exp.UserID, &exp.Amount, &exp.Category, &exp.Date, &exp.Time,
+			&exp.Description, &exp.Notes, &exp.CreatedAt, &exp.UpdatedAt, &exp.IsDeleted,
+			&exp.RecurringExpenseID, &exp.GroupID, &exp.GroupName); err != nil {
 			c.JSON(500, gin.H{"error": "failed to scan expense"})
 			return
 		}
 		expenses = append(expenses, exp)
 	}
 
-	// Fetch splits for all expenses
-	if len(expenses) > 0 {
-		expenseIDs := make([]uuid.UUID, len(expenses))
-		for i, exp := range expenses {
-			expenseIDs[i] = exp.ID
-		}
-
-		splitRows, err := db.Pool.Query(c.Request.Context(),
-			"SELECT expense_id, user_id, amount FROM expense_splits WHERE expense_id = ANY($1)",
-			expenseIDs)
-		if err != nil {
-			log.Printf("failed to get splits: %v", err)
-			c.JSON(500, gin.H{"error": "failed to get splits"})
-			return
-		}
-		defer splitRows.Close()
-
-		splitsMap := make(map[uuid.UUID][]ExpenseSplit)
-		for splitRows.Next() {
-			var split ExpenseSplit
-			if err := splitRows.Scan(&split.ExpenseID, &split.UserID, &split.Amount); err != nil {
-				c.JSON(500, gin.H{"error": "failed to scan split"})
-				return
-			}
-			splitsMap[split.ExpenseID] = append(splitsMap[split.ExpenseID], split)
-		}
-
-		for i := range expenses {
-			expenses[i].Splits = splitsMap[expenses[i].ID]
-		}
-	}
-
-	// Get total count for pagination metadata
-	var totalCount int
-	err = db.Pool.QueryRow(c.Request.Context(),
-		"SELECT COUNT(*) FROM expenses WHERE group_id = $1", groupID).Scan(&totalCount)
-	if err != nil {
-		log.Printf("failed to get total count: %v", err)
-		c.JSON(500, gin.H{"error": "failed to get total count"})
-		return
+	if expenses == nil {
+		expenses = []Expense{}
 	}
 
 	c.JSON(200, gin.H{
-		"expenses": expenses,
+		"data": expenses,
 		"pagination": gin.H{
 			"limit":  limit,
 			"offset": offset,
@@ -289,64 +230,191 @@ func GetGroupExpenses(c *gin.Context, db *db.DB) {
 	})
 }
 
-func GetUserExpenses(c *gin.Context, db *db.DB) {
+func GetExpense(c *gin.Context, db *db.DB) {
 	userID, ok := middleware.GetUserID(c)
 	if !ok {
 		c.JSON(401, gin.H{"error": "unauthorized"})
 		return
 	}
 
-	limitStr := c.DefaultQuery("limit", "20")
-	offsetStr := c.DefaultQuery("offset", "0")
-
-	limit, err := strconv.Atoi(limitStr)
-	if err != nil || limit < 1 {
-		limit = 20
-	}
-	offset, err := strconv.Atoi(offsetStr)
-	if err != nil || offset < 0 {
-		offset = 0
-	}
-
-	rows, err := db.Pool.Query(c.Request.Context(),
-		`SELECT DISTINCT e.id, e.group_id, e.description, e.total_amount, e.paid_by, e.created_at, COALESCE(e.category, '')
-		FROM expenses e
-		LEFT JOIN expense_splits es ON e.id = es.expense_id
-		WHERE e.paid_by = $1 OR es.user_id = $1
-		ORDER BY e.created_at DESC
-		LIMIT $2 OFFSET $3`, userID, limit, offset)
+	expenseIDStr := c.Param("id")
+	expenseID, err := uuid.Parse(expenseIDStr)
 	if err != nil {
-		c.JSON(500, gin.H{"error": "failed to get expenses"})
+		c.JSON(400, gin.H{"error": "invalid expense id"})
 		return
 	}
-	defer rows.Close()
 
-	var expenses []Expense
-	for rows.Next() {
-		var exp Expense
-		if err := rows.Scan(&exp.ID, &exp.GroupID, &exp.Description, &exp.TotalAmount, &exp.PaidBy, &exp.CreatedAt, &exp.Category); err != nil {
-			c.JSON(500, gin.H{"error": "failed to scan expense"})
+	var expense Expense
+	err = db.Pool.QueryRow(c.Request.Context(),
+		`SELECT id, user_id, amount, category, date, time, description, notes, created_at, updated_at, is_deleted, recurring_expense_id, group_id, group_name
+		 FROM expenses
+		 WHERE id = $1 AND user_id = $2`,
+		expenseID, userID).Scan(&expense.ID, &expense.UserID, &expense.Amount, &expense.Category,
+		&expense.Date, &expense.Time, &expense.Description, &expense.Notes, &expense.CreatedAt,
+		&expense.UpdatedAt, &expense.IsDeleted, &expense.RecurringExpenseID, &expense.GroupID, &expense.GroupName)
+	if err != nil {
+		c.JSON(404, gin.H{"error": "expense not found"})
+		return
+	}
+
+	c.JSON(200, expense)
+}
+
+func UpdateExpense(c *gin.Context, db *db.DB) {
+	userID, ok := middleware.GetUserID(c)
+	if !ok {
+		c.JSON(401, gin.H{"error": "unauthorized"})
+		return
+	}
+
+	expenseIDStr := c.Param("id")
+	expenseID, err := uuid.Parse(expenseIDStr)
+	if err != nil {
+		c.JSON(400, gin.H{"error": "invalid expense id"})
+		return
+	}
+
+	var req UpdateExpenseRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+
+	validate := validator.New()
+	if err := validate.Struct(req); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+
+	var parsedAmount *decimal.Decimal
+	if req.Amount != nil {
+		amount, err := decimal.NewFromString(*req.Amount)
+		if err != nil {
+			c.JSON(400, gin.H{"error": "invalid amount format"})
 			return
 		}
-		expenses = append(expenses, exp)
+		if amount.LessThanOrEqual(decimal.Zero) {
+			c.JSON(400, gin.H{"error": "amount must be greater than 0"})
+			return
+		}
+		parsedAmount = &amount
 	}
 
-	var totalCount int
+	var ownerID uuid.UUID
 	err = db.Pool.QueryRow(c.Request.Context(),
-		`SELECT COUNT(DISTINCT e.id) FROM expenses e
-		LEFT JOIN expense_splits es ON e.id = es.expense_id
-		WHERE e.paid_by = $1 OR es.user_id = $1`, userID).Scan(&totalCount)
+		`SELECT user_id FROM expenses WHERE id = $1`, expenseID).Scan(&ownerID)
 	if err != nil {
-		c.JSON(500, gin.H{"error": "failed to get total count"})
+		c.JSON(404, gin.H{"error": "expense not found"})
+		return
+	}
+	if ownerID != userID {
+		c.JSON(403, gin.H{"error": "not authorized to update this expense"})
 		return
 	}
 
-	c.JSON(200, gin.H{
-		"expenses": expenses,
-		"pagination": gin.H{
-			"limit":  limit,
-			"offset": offset,
-			"total":  totalCount,
-		},
-	})
+	query := `UPDATE expenses SET updated_at = NOW()`
+	args := []interface{}{}
+	argCount := 1
+
+	if parsedAmount != nil {
+		query += fmt.Sprintf(", amount = $%d", argCount)
+		args = append(args, parsedAmount)
+		argCount++
+	}
+	if req.Category != nil {
+		query += fmt.Sprintf(", category = $%d", argCount)
+		args = append(args, req.Category)
+		argCount++
+	}
+	if req.Date != nil {
+		query += fmt.Sprintf(", date = $%d", argCount)
+		args = append(args, req.Date)
+		argCount++
+	}
+	if req.Time != nil {
+		query += fmt.Sprintf(", time = $%d", argCount)
+		args = append(args, req.Time)
+		argCount++
+	}
+	if req.Description != nil {
+		query += fmt.Sprintf(", description = $%d", argCount)
+		args = append(args, req.Description)
+		argCount++
+	}
+	if req.Notes != nil {
+		query += fmt.Sprintf(", notes = $%d", argCount)
+		args = append(args, req.Notes)
+		argCount++
+	}
+	if req.RecurringExpenseID != nil {
+		query += fmt.Sprintf(", recurring_expense_id = $%d", argCount)
+		args = append(args, req.RecurringExpenseID)
+		argCount++
+	}
+	if req.GroupID != nil {
+		query += fmt.Sprintf(", group_id = $%d", argCount)
+		args = append(args, req.GroupID)
+		argCount++
+	}
+	if req.GroupName != nil {
+		query += fmt.Sprintf(", group_name = $%d", argCount)
+		args = append(args, req.GroupName)
+		argCount++
+	}
+
+	if argCount == 1 {
+		c.JSON(400, gin.H{"error": "no fields to update"})
+		return
+	}
+
+	query += fmt.Sprintf(" WHERE id = $%d RETURNING id, user_id, amount, category, date, time, description, notes, created_at, updated_at, is_deleted, recurring_expense_id, group_id, group_name", argCount)
+	args = append(args, expenseID)
+
+	var expense Expense
+	err = db.Pool.QueryRow(c.Request.Context(), query, args...).Scan(
+		&expense.ID, &expense.UserID, &expense.Amount, &expense.Category, &expense.Date, &expense.Time,
+		&expense.Description, &expense.Notes, &expense.CreatedAt, &expense.UpdatedAt, &expense.IsDeleted,
+		&expense.RecurringExpenseID, &expense.GroupID, &expense.GroupName)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "failed to update expense"})
+		return
+	}
+
+	c.JSON(200, expense)
+}
+
+func DeleteExpense(c *gin.Context, db *db.DB) {
+	userID, ok := middleware.GetUserID(c)
+	if !ok {
+		c.JSON(401, gin.H{"error": "unauthorized"})
+		return
+	}
+
+	expenseIDStr := c.Param("id")
+	expenseID, err := uuid.Parse(expenseIDStr)
+	if err != nil {
+		c.JSON(400, gin.H{"error": "invalid expense id"})
+		return
+	}
+
+	var ownerID uuid.UUID
+	err = db.Pool.QueryRow(c.Request.Context(),
+		`SELECT user_id FROM expenses WHERE id = $1`, expenseID).Scan(&ownerID)
+	if err != nil {
+		c.JSON(404, gin.H{"error": "expense not found"})
+		return
+	}
+	if ownerID != userID {
+		c.JSON(403, gin.H{"error": "not authorized to delete this expense"})
+		return
+	}
+
+	_, err = db.Pool.Exec(c.Request.Context(),
+		`UPDATE expenses SET is_deleted = true, updated_at = NOW() WHERE id = $1`, expenseID)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "failed to delete expense"})
+		return
+	}
+
+	c.JSON(200, gin.H{"message": "expense deleted successfully"})
 }

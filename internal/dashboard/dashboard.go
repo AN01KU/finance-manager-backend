@@ -69,7 +69,7 @@ func GetMonthlyDashboard(c *gin.Context, db *db.DB) {
 	var budgetAmount decimal.Decimal
 	var budget *helpers.StringDecimal
 	err := db.Pool.QueryRow(c.Request.Context(),
-		`SELECT COALESCE(amount, 0) FROM monthly_budgets WHERE user_id = $1 AND month = $2 AND year = $3`,
+		`SELECT COALESCE(budget_limit, 0) FROM monthly_budgets WHERE user_id = $1 AND month = $2 AND year = $3`,
 		userID, month, year).Scan(&budgetAmount)
 	if err == nil {
 		budget = &helpers.StringDecimal{budgetAmount}
@@ -79,8 +79,8 @@ func GetMonthlyDashboard(c *gin.Context, db *db.DB) {
 	var expenseCount int
 	err = db.Pool.QueryRow(c.Request.Context(),
 		`SELECT COALESCE(SUM(amount), 0), COUNT(*) 
-		 FROM personal_expenses 
-		 WHERE user_id = $1 AND expense_date >= $2 AND expense_date < $3`,
+		 FROM expenses 
+		 WHERE user_id = $1 AND date >= $2 AND date < $3 AND is_deleted = false`,
 		userID, startDate, endDate).Scan(&totalSpent, &expenseCount)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "failed to calculate total spent"})
@@ -88,11 +88,11 @@ func GetMonthlyDashboard(c *gin.Context, db *db.DB) {
 	}
 
 	rows, err := db.Pool.Query(c.Request.Context(),
-		`SELECT pe.category, pe.category, COALESCE(SUM(pe.amount), 0), COUNT(*) 
-		 FROM personal_expenses pe 
-		 WHERE pe.user_id = $1 AND pe.expense_date >= $2 AND pe.expense_date < $3 
-		 GROUP BY pe.category 
-		 ORDER BY SUM(pe.amount) DESC`,
+		`SELECT e.category, e.category, COALESCE(SUM(e.amount), 0), COUNT(*) 
+		 FROM expenses e 
+		 WHERE e.user_id = $1 AND e.date >= $2 AND e.date < $3 AND e.is_deleted = false
+		 GROUP BY e.category 
+		 ORDER BY SUM(e.amount) DESC`,
 		userID, startDate, endDate)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "failed to get category breakdown"})

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/joho/godotenv"
 
 	"github.com/yanonymousV2/finance-manager-backend/internal/auth"
@@ -22,7 +23,7 @@ import (
 	"github.com/yanonymousV2/finance-manager-backend/internal/expense"
 	"github.com/yanonymousV2/finance-manager-backend/internal/group"
 	"github.com/yanonymousV2/finance-manager-backend/internal/middleware"
-	"github.com/yanonymousV2/finance-manager-backend/internal/personalexpense"
+	"github.com/yanonymousV2/finance-manager-backend/internal/recurring"
 	"github.com/yanonymousV2/finance-manager-backend/internal/settlement"
 )
 
@@ -90,6 +91,11 @@ func main() {
 	authService := &auth.AuthService{
 		DB:        database,
 		JWTSecret: cfg.JWTSecret,
+		OnSignup: func(ctx context.Context, userID uuid.UUID) {
+			if err := category.SeedPredefinedCategories(ctx, database, userID); err != nil {
+				log.Printf("Warning: failed to seed categories for user %s: %v", userID, err)
+			}
+		},
 	}
 	log.Println("  ✓ Auth service created")
 
@@ -108,6 +114,38 @@ func main() {
 	protected := r.Group("/")
 	protected.Use(middleware.JWTAuth(cfg.JWTSecret))
 	{
+		// User profile
+		protected.GET("/me", func(c *gin.Context) { auth.GetMe(c, authService) })
+
+		// Expenses
+		protected.POST("/expenses", func(c *gin.Context) { expense.CreateExpense(c, database) })
+		protected.GET("/expenses", func(c *gin.Context) { expense.ListExpenses(c, database) })
+		protected.GET("/expenses/:id", func(c *gin.Context) { expense.GetExpense(c, database) })
+		protected.PUT("/expenses/:id", func(c *gin.Context) { expense.UpdateExpense(c, database) })
+		protected.DELETE("/expenses/:id", func(c *gin.Context) { expense.DeleteExpense(c, database) })
+
+		// Recurring Expenses
+		protected.POST("/recurring-expenses", func(c *gin.Context) { recurring.CreateRecurringExpense(c, database) })
+		protected.GET("/recurring-expenses", func(c *gin.Context) { recurring.ListRecurringExpenses(c, database) })
+		protected.GET("/recurring-expenses/:id", func(c *gin.Context) { recurring.GetRecurringExpense(c, database) })
+		protected.PUT("/recurring-expenses/:id", func(c *gin.Context) { recurring.UpdateRecurringExpense(c, database) })
+		protected.DELETE("/recurring-expenses/:id", func(c *gin.Context) { recurring.DeleteRecurringExpense(c, database) })
+
+		// Budgets
+		protected.POST("/budgets", func(c *gin.Context) { budget.CreateBudget(c, database) })
+		protected.GET("/budgets", func(c *gin.Context) { budget.ListBudgets(c, database) })
+		protected.PUT("/budgets/:id", func(c *gin.Context) { budget.UpdateBudget(c, database) })
+		protected.DELETE("/budgets/:id", func(c *gin.Context) { budget.DeleteBudget(c, database) })
+
+		// Categories
+		protected.POST("/categories", func(c *gin.Context) { category.CreateCategory(c, database) })
+		protected.GET("/categories", func(c *gin.Context) { category.ListCategories(c, database) })
+		protected.PUT("/categories/:id", func(c *gin.Context) { category.UpdateCategory(c, database) })
+		protected.DELETE("/categories/:id", func(c *gin.Context) { category.DeleteCategory(c, database) })
+
+		// Dashboard
+		protected.GET("/dashboard/monthly", func(c *gin.Context) { dashboard.GetMonthlyDashboard(c, database) })
+
 		// Groups
 		protected.POST("/groups", func(c *gin.Context) { group.CreateGroup(c, database) })
 		protected.GET("/groups", func(c *gin.Context) { group.GetUserGroups(c, database) })
@@ -116,34 +154,8 @@ func main() {
 		protected.GET("/groups/:id/members", func(c *gin.Context) { group.GetMembers(c, database) })
 		protected.GET("/groups/:id/balances", func(c *gin.Context) { group.GetBalances(c, database) })
 
-		// Group Expenses
-		protected.POST("/expenses", func(c *gin.Context) { expense.CreateExpense(c, database) })
-		protected.GET("/groups/:id/expenses", func(c *gin.Context) { expense.GetGroupExpenses(c, database) })
-		protected.GET("/expenses", func(c *gin.Context) { expense.GetUserExpenses(c, database) })
-
 		// Settlements
 		protected.POST("/settlements", func(c *gin.Context) { settlement.CreateSettlement(c, database) })
-
-		// Personal Finance - Budget
-		protected.POST("/budget", func(c *gin.Context) { budget.SetMonthlyBudget(c, database) })
-		protected.GET("/budget", func(c *gin.Context) { budget.GetMonthlyBudget(c, database) })
-		protected.GET("/budgets", func(c *gin.Context) { budget.ListBudgets(c, database) })
-
-		// Personal Finance - Categories
-		protected.POST("/categories", func(c *gin.Context) { category.CreateCategory(c, database) })
-		protected.GET("/categories", func(c *gin.Context) { category.ListCategories(c, database) })
-		protected.PUT("/categories/:id", func(c *gin.Context) { category.UpdateCategory(c, database) })
-		protected.DELETE("/categories/:id", func(c *gin.Context) { category.DeleteCategory(c, database) })
-
-		// Personal Finance - Expenses
-		protected.POST("/personal-expenses", func(c *gin.Context) { personalexpense.CreateExpense(c, database) })
-		protected.GET("/personal-expenses", func(c *gin.Context) { personalexpense.ListExpenses(c, database) })
-		protected.GET("/personal-expenses/:id", func(c *gin.Context) { personalexpense.GetExpense(c, database) })
-		protected.PUT("/personal-expenses/:id", func(c *gin.Context) { personalexpense.UpdateExpense(c, database) })
-		protected.DELETE("/personal-expenses/:id", func(c *gin.Context) { personalexpense.DeleteExpense(c, database) })
-
-		// Personal Finance - Dashboard
-		protected.GET("/dashboard/monthly", func(c *gin.Context) { dashboard.GetMonthlyDashboard(c, database) })
 	}
 	log.Println("  ✓ All protected routes setup")
 
