@@ -2,13 +2,14 @@ package middleware
 
 import (
 	"net/http"
+	"os"
+	"strconv"
 	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
 )
 
-// Simple in-memory rate limiter
 type rateLimiter struct {
 	requests map[string][]time.Time
 	mu       sync.Mutex
@@ -16,10 +17,19 @@ type rateLimiter struct {
 	window   time.Duration
 }
 
+func getEnvInt(key string, defaultVal int) int {
+	if val := os.Getenv(key); val != "" {
+		if intVal, err := strconv.Atoi(val); err == nil {
+			return intVal
+		}
+	}
+	return defaultVal
+}
+
 var limiter = &rateLimiter{
 	requests: make(map[string][]time.Time),
-	limit:    10,              // 10 requests
-	window:   1 * time.Minute, // per minute
+	limit:    getEnvInt("RATE_LIMIT", 10),
+	window:   time.Duration(getEnvInt("RATE_WINDOW_SECONDS", 60)) * time.Second,
 }
 
 // RateLimiter middleware to prevent brute force attacks
