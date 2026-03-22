@@ -164,6 +164,27 @@ func Login(c *gin.Context, service *AuthService) {
 	c.JSON(200, AuthResponse{Token: token, User: u})
 }
 
+func DeleteMe(c *gin.Context, service *AuthService) {
+	val, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(401, gin.H{"error": "unauthorized"})
+		return
+	}
+	userID, ok := val.(uuid.UUID)
+	if !ok {
+		c.JSON(401, gin.H{"error": "unauthorized"})
+		return
+	}
+
+	_, err := service.DB.Pool.Exec(c.Request.Context(), "DELETE FROM users WHERE id = $1", userID)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "failed to delete user"})
+		return
+	}
+
+	c.JSON(200, gin.H{"message": "user deleted successfully"})
+}
+
 func generateToken(userID uuid.UUID, email string, jwtSecret string) (string, error) {
 	claims := Claims{
 		UserID: userID,

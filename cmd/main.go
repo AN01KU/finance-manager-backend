@@ -116,6 +116,7 @@ func main() {
 	{
 		// User profile
 		protected.GET("/me", func(c *gin.Context) { auth.GetMe(c, authService) })
+		protected.DELETE("/me", func(c *gin.Context) { auth.DeleteMe(c, authService) })
 
 		// Expenses
 		protected.POST("/expenses", func(c *gin.Context) { expense.CreateExpense(c, database) })
