@@ -2,6 +2,7 @@ DROP TABLE IF EXISTS settlements CASCADE;
 DROP TABLE IF EXISTS expense_splits CASCADE;
 DROP TABLE IF EXISTS group_members CASCADE;
 DROP TABLE IF EXISTS groups CASCADE;
+DROP INDEX IF EXISTS idx_custom_categories_user_predefined_key;
 DROP TABLE IF EXISTS custom_categories CASCADE;
 DROP TABLE IF EXISTS monthly_budgets CASCADE;
 DROP TABLE IF EXISTS expenses CASCADE;

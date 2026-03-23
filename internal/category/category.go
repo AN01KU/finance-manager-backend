@@ -80,7 +80,7 @@ func SeedPredefinedCategories(ctx context.Context, database *db.DB, userID uuid.
 		argCount += 7
 	}
 
-	query += ` ON CONFLICT (user_id, name) DO NOTHING`
+	query += ` ON CONFLICT (user_id, predefined_key) WHERE predefined_key IS NOT NULL DO NOTHING`
 
 	_, err := database.Pool.Exec(ctx, query, args...)
 	if err != nil {
@@ -160,7 +160,7 @@ func ListCategories(c *gin.Context, db *db.DB) {
 		categories = []CustomCategory{}
 	}
 
-	c.JSON(200, categories)
+	c.JSON(200, gin.H{"data": categories})
 }
 
 // UpdateCategory updates an existing category

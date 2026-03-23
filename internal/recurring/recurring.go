@@ -165,7 +165,7 @@ func ListRecurringExpenses(c *gin.Context, db *db.DB) {
 		expenses = []RecurringExpense{}
 	}
 
-	c.JSON(200, expenses)
+	c.JSON(200, gin.H{"data": expenses})
 }
 
 func GetRecurringExpense(c *gin.Context, db *db.DB) {

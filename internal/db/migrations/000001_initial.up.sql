@@ -84,6 +84,7 @@ CREATE TABLE custom_categories (
 );
 
 CREATE INDEX idx_custom_categories_user_id ON custom_categories(user_id);
+CREATE UNIQUE INDEX idx_custom_categories_user_predefined_key ON custom_categories(user_id, predefined_key) WHERE predefined_key IS NOT NULL;
 
 -- Groups (Splitwise feature)
 CREATE TABLE groups (
