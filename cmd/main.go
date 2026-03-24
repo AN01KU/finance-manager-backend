@@ -24,6 +24,7 @@ import (
 	"github.com/yanonymousV2/finance-manager-backend/internal/group"
 	"github.com/yanonymousV2/finance-manager-backend/internal/middleware"
 	"github.com/yanonymousV2/finance-manager-backend/internal/recurring"
+	"github.com/yanonymousV2/finance-manager-backend/internal/seed"
 	"github.com/yanonymousV2/finance-manager-backend/internal/settlement"
 )
 
@@ -57,6 +58,13 @@ func main() {
 		log.Fatal("Failed to run migrations:", err)
 	}
 	log.Println("✓ Migrations completed successfully")
+
+	// Seed test data
+	log.Println("Seeding test data...")
+	if err := seed.Seed(ctx, database); err != nil {
+		log.Printf("Warning: failed to seed test data: %v", err)
+	}
+
 	log.Println("[MARKER] About to setup Gin router")
 
 	// Setup Gin
@@ -189,12 +197,15 @@ func main() {
 	log.Println("Shutting down server...")
 
 	// Graceful shutdown with 5 second timeout
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	if err := srv.Shutdown(ctx); err != nil {
+	if err := srv.Shutdown(shutdownCtx); err != nil {
 		log.Fatal("Server forced to shutdown:", err)
 	}
+
+	// Cleanup test data
+	seed.Cleanup(context.Background(), database)
 
 	log.Println("Server exited gracefully")
 }
