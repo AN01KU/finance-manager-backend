@@ -205,7 +205,7 @@ func GetBalances(c *gin.Context, db *db.DB) {
 
 	// Add from expenses: paid_by gets +total, split users get -amount
 	expRows, err := db.Pool.Query(c.Request.Context(),
-		"SELECT paid_by, total_amount FROM expenses WHERE group_id = $1", groupID)
+		"SELECT user_id, amount FROM expenses WHERE group_id = $1 AND is_deleted = FALSE", groupID)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "failed to get expenses"})
 		return
@@ -309,7 +309,7 @@ func GetUserGroups(c *gin.Context, db *db.DB) {
 	}
 
 	if len(groupIDs) == 0 {
-		c.JSON(200, []GroupWithDetails{})
+		c.JSON(200, gin.H{"data": []GroupWithDetails{}})
 		return
 	}
 
@@ -338,9 +338,9 @@ func GetUserGroups(c *gin.Context, db *db.DB) {
 	}
 
 	expenseRows, err := db.Pool.Query(c.Request.Context(),
-		`SELECT e.group_id, e.paid_by, e.total_amount
+		`SELECT e.group_id, e.user_id, e.amount
 		 FROM expenses e
-		 WHERE e.group_id = ANY($1)`,
+		 WHERE e.group_id = ANY($1) AND e.is_deleted = FALSE`,
 		groupIDs)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "failed to get expenses"})
@@ -470,7 +470,7 @@ func GetUserGroups(c *gin.Context, db *db.DB) {
 		})
 	}
 
-	c.JSON(200, groupsWithDetails)
+	c.JSON(200, gin.H{"data": groupsWithDetails})
 }
 
 func GetMembers(c *gin.Context, db *db.DB) {
@@ -596,9 +596,9 @@ func GetGroup(c *gin.Context, db *db.DB) {
 
 	// Get expenses
 	expenseRows, err := db.Pool.Query(c.Request.Context(),
-		`SELECT id, description, total_amount, paid_by, created_at 
-		FROM expenses 
-		WHERE group_id = $1 
+		`SELECT id, description, amount, user_id, created_at
+		FROM expenses
+		WHERE group_id = $1 AND is_deleted = FALSE
 		ORDER BY created_at DESC`, groupID)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "failed to get expenses"})
