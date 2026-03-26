@@ -33,6 +33,7 @@ type Expense struct {
 }
 
 type CreateExpenseRequest struct {
+	ID                 *uuid.UUID `json:"id,omitempty"`
 	Amount             string     `json:"amount" validate:"required,numeric"`
 	Category           string     `json:"category" validate:"required,max=50"`
 	Date               time.Time  `json:"date" validate:"required"`
@@ -86,12 +87,28 @@ func CreateExpense(c *gin.Context, db *db.DB) {
 		return
 	}
 
+	expenseID := uuid.New()
+	if req.ID != nil {
+		expenseID = *req.ID
+	}
+
 	var expense Expense
 	err = db.Pool.QueryRow(c.Request.Context(),
-		`INSERT INTO expenses (user_id, amount, category, date, time, description, notes, recurring_expense_id, group_id, group_name, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())
+		`INSERT INTO expenses (id, user_id, amount, category, date, time, description, notes, recurring_expense_id, group_id, group_name, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())
+		 ON CONFLICT (id) DO UPDATE SET
+		   amount = EXCLUDED.amount,
+		   category = EXCLUDED.category,
+		   date = EXCLUDED.date,
+		   time = EXCLUDED.time,
+		   description = EXCLUDED.description,
+		   notes = EXCLUDED.notes,
+		   recurring_expense_id = EXCLUDED.recurring_expense_id,
+		   group_id = EXCLUDED.group_id,
+		   group_name = EXCLUDED.group_name,
+		   updated_at = NOW()
 		 RETURNING id, user_id, amount, category, date, time, description, notes, created_at, updated_at, is_deleted, recurring_expense_id, group_id, group_name`,
-		userID, amount, req.Category, req.Date, req.Time, req.Description, req.Notes, req.RecurringExpenseID, req.GroupID, req.GroupName).Scan(
+		expenseID, userID, amount, req.Category, req.Date, req.Time, req.Description, req.Notes, req.RecurringExpenseID, req.GroupID, req.GroupName).Scan(
 		&expense.ID, &expense.UserID, &expense.Amount, &expense.Category, &expense.Date, &expense.Time,
 		&expense.Description, &expense.Notes, &expense.CreatedAt, &expense.UpdatedAt, &expense.IsDeleted,
 		&expense.RecurringExpenseID, &expense.GroupID, &expense.GroupName)

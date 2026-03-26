@@ -27,9 +27,10 @@ type CustomCategory struct {
 }
 
 type CreateCategoryRequest struct {
-	Name  string `json:"name" validate:"required,min=1,max=100"`
-	Icon  string `json:"icon" validate:"required,max=50"`
-	Color string `json:"color" validate:"required,len=7"`
+	ID    *uuid.UUID `json:"id,omitempty"`
+	Name  string     `json:"name" validate:"required,min=1,max=100"`
+	Icon  string     `json:"icon" validate:"required,max=50"`
+	Color string     `json:"color" validate:"required,len=7"`
 }
 
 type UpdateCategoryRequest struct {
@@ -109,12 +110,22 @@ func CreateCategory(c *gin.Context, db *db.DB) {
 		return
 	}
 
+	categoryID := uuid.New()
+	if req.ID != nil {
+		categoryID = *req.ID
+	}
+
 	var category CustomCategory
 	err := db.Pool.QueryRow(c.Request.Context(),
-		`INSERT INTO custom_categories (user_id, name, icon, color, is_hidden, is_predefined, predefined_key)
-		 VALUES ($1, $2, $3, $4, false, false, NULL)
+		`INSERT INTO custom_categories (id, user_id, name, icon, color, is_hidden, is_predefined, predefined_key)
+		 VALUES ($1, $2, $3, $4, $5, false, false, NULL)
+		 ON CONFLICT (id) DO UPDATE SET
+		   name = EXCLUDED.name,
+		   icon = EXCLUDED.icon,
+		   color = EXCLUDED.color,
+		   updated_at = NOW()
 		 RETURNING id, user_id, name, icon, color, is_hidden, is_predefined, predefined_key, created_at, updated_at`,
-		userID, req.Name, req.Icon, req.Color).Scan(
+		categoryID, userID, req.Name, req.Icon, req.Color).Scan(
 		&category.ID, &category.UserID, &category.Name, &category.Icon, &category.Color,
 		&category.IsHidden, &category.IsPredefined, &category.PredefinedKey, &category.CreatedAt, &category.UpdatedAt)
 	if err != nil {

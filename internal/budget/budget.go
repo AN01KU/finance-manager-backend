@@ -25,9 +25,10 @@ type MonthlyBudget struct {
 }
 
 type CreateBudgetRequest struct {
-	Limit string `json:"limit" validate:"required,numeric"`
-	Month int    `json:"month" validate:"required,min=1,max=12"`
-	Year  int    `json:"year" validate:"required,min=2000,max=2100"`
+	ID    *uuid.UUID `json:"id,omitempty"`
+	Limit string     `json:"limit" validate:"required,numeric"`
+	Month int        `json:"month" validate:"required,min=1,max=12"`
+	Year  int        `json:"year" validate:"required,min=2000,max=2100"`
 }
 
 type UpdateBudgetRequest struct {
@@ -67,14 +68,19 @@ func CreateBudget(c *gin.Context, db *db.DB) {
 		return
 	}
 
+	budgetID := uuid.New()
+	if req.ID != nil {
+		budgetID = *req.ID
+	}
+
 	var budget MonthlyBudget
 	err = db.Pool.QueryRow(c.Request.Context(),
-		`INSERT INTO monthly_budgets (user_id, budget_limit, month, year, updated_at)
-		 VALUES ($1, $2, $3, $4, NOW())
+		`INSERT INTO monthly_budgets (id, user_id, budget_limit, month, year, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, NOW())
 		 ON CONFLICT (user_id, month, year)
-		 DO UPDATE SET budget_limit = $2, updated_at = NOW()
+		 DO UPDATE SET budget_limit = EXCLUDED.budget_limit, updated_at = NOW()
 		 RETURNING id, user_id, budget_limit, month, year, created_at, updated_at`,
-		userID, amount, req.Month, req.Year).Scan(
+		budgetID, userID, amount, req.Month, req.Year).Scan(
 		&budget.ID, &budget.UserID, &budget.Limit, &budget.Month, &budget.Year,
 		&budget.CreatedAt, &budget.UpdatedAt)
 	if err != nil {

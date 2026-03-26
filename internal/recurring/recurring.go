@@ -33,6 +33,7 @@ type RecurringExpense struct {
 }
 
 type CreateRecurringExpenseRequest struct {
+	ID         *uuid.UUID `json:"id,omitempty"`
 	Name       string     `json:"name" validate:"required"`
 	Amount     string     `json:"amount" validate:"required,numeric"`
 	Category   string     `json:"category" validate:"required"`
@@ -107,12 +108,28 @@ func CreateRecurringExpense(c *gin.Context, db *db.DB) {
 		return
 	}
 
+	recurringID := uuid.New()
+	if req.ID != nil {
+		recurringID = *req.ID
+	}
+
 	var expense RecurringExpense
 	err = db.Pool.QueryRow(c.Request.Context(),
-		`INSERT INTO recurring_expenses (user_id, name, amount, category, frequency, day_of_month, days_of_week, start_date, end_date, is_active, notes, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, true, $10, NOW())
+		`INSERT INTO recurring_expenses (id, user_id, name, amount, category, frequency, day_of_month, days_of_week, start_date, end_date, is_active, notes, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, true, $11, NOW())
+		 ON CONFLICT (id) DO UPDATE SET
+		   name = EXCLUDED.name,
+		   amount = EXCLUDED.amount,
+		   category = EXCLUDED.category,
+		   frequency = EXCLUDED.frequency,
+		   day_of_month = EXCLUDED.day_of_month,
+		   days_of_week = EXCLUDED.days_of_week,
+		   start_date = EXCLUDED.start_date,
+		   end_date = EXCLUDED.end_date,
+		   notes = EXCLUDED.notes,
+		   updated_at = NOW()
 		 RETURNING id, user_id, name, amount, category, frequency, day_of_month, days_of_week, start_date, end_date, is_active, last_added_date, notes, created_at, updated_at`,
-		userID, req.Name, amount, req.Category, req.Frequency, req.DayOfMonth, req.DaysOfWeek, req.StartDate, req.EndDate, req.Notes).Scan(
+		recurringID, userID, req.Name, amount, req.Category, req.Frequency, req.DayOfMonth, req.DaysOfWeek, req.StartDate, req.EndDate, req.Notes).Scan(
 		&expense.ID, &expense.UserID, &expense.Name, &expense.Amount, &expense.Category,
 		&expense.Frequency, &expense.DayOfMonth, &expense.DaysOfWeek, &expense.StartDate,
 		&expense.EndDate, &expense.IsActive, &expense.LastAddedDate, &expense.Notes, &expense.CreatedAt, &expense.UpdatedAt)
