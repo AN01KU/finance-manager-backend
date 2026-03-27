@@ -33,6 +33,7 @@ docker-compose up --build
 | `PORT` | No | `8080` | |
 | `RATE_LIMIT` | No | `10` | Max requests per window |
 | `RATE_WINDOW_SECONDS` | No | `60` | Rate limit window in seconds |
+| `GIN_MODE` | No | `debug` | Set to `release` in production to enable rate limiting (rate limiter is skipped in non-release mode) |
 
 Migrations run automatically on startup via `golang-migrate`. No manual migration step needed.
 
