@@ -114,7 +114,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"type\": \"expense\",\n  \"amount\": \"350\",\n  \"category\": \"Food & Dining\",\n  \"date\": \"2026-03-27\",\n  \"description\": \"Lunch at office\"\n}"
+              "raw": "{\n  \"type\": \"expense\",\n  \"amount\": \"350\",\n  \"category\": \"Food & Dining\",\n  \"date\": 1774569600000,\n  \"description\": \"Lunch at office\"\n}"
             },
             "url": { "raw": "{{base_url}}/transactions", "host": ["{{base_url}}"], "path": ["transactions"] }
           }
@@ -129,7 +129,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"type\": \"income\",\n  \"amount\": \"85000\",\n  \"category\": \"Work & Professional\",\n  \"date\": \"2026-03-27\",\n  \"description\": \"March Salary\",\n  \"notes\": \"Net after TDS\"\n}"
+              "raw": "{\n  \"type\": \"income\",\n  \"amount\": \"85000\",\n  \"category\": \"Work & Professional\",\n  \"date\": 1774569600000,\n  \"description\": \"March Salary\",\n  \"notes\": \"Net after TDS\"\n}"
             },
             "url": { "raw": "{{base_url}}/transactions", "host": ["{{base_url}}"], "path": ["transactions"] }
           }
@@ -144,7 +144,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"id\": \"f1000001-0000-0000-0000-000000000001\",\n  \"type\": \"expense\",\n  \"amount\": \"500\",\n  \"category\": \"Transport\",\n  \"date\": \"2026-03-27\",\n  \"description\": \"Cab to airport\"\n}"
+              "raw": "{\n  \"id\": \"f1000001-0000-0000-0000-000000000001\",\n  \"type\": \"expense\",\n  \"amount\": \"500\",\n  \"category\": \"Transport\",\n  \"date\": 1774569600000,\n  \"description\": \"Cab to airport\"\n}"
             },
             "url": { "raw": "{{base_url}}/transactions", "host": ["{{base_url}}"], "path": ["transactions"] }
           }
@@ -161,8 +161,8 @@
               "query": [
                 { "key": "type", "value": "expense", "disabled": true },
                 { "key": "category", "value": "Food & Dining", "disabled": true },
-                { "key": "start_date", "value": "2026-03-01", "disabled": true },
-                { "key": "end_date", "value": "2026-03-31", "disabled": true },
+                { "key": "start_date", "value": "1772323200000", "disabled": true },
+                { "key": "end_date", "value": "1774915200000", "disabled": true },
                 { "key": "limit", "value": "20", "disabled": true },
                 { "key": "offset", "value": "0", "disabled": true }
               ]
@@ -228,7 +228,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"House Rent\",\n  \"amount\": \"15000\",\n  \"category\": \"Housing\",\n  \"frequency\": \"monthly\",\n  \"day_of_month\": 1,\n  \"start_date\": \"2026-01-01T00:00:00Z\",\n  \"notes\": \"Monthly rent\"\n}"
+              "raw": "{\n  \"name\": \"House Rent\",\n  \"amount\": \"15000\",\n  \"category\": \"Housing\",\n  \"frequency\": \"monthly\",\n  \"day_of_month\": 1,\n  \"start_date\": 1767225600000,\n  \"notes\": \"Monthly rent\"\n}"
             },
             "url": { "raw": "{{base_url}}/recurring-expenses", "host": ["{{base_url}}"], "path": ["recurring-expenses"] }
           }
@@ -243,7 +243,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"Weekly groceries\",\n  \"amount\": \"800\",\n  \"category\": \"Food & Dining\",\n  \"frequency\": \"weekly\",\n  \"days_of_week\": [6],\n  \"start_date\": \"2026-01-01T00:00:00Z\"\n}"
+              "raw": "{\n  \"name\": \"Weekly groceries\",\n  \"amount\": \"800\",\n  \"category\": \"Food & Dining\",\n  \"frequency\": \"weekly\",\n  \"days_of_week\": [6],\n  \"start_date\": 1767225600000\n}"
             },
             "url": { "raw": "{{base_url}}/recurring-expenses", "host": ["{{base_url}}"], "path": ["recurring-expenses"] }
           }
@@ -523,7 +523,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"paid_by_user_id\": \"aaaaaaaa-0001-0001-0001-aaaaaaaaaaaa\",\n  \"total_amount\": \"1200\",\n  \"category\": \"Food & Dining\",\n  \"date\": \"2026-03-27\",\n  \"description\": \"Dinner split 3 ways\",\n  \"splits\": [\n    { \"user_id\": \"aaaaaaaa-0001-0001-0001-aaaaaaaaaaaa\", \"amount\": \"400\" },\n    { \"user_id\": \"bbbbbbbb-0002-0002-0002-bbbbbbbbbbbb\", \"amount\": \"400\" },\n    { \"user_id\": \"cccccccc-0003-0003-0003-cccccccccccc\", \"amount\": \"400\" }\n  ]\n}"
+              "raw": "{\n  \"paid_by_user_id\": \"aaaaaaaa-0001-0001-0001-aaaaaaaaaaaa\",\n  \"total_amount\": \"1200\",\n  \"category\": \"Food & Dining\",\n  \"date\": 1774569600000,\n  \"description\": \"Dinner split 3 ways\",\n  \"splits\": [\n    { \"user_id\": \"aaaaaaaa-0001-0001-0001-aaaaaaaaaaaa\", \"amount\": \"400\" },\n    { \"user_id\": \"bbbbbbbb-0002-0002-0002-bbbbbbbbbbbb\", \"amount\": \"400\" },\n    { \"user_id\": \"cccccccc-0003-0003-0003-cccccccccccc\", \"amount\": \"400\" }\n  ]\n}"
             },
             "url": { "raw": "{{base_url}}/groups/eeeeeeee-0001-0001-0001-eeeeeeeeeeee/transactions", "host": ["{{base_url}}"], "path": ["groups", "eeeeeeee-0001-0001-0001-eeeeeeeeeeee", "transactions"] }
           }
@@ -538,7 +538,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"paid_by_user_id\": \"aaaaaaaa-0001-0001-0001-aaaaaaaaaaaa\",\n  \"total_amount\": \"3000\",\n  \"category\": \"Travel\",\n  \"date\": \"2026-03-27\",\n  \"description\": \"Taxi to airport\",\n  \"splits\": [\n    { \"user_id\": \"aaaaaaaa-0001-0001-0001-aaaaaaaaaaaa\", \"amount\": \"1500\" },\n    { \"user_id\": \"bbbbbbbb-0002-0002-0002-bbbbbbbbbbbb\", \"amount\": \"1000\" },\n    { \"user_id\": \"cccccccc-0003-0003-0003-cccccccccccc\", \"amount\": \"500\" }\n  ]\n}"
+              "raw": "{\n  \"paid_by_user_id\": \"aaaaaaaa-0001-0001-0001-aaaaaaaaaaaa\",\n  \"total_amount\": \"3000\",\n  \"category\": \"Travel\",\n  \"date\": 1774569600000,\n  \"description\": \"Taxi to airport\",\n  \"splits\": [\n    { \"user_id\": \"aaaaaaaa-0001-0001-0001-aaaaaaaaaaaa\", \"amount\": \"1500\" },\n    { \"user_id\": \"bbbbbbbb-0002-0002-0002-bbbbbbbbbbbb\", \"amount\": \"1000\" },\n    { \"user_id\": \"cccccccc-0003-0003-0003-cccccccccccc\", \"amount\": \"500\" }\n  ]\n}"
             },
             "url": { "raw": "{{base_url}}/groups/eeeeeeee-0001-0001-0001-eeeeeeeeeeee/transactions", "host": ["{{base_url}}"], "path": ["groups", "eeeeeeee-0001-0001-0001-eeeeeeeeeeee", "transactions"] }
           }
