@@ -19,17 +19,17 @@ import (
 // ---------------------------------------------------------------------------
 
 type Group struct {
-	ID        uuid.UUID `json:"id"`
-	Name      string    `json:"name"`
-	CreatedBy uuid.UUID `json:"created_by"`
-	CreatedAt time.Time `json:"created_at"`
+	ID        uuid.UUID           `json:"id"`
+	Name      string              `json:"name"`
+	CreatedBy uuid.UUID           `json:"created_by"`
+	CreatedAt helpers.EpochMillis `json:"created_at"`
 }
 
 type GroupMember struct {
-	UserID    uuid.UUID `json:"id"`
-	Email     string    `json:"email"`
-	Username  string    `json:"username"`
-	CreatedAt time.Time `json:"joined_at"`
+	UserID    uuid.UUID           `json:"id"`
+	Email     string              `json:"email"`
+	Username  string              `json:"username"`
+	CreatedAt helpers.EpochMillis `json:"joined_at"`
 }
 
 type Balance struct {
@@ -38,27 +38,27 @@ type Balance struct {
 }
 
 type GroupWithDetails struct {
-	ID        uuid.UUID     `json:"id"`
-	Name      string        `json:"name"`
-	CreatedBy uuid.UUID     `json:"created_by"`
-	CreatedAt time.Time     `json:"created_at"`
-	Members   []GroupMember `json:"members"`
-	Balances  []Balance     `json:"balances"`
+	ID        uuid.UUID           `json:"id"`
+	Name      string              `json:"name"`
+	CreatedBy uuid.UUID           `json:"created_by"`
+	CreatedAt helpers.EpochMillis `json:"created_at"`
+	Members   []GroupMember       `json:"members"`
+	Balances  []Balance           `json:"balances"`
 }
 
 type GroupTransaction struct {
-	ID            uuid.UUID             `json:"id"`
-	GroupID       uuid.UUID             `json:"group_id"`
-	PaidByUserID  uuid.UUID             `json:"paid_by_user_id"`
-	TotalAmount   helpers.StringDecimal `json:"total_amount"`
-	Category      string                `json:"category"`
-	Date          time.Time             `json:"date"`
-	Description   *string               `json:"description,omitempty"`
-	Notes         *string               `json:"notes,omitempty"`
-	IsDeleted     bool                  `json:"is_deleted"`
-	CreatedAt     time.Time             `json:"created_at"`
-	UpdatedAt     time.Time             `json:"updated_at"`
-	Splits        []SplitDetail         `json:"splits"`
+	ID           uuid.UUID             `json:"id"`
+	GroupID      uuid.UUID             `json:"group_id"`
+	PaidByUserID uuid.UUID             `json:"paid_by_user_id"`
+	TotalAmount  helpers.StringDecimal `json:"total_amount"`
+	Category     string                `json:"category"`
+	Date         helpers.EpochMillis   `json:"date"`
+	Description  *string               `json:"description,omitempty"`
+	Notes        *string               `json:"notes,omitempty"`
+	IsDeleted    bool                  `json:"is_deleted"`
+	CreatedAt    helpers.EpochMillis   `json:"created_at"`
+	UpdatedAt    helpers.EpochMillis   `json:"updated_at"`
+	Splits       []SplitDetail         `json:"splits"`
 }
 
 type SplitDetail struct {
@@ -78,17 +78,17 @@ type CreateGroupTransactionRequest struct {
 	PaidByUserID uuid.UUID    `json:"paid_by_user_id" validate:"required"`
 	TotalAmount  string       `json:"total_amount" validate:"required,numeric"`
 	Category     string       `json:"category" validate:"required,max=100"`
-	Date         time.Time    `json:"date" validate:"required"`
+	Date         int64        `json:"date" validate:"required"`
 	Description  *string      `json:"description,omitempty" validate:"omitempty,max=255"`
 	Notes        *string      `json:"notes,omitempty"`
 	Splits       []SplitInput `json:"splits" validate:"required,min=1,dive"`
 }
 
 type UpdateGroupTransactionRequest struct {
-	Category    *string    `json:"category,omitempty" validate:"omitempty,max=100"`
-	Date        *time.Time `json:"date,omitempty"`
-	Description *string    `json:"description,omitempty" validate:"omitempty,max=255"`
-	Notes       *string    `json:"notes,omitempty"`
+	Category    *string `json:"category,omitempty" validate:"omitempty,max=100"`
+	Date        *int64  `json:"date,omitempty"`
+	Description *string `json:"description,omitempty" validate:"omitempty,max=255"`
+	Notes       *string `json:"notes,omitempty"`
 }
 
 type CreateGroupRequest struct {
@@ -130,9 +130,11 @@ func CreateGroup(c *gin.Context, database *db.DB) {
 	defer tx.Rollback(c.Request.Context())
 
 	var g Group
+	var rawGroupCreatedAt time.Time
 	err = tx.QueryRow(c.Request.Context(),
 		"INSERT INTO groups (name, created_by) VALUES ($1, $2) RETURNING id, name, created_by, created_at",
-		req.Name, userID).Scan(&g.ID, &g.Name, &g.CreatedBy, &g.CreatedAt)
+		req.Name, userID).Scan(&g.ID, &g.Name, &g.CreatedBy, &rawGroupCreatedAt)
+	g.CreatedAt = helpers.FromTime(rawGroupCreatedAt)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "failed to create group"})
 		return
@@ -176,10 +178,12 @@ func GetUserGroups(c *gin.Context, database *db.DB) {
 	var groupIDs []uuid.UUID
 	for rows.Next() {
 		var g Group
-		if err := rows.Scan(&g.ID, &g.Name, &g.CreatedBy, &g.CreatedAt); err != nil {
+		var rawCreatedAt time.Time
+		if err := rows.Scan(&g.ID, &g.Name, &g.CreatedBy, &rawCreatedAt); err != nil {
 			c.JSON(500, gin.H{"error": "failed to scan group"})
 			return
 		}
+		g.CreatedAt = helpers.FromTime(rawCreatedAt)
 		groups = append(groups, g)
 		groupIDs = append(groupIDs, g.ID)
 	}
@@ -206,10 +210,12 @@ func GetUserGroups(c *gin.Context, database *db.DB) {
 	for memberRows.Next() {
 		var gid uuid.UUID
 		var m GroupMember
-		if err := memberRows.Scan(&gid, &m.UserID, &m.Email, &m.Username, &m.CreatedAt); err != nil {
+		var rawJoinedAt time.Time
+		if err := memberRows.Scan(&gid, &m.UserID, &m.Email, &m.Username, &rawJoinedAt); err != nil {
 			c.JSON(500, gin.H{"error": "failed to scan member"})
 			return
 		}
+		m.CreatedAt = helpers.FromTime(rawJoinedAt)
 		membersByGroup[gid] = append(membersByGroup[gid], m)
 	}
 
@@ -315,9 +321,11 @@ func GetGroup(c *gin.Context, database *db.DB) {
 	}
 
 	var g Group
+	var rawGroupCreatedAt2 time.Time
 	err = database.Pool.QueryRow(c.Request.Context(),
 		"SELECT id, name, created_by, created_at FROM groups WHERE id = $1", groupID,
-	).Scan(&g.ID, &g.Name, &g.CreatedBy, &g.CreatedAt)
+	).Scan(&g.ID, &g.Name, &g.CreatedBy, &rawGroupCreatedAt2)
+	g.CreatedAt = helpers.FromTime(rawGroupCreatedAt2)
 	if err != nil {
 		c.JSON(404, gin.H{"error": "group not found"})
 		return
@@ -338,10 +346,12 @@ func GetGroup(c *gin.Context, database *db.DB) {
 	isMember := false
 	for memberRows.Next() {
 		var m GroupMember
-		if err := memberRows.Scan(&m.UserID, &m.Email, &m.Username, &m.CreatedAt); err != nil {
+		var rawJoinedAt time.Time
+		if err := memberRows.Scan(&m.UserID, &m.Email, &m.Username, &rawJoinedAt); err != nil {
 			c.JSON(500, gin.H{"error": "failed to scan member"})
 			return
 		}
+		m.CreatedAt = helpers.FromTime(rawJoinedAt)
 		if m.UserID == userID {
 			isMember = true
 		}
@@ -518,10 +528,12 @@ func GetMembers(c *gin.Context, database *db.DB) {
 	members := []GroupMember{}
 	for rows.Next() {
 		var m GroupMember
-		if err := rows.Scan(&m.UserID, &m.Email, &m.Username, &m.CreatedAt); err != nil {
+		var rawJoinedAt time.Time
+		if err := rows.Scan(&m.UserID, &m.Email, &m.Username, &rawJoinedAt); err != nil {
 			c.JSON(500, gin.H{"error": "failed to scan member"})
 			return
 		}
+		m.CreatedAt = helpers.FromTime(rawJoinedAt)
 		members = append(members, m)
 	}
 
@@ -560,10 +572,12 @@ func GetBalances(c *gin.Context, database *db.DB) {
 	var members []GroupMember
 	for memberRows.Next() {
 		var m GroupMember
-		if err := memberRows.Scan(&m.UserID, &m.Email, &m.Username, &m.CreatedAt); err != nil {
+		var rawJoinedAt time.Time
+		if err := memberRows.Scan(&m.UserID, &m.Email, &m.Username, &rawJoinedAt); err != nil {
 			c.JSON(500, gin.H{"error": "failed to scan member"})
 			return
 		}
+		m.CreatedAt = helpers.FromTime(rawJoinedAt)
 		members = append(members, m)
 	}
 
@@ -704,6 +718,8 @@ func CreateGroupTransaction(c *gin.Context, database *db.DB) {
 		}
 	}
 
+	gtDate := time.UnixMilli(req.Date).UTC()
+
 	gtID := uuid.New()
 	if req.ID != nil {
 		gtID = *req.ID
@@ -718,6 +734,7 @@ func CreateGroupTransaction(c *gin.Context, database *db.DB) {
 
 	// Insert group_transaction
 	var gt GroupTransaction
+	var rawGTDate, rawGTCreatedAt, rawGTUpdatedAt time.Time
 	err = tx.QueryRow(c.Request.Context(),
 		`INSERT INTO group_transactions (id, group_id, paid_by_user_id, total_amount, category, date, description, notes, updated_at)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
@@ -730,15 +747,18 @@ func CreateGroupTransaction(c *gin.Context, database *db.DB) {
 		   notes = EXCLUDED.notes,
 		   updated_at = NOW()
 		 RETURNING id, group_id, paid_by_user_id, total_amount, category, date, description, notes, is_deleted, created_at, updated_at`,
-		gtID, groupID, req.PaidByUserID, totalAmount, req.Category, req.Date, req.Description, req.Notes,
+		gtID, groupID, req.PaidByUserID, totalAmount, req.Category, gtDate, req.Description, req.Notes,
 	).Scan(
-		&gt.ID, &gt.GroupID, &gt.PaidByUserID, &gt.TotalAmount, &gt.Category, &gt.Date,
-		&gt.Description, &gt.Notes, &gt.IsDeleted, &gt.CreatedAt, &gt.UpdatedAt,
+		&gt.ID, &gt.GroupID, &gt.PaidByUserID, &gt.TotalAmount, &gt.Category, &rawGTDate,
+		&gt.Description, &gt.Notes, &gt.IsDeleted, &rawGTCreatedAt, &rawGTUpdatedAt,
 	)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "failed to create group transaction"})
 		return
 	}
+	gt.Date = helpers.FromTime(rawGTDate)
+	gt.CreatedAt = helpers.FromTime(rawGTCreatedAt)
+	gt.UpdatedAt = helpers.FromTime(rawGTUpdatedAt)
 
 	// For each split: create personal transaction + insert split row
 	var splits []SplitDetail
@@ -749,7 +769,7 @@ func CreateGroupTransaction(c *gin.Context, database *db.DB) {
 			`INSERT INTO transactions (user_id, type, amount, category, date, description, notes, group_transaction_id, updated_at)
 			 VALUES ($1, 'expense', $2, $3, $4, $5, $6, $7, NOW())
 			 RETURNING id`,
-			s.UserID, splitAmounts[i], req.Category, req.Date, req.Description, req.Notes, gt.ID,
+			s.UserID, splitAmounts[i], req.Category, gtDate, req.Description, req.Notes, gt.ID,
 		).Scan(&personalTxID)
 		if err != nil {
 			c.JSON(500, gin.H{"error": "failed to create personal transaction for split"})
@@ -814,13 +834,17 @@ func ListGroupTransactions(c *gin.Context, database *db.DB) {
 	var gtIDs []uuid.UUID
 	for rows.Next() {
 		var gt GroupTransaction
+		var rawDate, rawCreatedAt, rawUpdatedAt time.Time
 		if err := rows.Scan(
-			&gt.ID, &gt.GroupID, &gt.PaidByUserID, &gt.TotalAmount, &gt.Category, &gt.Date,
-			&gt.Description, &gt.Notes, &gt.IsDeleted, &gt.CreatedAt, &gt.UpdatedAt,
+			&gt.ID, &gt.GroupID, &gt.PaidByUserID, &gt.TotalAmount, &gt.Category, &rawDate,
+			&gt.Description, &gt.Notes, &gt.IsDeleted, &rawCreatedAt, &rawUpdatedAt,
 		); err != nil {
 			c.JSON(500, gin.H{"error": "failed to scan group transaction"})
 			return
 		}
+		gt.Date = helpers.FromTime(rawDate)
+		gt.CreatedAt = helpers.FromTime(rawCreatedAt)
+		gt.UpdatedAt = helpers.FromTime(rawUpdatedAt)
 		gt.Splits = []SplitDetail{}
 		gts = append(gts, gt)
 		gtIDs = append(gtIDs, gt.ID)
@@ -887,18 +911,22 @@ func GetGroupTransaction(c *gin.Context, database *db.DB) {
 	}
 
 	var gt GroupTransaction
+	var rawGTDate2, rawGTCreatedAt2, rawGTUpdatedAt2 time.Time
 	err = database.Pool.QueryRow(c.Request.Context(),
 		`SELECT id, group_id, paid_by_user_id, total_amount, category, date, description, notes, is_deleted, created_at, updated_at
 		 FROM group_transactions WHERE id = $1 AND group_id = $2`,
 		txID, groupID,
 	).Scan(
-		&gt.ID, &gt.GroupID, &gt.PaidByUserID, &gt.TotalAmount, &gt.Category, &gt.Date,
-		&gt.Description, &gt.Notes, &gt.IsDeleted, &gt.CreatedAt, &gt.UpdatedAt,
+		&gt.ID, &gt.GroupID, &gt.PaidByUserID, &gt.TotalAmount, &gt.Category, &rawGTDate2,
+		&gt.Description, &gt.Notes, &gt.IsDeleted, &rawGTCreatedAt2, &rawGTUpdatedAt2,
 	)
 	if err != nil {
 		c.JSON(404, gin.H{"error": "group transaction not found"})
 		return
 	}
+	gt.Date = helpers.FromTime(rawGTDate2)
+	gt.CreatedAt = helpers.FromTime(rawGTCreatedAt2)
+	gt.UpdatedAt = helpers.FromTime(rawGTUpdatedAt2)
 
 	splitRows, err := database.Pool.Query(c.Request.Context(),
 		`SELECT id, user_id, amount, transaction_id
@@ -985,7 +1013,7 @@ func UpdateGroupTransaction(c *gin.Context, database *db.DB) {
 	}
 	if req.Date != nil {
 		query += fmt.Sprintf(", date = $%d", n)
-		args = append(args, *req.Date)
+		args = append(args, time.UnixMilli(*req.Date).UTC())
 		n++
 	}
 	if req.Description != nil {
@@ -1009,14 +1037,18 @@ func UpdateGroupTransaction(c *gin.Context, database *db.DB) {
 	args = append(args, txID)
 
 	var gt GroupTransaction
+	var rawGTDate3, rawGTCreatedAt3, rawGTUpdatedAt3 time.Time
 	err = database.Pool.QueryRow(c.Request.Context(), query, args...).Scan(
-		&gt.ID, &gt.GroupID, &gt.PaidByUserID, &gt.TotalAmount, &gt.Category, &gt.Date,
-		&gt.Description, &gt.Notes, &gt.IsDeleted, &gt.CreatedAt, &gt.UpdatedAt,
+		&gt.ID, &gt.GroupID, &gt.PaidByUserID, &gt.TotalAmount, &gt.Category, &rawGTDate3,
+		&gt.Description, &gt.Notes, &gt.IsDeleted, &rawGTCreatedAt3, &rawGTUpdatedAt3,
 	)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "failed to update group transaction"})
 		return
 	}
+	gt.Date = helpers.FromTime(rawGTDate3)
+	gt.CreatedAt = helpers.FromTime(rawGTCreatedAt3)
+	gt.UpdatedAt = helpers.FromTime(rawGTUpdatedAt3)
 
 	splitRows, err := database.Pool.Query(c.Request.Context(),
 		`SELECT id, user_id, amount, transaction_id

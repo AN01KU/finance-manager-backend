@@ -16,20 +16,20 @@ import (
 )
 
 type Transaction struct {
-	ID                 uuid.UUID             `json:"id"`
-	UserID             uuid.UUID             `json:"user_id"`
-	Type               string                `json:"type"`
-	Amount             helpers.StringDecimal `json:"amount"`
-	Category           string                `json:"category"`
-	Date               time.Time             `json:"date"`
-	Time               *time.Time            `json:"time,omitempty"`
-	Description        *string               `json:"description,omitempty"`
-	Notes              *string               `json:"notes,omitempty"`
-	RecurringExpenseID *uuid.UUID            `json:"recurring_expense_id,omitempty"`
-	GroupTransactionID *uuid.UUID            `json:"group_transaction_id,omitempty"`
-	IsDeleted          bool                  `json:"is_deleted"`
-	CreatedAt          time.Time             `json:"created_at"`
-	UpdatedAt          time.Time             `json:"updated_at"`
+	ID                 uuid.UUID              `json:"id"`
+	UserID             uuid.UUID              `json:"user_id"`
+	Type               string                 `json:"type"`
+	Amount             helpers.StringDecimal  `json:"amount"`
+	Category           string                 `json:"category"`
+	Date               helpers.EpochMillis    `json:"date"`
+	Time               *helpers.EpochMillis   `json:"time,omitempty"`
+	Description        *string                `json:"description,omitempty"`
+	Notes              *string                `json:"notes,omitempty"`
+	RecurringExpenseID *uuid.UUID             `json:"recurring_expense_id,omitempty"`
+	GroupTransactionID *uuid.UUID             `json:"group_transaction_id,omitempty"`
+	IsDeleted          bool                   `json:"is_deleted"`
+	CreatedAt          helpers.EpochMillis    `json:"created_at"`
+	UpdatedAt          helpers.EpochMillis    `json:"updated_at"`
 }
 
 type CreateTransactionRequest struct {
@@ -37,21 +37,21 @@ type CreateTransactionRequest struct {
 	Type               string     `json:"type" validate:"required,oneof=expense income"`
 	Amount             string     `json:"amount" validate:"required,numeric"`
 	Category           string     `json:"category" validate:"required,max=100"`
-	Date               time.Time  `json:"date" validate:"required"`
-	Time               *time.Time `json:"time,omitempty"`
+	Date               int64      `json:"date" validate:"required"`
+	TimeMs             *int64     `json:"time,omitempty"`
 	Description        *string    `json:"description,omitempty" validate:"omitempty,max=255"`
 	Notes              *string    `json:"notes,omitempty"`
 	RecurringExpenseID *uuid.UUID `json:"recurring_expense_id,omitempty"`
 }
 
 type UpdateTransactionRequest struct {
-	Type        *string    `json:"type,omitempty" validate:"omitempty,oneof=expense income"`
-	Amount      *string    `json:"amount,omitempty" validate:"omitempty,numeric"`
-	Category    *string    `json:"category,omitempty" validate:"omitempty,max=100"`
-	Date        *time.Time `json:"date,omitempty"`
-	Time        *time.Time `json:"time,omitempty"`
-	Description *string    `json:"description,omitempty" validate:"omitempty,max=255"`
-	Notes       *string    `json:"notes,omitempty"`
+	Type        *string `json:"type,omitempty" validate:"omitempty,oneof=expense income"`
+	Amount      *string `json:"amount,omitempty" validate:"omitempty,numeric"`
+	Category    *string `json:"category,omitempty" validate:"omitempty,max=100"`
+	Date        *int64  `json:"date,omitempty"`
+	TimeMs      *int64  `json:"time,omitempty"`
+	Description *string `json:"description,omitempty" validate:"omitempty,max=255"`
+	Notes       *string `json:"notes,omitempty"`
 }
 
 func CreateTransaction(c *gin.Context, database *db.DB) {
@@ -74,13 +74,16 @@ func CreateTransaction(c *gin.Context, database *db.DB) {
 	}
 
 	amount, err := decimal.NewFromString(req.Amount)
-	if err != nil {
-		c.JSON(400, gin.H{"error": "invalid amount format"})
+	if err != nil || amount.LessThanOrEqual(decimal.Zero) {
+		c.JSON(400, gin.H{"error": "amount must be a positive number"})
 		return
 	}
-	if amount.LessThanOrEqual(decimal.Zero) {
-		c.JSON(400, gin.H{"error": "amount must be greater than 0"})
-		return
+
+	date := time.UnixMilli(req.Date).UTC()
+	var txTime *time.Time
+	if req.TimeMs != nil {
+		t := time.UnixMilli(*req.TimeMs).UTC()
+		txTime = &t
 	}
 
 	id := uuid.New()
@@ -89,6 +92,9 @@ func CreateTransaction(c *gin.Context, database *db.DB) {
 	}
 
 	var tx Transaction
+	var rawDate, rawCreatedAt, rawUpdatedAt time.Time
+	var rawTime *time.Time
+
 	err = database.Pool.QueryRow(c.Request.Context(),
 		`INSERT INTO transactions (id, user_id, type, amount, category, date, time, description, notes, recurring_expense_id, updated_at)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())
@@ -103,17 +109,23 @@ func CreateTransaction(c *gin.Context, database *db.DB) {
 		   recurring_expense_id = EXCLUDED.recurring_expense_id,
 		   updated_at = NOW()
 		 RETURNING id, user_id, type, amount, category, date, time, description, notes, recurring_expense_id, group_transaction_id, is_deleted, created_at, updated_at`,
-		id, userID, req.Type, amount, req.Category, req.Date, req.Time,
+		id, userID, req.Type, amount, req.Category, date, txTime,
 		req.Description, req.Notes, req.RecurringExpenseID,
 	).Scan(
-		&tx.ID, &tx.UserID, &tx.Type, &tx.Amount, &tx.Category, &tx.Date, &tx.Time,
-		&tx.Description, &tx.Notes, &tx.RecurringExpenseID, &tx.GroupTransactionID,
-		&tx.IsDeleted, &tx.CreatedAt, &tx.UpdatedAt,
+		&tx.ID, &tx.UserID, &tx.Type, &tx.Amount, &tx.Category,
+		&rawDate, &rawTime, &tx.Description, &tx.Notes,
+		&tx.RecurringExpenseID, &tx.GroupTransactionID,
+		&tx.IsDeleted, &rawCreatedAt, &rawUpdatedAt,
 	)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "failed to create transaction"})
 		return
 	}
+
+	tx.Date = helpers.FromTime(rawDate)
+	tx.Time = helpers.FromTimePtr(rawTime)
+	tx.CreatedAt = helpers.FromTime(rawCreatedAt)
+	tx.UpdatedAt = helpers.FromTime(rawUpdatedAt)
 
 	c.JSON(201, tx)
 }
@@ -145,7 +157,6 @@ func ListTransactions(c *gin.Context, database *db.DB) {
 	args := []interface{}{userID}
 	n := 2
 
-	// is_deleted filter
 	if c.Query("is_deleted") == "true" {
 		query += fmt.Sprintf(" AND is_deleted = $%d", n)
 		countQuery += fmt.Sprintf(" AND is_deleted = $%d", n)
@@ -171,20 +182,21 @@ func ListTransactions(c *gin.Context, database *db.DB) {
 		n++
 	}
 
+	// start_date / end_date accepted as epoch ms
 	if v := c.Query("start_date"); v != "" {
-		if t, err := time.Parse("2006-01-02", v); err == nil {
+		if ms, err := strconv.ParseInt(v, 10, 64); err == nil {
 			query += fmt.Sprintf(" AND date >= $%d", n)
 			countQuery += fmt.Sprintf(" AND date >= $%d", n)
-			args = append(args, t)
+			args = append(args, time.UnixMilli(ms).UTC())
 			n++
 		}
 	}
 
 	if v := c.Query("end_date"); v != "" {
-		if t, err := time.Parse("2006-01-02", v); err == nil {
+		if ms, err := strconv.ParseInt(v, 10, 64); err == nil {
 			query += fmt.Sprintf(" AND date <= $%d", n)
 			countQuery += fmt.Sprintf(" AND date <= $%d", n)
-			args = append(args, t)
+			args = append(args, time.UnixMilli(ms).UTC())
 			n++
 		}
 	}
@@ -226,14 +238,21 @@ func ListTransactions(c *gin.Context, database *db.DB) {
 	txs := []Transaction{}
 	for rows.Next() {
 		var tx Transaction
+		var rawDate, rawCreatedAt, rawUpdatedAt time.Time
+		var rawTime *time.Time
 		if err := rows.Scan(
-			&tx.ID, &tx.UserID, &tx.Type, &tx.Amount, &tx.Category, &tx.Date, &tx.Time,
-			&tx.Description, &tx.Notes, &tx.RecurringExpenseID, &tx.GroupTransactionID,
-			&tx.IsDeleted, &tx.CreatedAt, &tx.UpdatedAt,
+			&tx.ID, &tx.UserID, &tx.Type, &tx.Amount, &tx.Category,
+			&rawDate, &rawTime, &tx.Description, &tx.Notes,
+			&tx.RecurringExpenseID, &tx.GroupTransactionID,
+			&tx.IsDeleted, &rawCreatedAt, &rawUpdatedAt,
 		); err != nil {
 			c.JSON(500, gin.H{"error": "failed to scan transaction"})
 			return
 		}
+		tx.Date = helpers.FromTime(rawDate)
+		tx.Time = helpers.FromTimePtr(rawTime)
+		tx.CreatedAt = helpers.FromTime(rawCreatedAt)
+		tx.UpdatedAt = helpers.FromTime(rawUpdatedAt)
 		txs = append(txs, tx)
 	}
 
@@ -261,19 +280,28 @@ func GetTransaction(c *gin.Context, database *db.DB) {
 	}
 
 	var tx Transaction
+	var rawDate, rawCreatedAt, rawUpdatedAt time.Time
+	var rawTime *time.Time
+
 	err = database.Pool.QueryRow(c.Request.Context(),
 		`SELECT id, user_id, type, amount, category, date, time, description, notes, recurring_expense_id, group_transaction_id, is_deleted, created_at, updated_at
 		 FROM transactions WHERE id = $1 AND user_id = $2`,
 		id, userID,
 	).Scan(
-		&tx.ID, &tx.UserID, &tx.Type, &tx.Amount, &tx.Category, &tx.Date, &tx.Time,
-		&tx.Description, &tx.Notes, &tx.RecurringExpenseID, &tx.GroupTransactionID,
-		&tx.IsDeleted, &tx.CreatedAt, &tx.UpdatedAt,
+		&tx.ID, &tx.UserID, &tx.Type, &tx.Amount, &tx.Category,
+		&rawDate, &rawTime, &tx.Description, &tx.Notes,
+		&tx.RecurringExpenseID, &tx.GroupTransactionID,
+		&tx.IsDeleted, &rawCreatedAt, &rawUpdatedAt,
 	)
 	if err != nil {
 		c.JSON(404, gin.H{"error": "transaction not found"})
 		return
 	}
+
+	tx.Date = helpers.FromTime(rawDate)
+	tx.Time = helpers.FromTimePtr(rawTime)
+	tx.CreatedAt = helpers.FromTime(rawCreatedAt)
+	tx.UpdatedAt = helpers.FromTime(rawUpdatedAt)
 
 	c.JSON(200, tx)
 }
@@ -291,7 +319,6 @@ func UpdateTransaction(c *gin.Context, database *db.DB) {
 		return
 	}
 
-	// Group-linked transactions are managed via the group transaction endpoint
 	var ownerID uuid.UUID
 	var groupTxID *uuid.UUID
 	err = database.Pool.QueryRow(c.Request.Context(),
@@ -325,12 +352,8 @@ func UpdateTransaction(c *gin.Context, database *db.DB) {
 	var parsedAmount *decimal.Decimal
 	if req.Amount != nil {
 		a, err := decimal.NewFromString(*req.Amount)
-		if err != nil {
-			c.JSON(400, gin.H{"error": "invalid amount format"})
-			return
-		}
-		if a.LessThanOrEqual(decimal.Zero) {
-			c.JSON(400, gin.H{"error": "amount must be greater than 0"})
+		if err != nil || a.LessThanOrEqual(decimal.Zero) {
+			c.JSON(400, gin.H{"error": "amount must be a positive number"})
 			return
 		}
 		parsedAmount = &a
@@ -357,12 +380,12 @@ func UpdateTransaction(c *gin.Context, database *db.DB) {
 	}
 	if req.Date != nil {
 		query += fmt.Sprintf(", date = $%d", n)
-		args = append(args, *req.Date)
+		args = append(args, time.UnixMilli(*req.Date).UTC())
 		n++
 	}
-	if req.Time != nil {
+	if req.TimeMs != nil {
 		query += fmt.Sprintf(", time = $%d", n)
-		args = append(args, *req.Time)
+		args = append(args, time.UnixMilli(*req.TimeMs).UTC())
 		n++
 	}
 	if req.Description != nil {
@@ -386,15 +409,24 @@ func UpdateTransaction(c *gin.Context, database *db.DB) {
 	args = append(args, id)
 
 	var tx Transaction
+	var rawDate, rawCreatedAt, rawUpdatedAt time.Time
+	var rawTime *time.Time
+
 	err = database.Pool.QueryRow(c.Request.Context(), query, args...).Scan(
-		&tx.ID, &tx.UserID, &tx.Type, &tx.Amount, &tx.Category, &tx.Date, &tx.Time,
-		&tx.Description, &tx.Notes, &tx.RecurringExpenseID, &tx.GroupTransactionID,
-		&tx.IsDeleted, &tx.CreatedAt, &tx.UpdatedAt,
+		&tx.ID, &tx.UserID, &tx.Type, &tx.Amount, &tx.Category,
+		&rawDate, &rawTime, &tx.Description, &tx.Notes,
+		&tx.RecurringExpenseID, &tx.GroupTransactionID,
+		&tx.IsDeleted, &rawCreatedAt, &rawUpdatedAt,
 	)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "failed to update transaction"})
 		return
 	}
+
+	tx.Date = helpers.FromTime(rawDate)
+	tx.Time = helpers.FromTimePtr(rawTime)
+	tx.CreatedAt = helpers.FromTime(rawCreatedAt)
+	tx.UpdatedAt = helpers.FromTime(rawUpdatedAt)
 
 	c.JSON(200, tx)
 }

@@ -1,4 +1,4 @@
--- Users (keep as-is)
+-- Users
 CREATE TABLE users (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     email VARCHAR(255) UNIQUE NOT NULL,
@@ -7,7 +7,7 @@ CREATE TABLE users (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Recurring expenses (must come before expenses due to FK)
+-- Recurring expenses (must come before transactions due to FK)
 CREATE TABLE recurring_expenses (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -29,30 +29,28 @@ CREATE TABLE recurring_expenses (
 CREATE INDEX idx_recurring_expenses_user_id ON recurring_expenses(user_id);
 CREATE INDEX idx_recurring_expenses_active ON recurring_expenses(user_id, is_active) WHERE is_active = TRUE;
 
--- Expenses (unified personal + group)
-CREATE TABLE expenses (
+-- Personal transactions (expenses + income)
+CREATE TABLE transactions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    type VARCHAR(10) NOT NULL CHECK (type IN ('expense', 'income')),
     amount DECIMAL(12,2) NOT NULL CHECK (amount > 0),
     category VARCHAR(100) NOT NULL,
-    date TIMESTAMPTZ NOT NULL,
+    date DATE NOT NULL,
     time TIMESTAMPTZ,
     description VARCHAR(255),
     notes TEXT,
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    updated_at TIMESTAMPTZ DEFAULT NOW(),
-    is_deleted BOOLEAN DEFAULT FALSE,
     recurring_expense_id UUID REFERENCES recurring_expenses(id) ON DELETE SET NULL,
-    group_id UUID,
-    group_name VARCHAR(255)
+    group_transaction_id UUID,
+    is_deleted BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX idx_expenses_user_id ON expenses(user_id);
-CREATE INDEX idx_expenses_date ON expenses(user_id, date DESC);
-CREATE INDEX idx_expenses_category ON expenses(user_id, category);
-CREATE INDEX idx_expenses_recurring ON expenses(recurring_expense_id);
-CREATE INDEX idx_expenses_group ON expenses(group_id);
-CREATE INDEX idx_expenses_not_deleted ON expenses(user_id, is_deleted) WHERE is_deleted = FALSE;
+CREATE INDEX idx_transactions_user_id ON transactions(user_id);
+CREATE INDEX idx_transactions_date ON transactions(user_id, date DESC);
+CREATE INDEX idx_transactions_type ON transactions(user_id, type);
+CREATE INDEX idx_transactions_not_deleted ON transactions(user_id, is_deleted) WHERE is_deleted = FALSE;
 
 -- Monthly budgets
 CREATE TABLE monthly_budgets (
@@ -68,7 +66,7 @@ CREATE TABLE monthly_budgets (
 
 CREATE INDEX idx_monthly_budgets_user ON monthly_budgets(user_id, year, month);
 
--- Custom categories (was expense_categories)
+-- Custom categories
 CREATE TABLE custom_categories (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -86,7 +84,7 @@ CREATE TABLE custom_categories (
 CREATE INDEX idx_custom_categories_user_id ON custom_categories(user_id);
 CREATE UNIQUE INDEX idx_custom_categories_user_predefined_key ON custom_categories(user_id, predefined_key) WHERE predefined_key IS NOT NULL;
 
--- Groups (Splitwise feature)
+-- Groups
 CREATE TABLE groups (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name VARCHAR(255) NOT NULL,
@@ -102,14 +100,41 @@ CREATE TABLE group_members (
     PRIMARY KEY (group_id, user_id)
 );
 
--- Expense splits (for group expenses)
-CREATE TABLE expense_splits (
+-- Group transactions (master record: who paid, full amount)
+CREATE TABLE group_transactions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    expense_id UUID NOT NULL REFERENCES expenses(id) ON DELETE CASCADE,
+    group_id UUID NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+    paid_by_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    total_amount DECIMAL(12,2) NOT NULL CHECK (total_amount > 0),
+    category VARCHAR(100) NOT NULL,
+    date DATE NOT NULL,
+    description VARCHAR(255),
+    notes TEXT,
+    is_deleted BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_group_transactions_group ON group_transactions(group_id);
+CREATE INDEX idx_group_transactions_not_deleted ON group_transactions(group_id, is_deleted) WHERE is_deleted = FALSE;
+
+-- Group transaction splits (each member's share)
+CREATE TABLE group_transaction_splits (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    group_transaction_id UUID NOT NULL REFERENCES group_transactions(id) ON DELETE CASCADE,
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     amount DECIMAL(12,2) NOT NULL CHECK (amount >= 0),
-    UNIQUE(expense_id, user_id)
+    transaction_id UUID REFERENCES transactions(id) ON DELETE SET NULL,
+    UNIQUE(group_transaction_id, user_id)
 );
+
+CREATE INDEX idx_group_splits_group_tx ON group_transaction_splits(group_transaction_id);
+CREATE INDEX idx_group_splits_user ON group_transaction_splits(user_id);
+
+-- FK from transactions back to group_transactions
+ALTER TABLE transactions
+    ADD CONSTRAINT fk_transactions_group_tx
+    FOREIGN KEY (group_transaction_id) REFERENCES group_transactions(id) ON DELETE SET NULL;
 
 -- Settlements
 CREATE TABLE settlements (
@@ -118,6 +143,9 @@ CREATE TABLE settlements (
     from_user UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     to_user UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     amount DECIMAL(12,2) NOT NULL CHECK (amount > 0),
+    notes TEXT,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     CHECK (from_user != to_user)
 );
+
+CREATE INDEX idx_settlements_group ON settlements(group_id);

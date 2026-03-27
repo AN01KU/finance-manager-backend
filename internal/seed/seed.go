@@ -380,8 +380,8 @@ func Seed(ctx context.Context, database *db.DB) error {
 		}
 
 		// For each split: create personal transaction + split row
-		for i, sp := range gt.splits {
-			splitID := uuid.MustParse(fmt.Sprintf("%s%02d000000-0000-0000-0000", gt.id.String()[:8], i+1))
+		for _, sp := range gt.splits {
+			splitID := uuid.New()
 
 			var personalTxID uuid.UUID
 			if err := database.Pool.QueryRow(ctx,
@@ -390,14 +390,14 @@ func Seed(ctx context.Context, database *db.DB) error {
 				 RETURNING id`,
 				sp.userID, sp.amount, gt.category, gt.date, gt.description, gt.id,
 			).Scan(&personalTxID); err != nil {
-				return fmt.Errorf("insert personal tx for split %d of %s: %w", i, gt.description, err)
+				return fmt.Errorf("insert personal tx for split of %s: %w", gt.description, err)
 			}
 
 			if _, err := database.Pool.Exec(ctx,
 				`INSERT INTO group_transaction_splits (id, group_transaction_id, user_id, amount, transaction_id)
 				 VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING`,
 				splitID, gt.id, sp.userID, sp.amount, personalTxID); err != nil {
-				return fmt.Errorf("insert split %d of %s: %w", i, gt.description, err)
+				return fmt.Errorf("insert split of %s: %w", gt.description, err)
 			}
 		}
 	}

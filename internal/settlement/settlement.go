@@ -20,7 +20,7 @@ type Settlement struct {
 	ToUser    uuid.UUID             `json:"to_user"`
 	Amount    helpers.StringDecimal `json:"amount"`
 	Notes     *string               `json:"notes,omitempty"`
-	CreatedAt time.Time             `json:"created_at"`
+	CreatedAt helpers.EpochMillis   `json:"created_at"`
 }
 
 type CreateSettlementRequest struct {
@@ -89,13 +89,15 @@ func CreateSettlement(c *gin.Context, db *db.DB) {
 
 	// Insert settlement
 	var s Settlement
+	var rawCreatedAt time.Time
 	err = db.Pool.QueryRow(c.Request.Context(),
 		"INSERT INTO settlements (group_id, from_user, to_user, amount, notes) VALUES ($1, $2, $3, $4, $5) RETURNING id, group_id, from_user, to_user, amount, notes, created_at",
-		groupID, req.FromUser, req.ToUser, amount, req.Notes).Scan(&s.ID, &s.GroupID, &s.FromUser, &s.ToUser, &s.Amount, &s.Notes, &s.CreatedAt)
+		groupID, req.FromUser, req.ToUser, amount, req.Notes).Scan(&s.ID, &s.GroupID, &s.FromUser, &s.ToUser, &s.Amount, &s.Notes, &rawCreatedAt)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "failed to create settlement"})
 		return
 	}
+	s.CreatedAt = helpers.FromTime(rawCreatedAt)
 
 	c.JSON(201, s)
 }

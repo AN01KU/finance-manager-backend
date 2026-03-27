@@ -20,8 +20,8 @@ type MonthlyBudget struct {
 	Year      int                   `json:"year"`
 	Month     int                   `json:"month"`
 	Limit     helpers.StringDecimal `json:"limit"`
-	CreatedAt time.Time             `json:"created_at"`
-	UpdatedAt time.Time             `json:"updated_at"`
+	CreatedAt helpers.EpochMillis   `json:"created_at"`
+	UpdatedAt helpers.EpochMillis   `json:"updated_at"`
 }
 
 type CreateBudgetRequest struct {
@@ -74,6 +74,7 @@ func CreateBudget(c *gin.Context, db *db.DB) {
 	}
 
 	var budget MonthlyBudget
+	var rawCreatedAt, rawUpdatedAt time.Time
 	err = db.Pool.QueryRow(c.Request.Context(),
 		`INSERT INTO monthly_budgets (id, user_id, budget_limit, month, year, updated_at)
 		 VALUES ($1, $2, $3, $4, $5, NOW())
@@ -82,11 +83,13 @@ func CreateBudget(c *gin.Context, db *db.DB) {
 		 RETURNING id, user_id, budget_limit, month, year, created_at, updated_at`,
 		budgetID, userID, amount, req.Month, req.Year).Scan(
 		&budget.ID, &budget.UserID, &budget.Limit, &budget.Month, &budget.Year,
-		&budget.CreatedAt, &budget.UpdatedAt)
+		&rawCreatedAt, &rawUpdatedAt)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "failed to set budget"})
 		return
 	}
+	budget.CreatedAt = helpers.FromTime(rawCreatedAt)
+	budget.UpdatedAt = helpers.FromTime(rawUpdatedAt)
 
 	c.JSON(200, budget)
 }
@@ -142,11 +145,14 @@ func ListBudgets(c *gin.Context, db *db.DB) {
 	budgets := []MonthlyBudget{}
 	for rows.Next() {
 		var budget MonthlyBudget
+		var rawCreatedAt, rawUpdatedAt time.Time
 		if err := rows.Scan(&budget.ID, &budget.UserID, &budget.Limit, &budget.Month,
-			&budget.Year, &budget.CreatedAt, &budget.UpdatedAt); err != nil {
+			&budget.Year, &rawCreatedAt, &rawUpdatedAt); err != nil {
 			c.JSON(500, gin.H{"error": "failed to scan budget"})
 			return
 		}
+		budget.CreatedAt = helpers.FromTime(rawCreatedAt)
+		budget.UpdatedAt = helpers.FromTime(rawUpdatedAt)
 		budgets = append(budgets, budget)
 	}
 
@@ -238,13 +244,16 @@ func UpdateBudget(c *gin.Context, db *db.DB) {
 	args = append(args, budgetID)
 
 	var budget MonthlyBudget
+	var rawCreatedAt, rawUpdatedAt time.Time
 	err = db.Pool.QueryRow(c.Request.Context(), query, args...).Scan(
 		&budget.ID, &budget.UserID, &budget.Limit, &budget.Month, &budget.Year,
-		&budget.CreatedAt, &budget.UpdatedAt)
+		&rawCreatedAt, &rawUpdatedAt)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "failed to update budget"})
 		return
 	}
+	budget.CreatedAt = helpers.FromTime(rawCreatedAt)
+	budget.UpdatedAt = helpers.FromTime(rawUpdatedAt)
 
 	c.JSON(200, budget)
 }

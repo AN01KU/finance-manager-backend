@@ -15,21 +15,21 @@ import (
 )
 
 type RecurringExpense struct {
-	ID            uuid.UUID             `json:"id"`
-	UserID        uuid.UUID             `json:"user_id"`
-	Name          string                `json:"name"`
-	Amount        helpers.StringDecimal `json:"amount"`
-	Category      string                `json:"category"`
-	Frequency     string                `json:"frequency"`
-	DayOfMonth    *int                  `json:"day_of_month,omitempty"`
-	DaysOfWeek    []int                 `json:"days_of_week,omitempty"`
-	StartDate     time.Time             `json:"start_date"`
-	EndDate       *time.Time            `json:"end_date,omitempty"`
-	IsActive      bool                  `json:"is_active"`
-	LastAddedDate *time.Time            `json:"last_added_date,omitempty"`
-	Notes         *string               `json:"notes,omitempty"`
-	CreatedAt     time.Time             `json:"created_at"`
-	UpdatedAt     time.Time             `json:"updated_at"`
+	ID            uuid.UUID              `json:"id"`
+	UserID        uuid.UUID              `json:"user_id"`
+	Name          string                 `json:"name"`
+	Amount        helpers.StringDecimal  `json:"amount"`
+	Category      string                 `json:"category"`
+	Frequency     string                 `json:"frequency"`
+	DayOfMonth    *int                   `json:"day_of_month,omitempty"`
+	DaysOfWeek    []int                  `json:"days_of_week,omitempty"`
+	StartDate     helpers.EpochMillis    `json:"start_date"`
+	EndDate       *helpers.EpochMillis   `json:"end_date,omitempty"`
+	IsActive      bool                   `json:"is_active"`
+	LastAddedDate *helpers.EpochMillis   `json:"last_added_date,omitempty"`
+	Notes         *string                `json:"notes,omitempty"`
+	CreatedAt     helpers.EpochMillis    `json:"created_at"`
+	UpdatedAt     helpers.EpochMillis    `json:"updated_at"`
 }
 
 type CreateRecurringExpenseRequest struct {
@@ -40,22 +40,22 @@ type CreateRecurringExpenseRequest struct {
 	Frequency  string     `json:"frequency" validate:"required,oneof=daily weekly monthly yearly"`
 	DayOfMonth *int       `json:"day_of_month,omitempty" validate:"omitempty,min=1,max=31"`
 	DaysOfWeek []int      `json:"days_of_week,omitempty" validate:"omitempty,dive,min=0,max=6"`
-	StartDate  time.Time  `json:"start_date" validate:"required"`
-	EndDate    *time.Time `json:"end_date,omitempty"`
+	StartDate  int64      `json:"start_date" validate:"required"`
+	EndDate    *int64     `json:"end_date,omitempty"`
 	Notes      *string    `json:"notes,omitempty"`
 }
 
 type UpdateRecurringExpenseRequest struct {
-	Name       *string    `json:"name,omitempty" validate:"omitempty"`
-	Amount     *string    `json:"amount,omitempty" validate:"omitempty,numeric"`
-	Category   *string    `json:"category,omitempty" validate:"omitempty"`
-	Frequency  *string    `json:"frequency,omitempty" validate:"omitempty,oneof=daily weekly monthly yearly"`
-	DayOfMonth *int       `json:"day_of_month,omitempty" validate:"omitempty,min=1,max=31"`
-	DaysOfWeek []int      `json:"days_of_week,omitempty" validate:"omitempty,dive,min=0,max=6"`
-	StartDate  *time.Time `json:"start_date,omitempty"`
-	EndDate    *time.Time `json:"end_date,omitempty"`
-	IsActive   *bool      `json:"is_active,omitempty"`
-	Notes      *string    `json:"notes,omitempty"`
+	Name       *string `json:"name,omitempty" validate:"omitempty"`
+	Amount     *string `json:"amount,omitempty" validate:"omitempty,numeric"`
+	Category   *string `json:"category,omitempty" validate:"omitempty"`
+	Frequency  *string `json:"frequency,omitempty" validate:"omitempty,oneof=daily weekly monthly yearly"`
+	DayOfMonth *int    `json:"day_of_month,omitempty" validate:"omitempty,min=1,max=31"`
+	DaysOfWeek []int   `json:"days_of_week,omitempty" validate:"omitempty,dive,min=0,max=6"`
+	StartDate  *int64  `json:"start_date,omitempty"`
+	EndDate    *int64  `json:"end_date,omitempty"`
+	IsActive   *bool   `json:"is_active,omitempty"`
+	Notes      *string `json:"notes,omitempty"`
 }
 
 func CreateRecurringExpense(c *gin.Context, db *db.DB) {
@@ -92,9 +92,16 @@ func CreateRecurringExpense(c *gin.Context, db *db.DB) {
 		}
 	}
 
-	if req.EndDate != nil && req.EndDate.Before(req.StartDate) {
+	if req.EndDate != nil && *req.EndDate <= req.StartDate {
 		c.JSON(400, gin.H{"error": "end_date must be after start_date"})
 		return
+	}
+
+	startDate := time.UnixMilli(req.StartDate).UTC()
+	var endDate *time.Time
+	if req.EndDate != nil {
+		t := time.UnixMilli(*req.EndDate).UTC()
+		endDate = &t
 	}
 
 	amount, err := decimal.NewFromString(req.Amount)
@@ -114,6 +121,8 @@ func CreateRecurringExpense(c *gin.Context, db *db.DB) {
 	}
 
 	var expense RecurringExpense
+	var rawStartDate, rawCreatedAt, rawUpdatedAt time.Time
+	var rawEndDate, rawLastAddedDate *time.Time
 	err = db.Pool.QueryRow(c.Request.Context(),
 		`INSERT INTO recurring_expenses (id, user_id, name, amount, category, frequency, day_of_month, days_of_week, start_date, end_date, is_active, notes, updated_at)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, true, $11, NOW())
@@ -129,14 +138,19 @@ func CreateRecurringExpense(c *gin.Context, db *db.DB) {
 		   notes = EXCLUDED.notes,
 		   updated_at = NOW()
 		 RETURNING id, user_id, name, amount, category, frequency, day_of_month, days_of_week, start_date, end_date, is_active, last_added_date, notes, created_at, updated_at`,
-		recurringID, userID, req.Name, amount, req.Category, req.Frequency, req.DayOfMonth, req.DaysOfWeek, req.StartDate, req.EndDate, req.Notes).Scan(
+		recurringID, userID, req.Name, amount, req.Category, req.Frequency, req.DayOfMonth, req.DaysOfWeek, startDate, endDate, req.Notes).Scan(
 		&expense.ID, &expense.UserID, &expense.Name, &expense.Amount, &expense.Category,
-		&expense.Frequency, &expense.DayOfMonth, &expense.DaysOfWeek, &expense.StartDate,
-		&expense.EndDate, &expense.IsActive, &expense.LastAddedDate, &expense.Notes, &expense.CreatedAt, &expense.UpdatedAt)
+		&expense.Frequency, &expense.DayOfMonth, &expense.DaysOfWeek, &rawStartDate,
+		&rawEndDate, &expense.IsActive, &rawLastAddedDate, &expense.Notes, &rawCreatedAt, &rawUpdatedAt)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "failed to create recurring expense"})
 		return
 	}
+	expense.StartDate = helpers.FromTime(rawStartDate)
+	expense.EndDate = helpers.FromTimePtr(rawEndDate)
+	expense.LastAddedDate = helpers.FromTimePtr(rawLastAddedDate)
+	expense.CreatedAt = helpers.FromTime(rawCreatedAt)
+	expense.UpdatedAt = helpers.FromTime(rawUpdatedAt)
 
 	c.JSON(201, expense)
 }
@@ -169,12 +183,19 @@ func ListRecurringExpenses(c *gin.Context, db *db.DB) {
 	var expenses []RecurringExpense
 	for rows.Next() {
 		var exp RecurringExpense
+		var rawStartDate, rawCreatedAt, rawUpdatedAt time.Time
+		var rawEndDate, rawLastAddedDate *time.Time
 		if err := rows.Scan(&exp.ID, &exp.UserID, &exp.Name, &exp.Amount, &exp.Category,
-			&exp.Frequency, &exp.DayOfMonth, &exp.DaysOfWeek, &exp.StartDate,
-			&exp.EndDate, &exp.IsActive, &exp.LastAddedDate, &exp.Notes, &exp.CreatedAt, &exp.UpdatedAt); err != nil {
+			&exp.Frequency, &exp.DayOfMonth, &exp.DaysOfWeek, &rawStartDate,
+			&rawEndDate, &exp.IsActive, &rawLastAddedDate, &exp.Notes, &rawCreatedAt, &rawUpdatedAt); err != nil {
 			c.JSON(500, gin.H{"error": "failed to scan recurring expense"})
 			return
 		}
+		exp.StartDate = helpers.FromTime(rawStartDate)
+		exp.EndDate = helpers.FromTimePtr(rawEndDate)
+		exp.LastAddedDate = helpers.FromTimePtr(rawLastAddedDate)
+		exp.CreatedAt = helpers.FromTime(rawCreatedAt)
+		exp.UpdatedAt = helpers.FromTime(rawUpdatedAt)
 		expenses = append(expenses, exp)
 	}
 
@@ -200,17 +221,24 @@ func GetRecurringExpense(c *gin.Context, db *db.DB) {
 	}
 
 	var expense RecurringExpense
+	var rawStartDate, rawCreatedAt, rawUpdatedAt time.Time
+	var rawEndDate, rawLastAddedDate *time.Time
 	err = db.Pool.QueryRow(c.Request.Context(),
 		`SELECT id, user_id, name, amount, category, frequency, day_of_month, days_of_week, start_date, end_date, is_active, last_added_date, notes, created_at, updated_at
 		 FROM recurring_expenses
 		 WHERE id = $1 AND user_id = $2`,
 		id, userID).Scan(&expense.ID, &expense.UserID, &expense.Name, &expense.Amount, &expense.Category,
-		&expense.Frequency, &expense.DayOfMonth, &expense.DaysOfWeek, &expense.StartDate,
-		&expense.EndDate, &expense.IsActive, &expense.LastAddedDate, &expense.Notes, &expense.CreatedAt, &expense.UpdatedAt)
+		&expense.Frequency, &expense.DayOfMonth, &expense.DaysOfWeek, &rawStartDate,
+		&rawEndDate, &expense.IsActive, &rawLastAddedDate, &expense.Notes, &rawCreatedAt, &rawUpdatedAt)
 	if err != nil {
 		c.JSON(404, gin.H{"error": "recurring expense not found"})
 		return
 	}
+	expense.StartDate = helpers.FromTime(rawStartDate)
+	expense.EndDate = helpers.FromTimePtr(rawEndDate)
+	expense.LastAddedDate = helpers.FromTimePtr(rawLastAddedDate)
+	expense.CreatedAt = helpers.FromTime(rawCreatedAt)
+	expense.UpdatedAt = helpers.FromTime(rawUpdatedAt)
 
 	c.JSON(200, expense)
 }
@@ -320,12 +348,12 @@ func UpdateRecurringExpense(c *gin.Context, db *db.DB) {
 	}
 	if req.StartDate != nil {
 		query += fmt.Sprintf(", start_date = $%d", argCount)
-		args = append(args, req.StartDate)
+		args = append(args, time.UnixMilli(*req.StartDate).UTC())
 		argCount++
 	}
 	if req.EndDate != nil {
 		query += fmt.Sprintf(", end_date = $%d", argCount)
-		args = append(args, req.EndDate)
+		args = append(args, time.UnixMilli(*req.EndDate).UTC())
 		argCount++
 	}
 	if req.IsActive != nil {
@@ -348,14 +376,21 @@ func UpdateRecurringExpense(c *gin.Context, db *db.DB) {
 	args = append(args, id)
 
 	var expense RecurringExpense
+	var rawStartDate, rawCreatedAt, rawUpdatedAt time.Time
+	var rawEndDate, rawLastAddedDate *time.Time
 	err = db.Pool.QueryRow(c.Request.Context(), query, args...).Scan(
 		&expense.ID, &expense.UserID, &expense.Name, &expense.Amount, &expense.Category,
-		&expense.Frequency, &expense.DayOfMonth, &expense.DaysOfWeek, &expense.StartDate,
-		&expense.EndDate, &expense.IsActive, &expense.LastAddedDate, &expense.Notes, &expense.CreatedAt, &expense.UpdatedAt)
+		&expense.Frequency, &expense.DayOfMonth, &expense.DaysOfWeek, &rawStartDate,
+		&rawEndDate, &expense.IsActive, &rawLastAddedDate, &expense.Notes, &rawCreatedAt, &rawUpdatedAt)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "failed to update recurring expense"})
 		return
 	}
+	expense.StartDate = helpers.FromTime(rawStartDate)
+	expense.EndDate = helpers.FromTimePtr(rawEndDate)
+	expense.LastAddedDate = helpers.FromTimePtr(rawLastAddedDate)
+	expense.CreatedAt = helpers.FromTime(rawCreatedAt)
+	expense.UpdatedAt = helpers.FromTime(rawUpdatedAt)
 
 	c.JSON(200, expense)
 }
