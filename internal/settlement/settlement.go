@@ -14,12 +14,13 @@ import (
 )
 
 type Settlement struct {
-	ID        uuid.UUID             `json:"id" db:"id"`
-	GroupID   uuid.UUID             `json:"group_id" db:"group_id"`
-	FromUser  uuid.UUID             `json:"from_user" db:"from_user"`
-	ToUser    uuid.UUID             `json:"to_user" db:"to_user"`
-	Amount    helpers.StringDecimal `json:"amount" db:"amount"`
-	CreatedAt time.Time             `json:"created_at" db:"created_at"`
+	ID        uuid.UUID             `json:"id"`
+	GroupID   uuid.UUID             `json:"group_id"`
+	FromUser  uuid.UUID             `json:"from_user"`
+	ToUser    uuid.UUID             `json:"to_user"`
+	Amount    helpers.StringDecimal `json:"amount"`
+	Notes     *string               `json:"notes,omitempty"`
+	CreatedAt time.Time             `json:"created_at"`
 }
 
 type CreateSettlementRequest struct {
@@ -27,6 +28,7 @@ type CreateSettlementRequest struct {
 	FromUser uuid.UUID `json:"from_user" validate:"required"`
 	ToUser   uuid.UUID `json:"to_user" validate:"required"`
 	Amount   string    `json:"amount" validate:"required,numeric"`
+	Notes    *string   `json:"notes,omitempty"`
 }
 
 func CreateSettlement(c *gin.Context, db *db.DB) {
@@ -88,8 +90,8 @@ func CreateSettlement(c *gin.Context, db *db.DB) {
 	// Insert settlement
 	var s Settlement
 	err = db.Pool.QueryRow(c.Request.Context(),
-		"INSERT INTO settlements (group_id, from_user, to_user, amount) VALUES ($1, $2, $3, $4) RETURNING id, group_id, from_user, to_user, amount, created_at",
-		groupID, req.FromUser, req.ToUser, amount).Scan(&s.ID, &s.GroupID, &s.FromUser, &s.ToUser, &s.Amount, &s.CreatedAt)
+		"INSERT INTO settlements (group_id, from_user, to_user, amount, notes) VALUES ($1, $2, $3, $4, $5) RETURNING id, group_id, from_user, to_user, amount, notes, created_at",
+		groupID, req.FromUser, req.ToUser, amount, req.Notes).Scan(&s.ID, &s.GroupID, &s.FromUser, &s.ToUser, &s.Amount, &s.Notes, &s.CreatedAt)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "failed to create settlement"})
 		return
