@@ -27,6 +27,7 @@ type Transaction struct {
 	Notes              *string                `json:"notes,omitempty"`
 	RecurringTransactionID *uuid.UUID             `json:"recurring_transaction_id,omitempty"`
 	GroupTransactionID *uuid.UUID             `json:"group_transaction_id,omitempty"`
+	GroupName          *string                `json:"group_name,omitempty"`
 	SettlementID       *uuid.UUID             `json:"settlement_id,omitempty"`
 	IsDeleted          bool                   `json:"is_deleted"`
 	CreatedAt          helpers.EpochMillis    `json:"created_at"`
@@ -97,19 +98,25 @@ func CreateTransaction(c *gin.Context, database *db.DB) {
 	var rawTime *time.Time
 
 	err = database.Pool.QueryRow(c.Request.Context(),
-		`INSERT INTO transactions (id, user_id, type, amount, category, date, time, description, notes, recurring_transaction_id, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())
-		 ON CONFLICT (id) DO UPDATE SET
-		   type = EXCLUDED.type,
-		   amount = EXCLUDED.amount,
-		   category = EXCLUDED.category,
-		   date = EXCLUDED.date,
-		   time = EXCLUDED.time,
-		   description = EXCLUDED.description,
-		   notes = EXCLUDED.notes,
-		   recurring_transaction_id = EXCLUDED.recurring_transaction_id,
-		   updated_at = NOW()
-		 RETURNING id, user_id, type, amount, category, date, time, description, notes, recurring_transaction_id, group_transaction_id, settlement_id, is_deleted, created_at, updated_at`,
+		`WITH ins AS (
+		   INSERT INTO transactions (id, user_id, type, amount, category, date, time, description, notes, recurring_transaction_id, updated_at)
+		   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())
+		   ON CONFLICT (id) DO UPDATE SET
+		     type = EXCLUDED.type,
+		     amount = EXCLUDED.amount,
+		     category = EXCLUDED.category,
+		     date = EXCLUDED.date,
+		     time = EXCLUDED.time,
+		     description = EXCLUDED.description,
+		     notes = EXCLUDED.notes,
+		     recurring_transaction_id = EXCLUDED.recurring_transaction_id,
+		     updated_at = NOW()
+		   RETURNING id, user_id, type, amount, category, date, time, description, notes, recurring_transaction_id, group_transaction_id, settlement_id, is_deleted, created_at, updated_at
+		 )
+		 SELECT ins.*, g.name AS group_name
+		 FROM ins
+		 LEFT JOIN group_transactions gt ON ins.group_transaction_id = gt.id
+		 LEFT JOIN groups g ON gt.group_id = g.id`,
 		id, userID, req.Type, amount, req.Category, date, txTime,
 		req.Description, req.Notes, req.RecurringTransactionID,
 	).Scan(
@@ -117,6 +124,7 @@ func CreateTransaction(c *gin.Context, database *db.DB) {
 		&rawDate, &rawTime, &tx.Description, &tx.Notes,
 		&tx.RecurringTransactionID, &tx.GroupTransactionID, &tx.SettlementID,
 		&tx.IsDeleted, &rawCreatedAt, &rawUpdatedAt,
+		&tx.GroupName,
 	)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "failed to create transaction"})
@@ -152,32 +160,35 @@ func ListTransactions(c *gin.Context, database *db.DB) {
 		}
 	}
 
-	query := `SELECT id, user_id, type, amount, category, date, time, description, notes, recurring_transaction_id, group_transaction_id, settlement_id, is_deleted, created_at, updated_at
-		      FROM transactions WHERE user_id = $1`
+	query := `SELECT t.id, t.user_id, t.type, t.amount, t.category, t.date, t.time, t.description, t.notes, t.recurring_transaction_id, t.group_transaction_id, g.name, t.settlement_id, t.is_deleted, t.created_at, t.updated_at
+		      FROM transactions t
+		      LEFT JOIN group_transactions gt ON t.group_transaction_id = gt.id
+		      LEFT JOIN groups g ON gt.group_id = g.id
+		      WHERE t.user_id = $1`
 	countQuery := `SELECT COUNT(*) FROM transactions WHERE user_id = $1`
 	args := []interface{}{userID}
 	n := 2
 
 	if c.Query("is_deleted") == "true" {
-		query += fmt.Sprintf(" AND is_deleted = $%d", n)
+		query += fmt.Sprintf(" AND t.is_deleted = $%d", n)
 		countQuery += fmt.Sprintf(" AND is_deleted = $%d", n)
 		args = append(args, true)
 	} else {
-		query += fmt.Sprintf(" AND is_deleted = $%d", n)
+		query += fmt.Sprintf(" AND t.is_deleted = $%d", n)
 		countQuery += fmt.Sprintf(" AND is_deleted = $%d", n)
 		args = append(args, false)
 	}
 	n++
 
 	if v := c.Query("type"); v != "" {
-		query += fmt.Sprintf(" AND type = $%d", n)
+		query += fmt.Sprintf(" AND t.type = $%d", n)
 		countQuery += fmt.Sprintf(" AND type = $%d", n)
 		args = append(args, v)
 		n++
 	}
 
 	if v := c.Query("category"); v != "" {
-		query += fmt.Sprintf(" AND category = $%d", n)
+		query += fmt.Sprintf(" AND t.category = $%d", n)
 		countQuery += fmt.Sprintf(" AND category = $%d", n)
 		args = append(args, v)
 		n++
@@ -186,7 +197,7 @@ func ListTransactions(c *gin.Context, database *db.DB) {
 	// start_date / end_date accepted as epoch ms
 	if v := c.Query("start_date"); v != "" {
 		if ms, err := strconv.ParseInt(v, 10, 64); err == nil {
-			query += fmt.Sprintf(" AND date >= $%d", n)
+			query += fmt.Sprintf(" AND t.date >= $%d", n)
 			countQuery += fmt.Sprintf(" AND date >= $%d", n)
 			args = append(args, time.UnixMilli(ms).UTC())
 			n++
@@ -195,7 +206,7 @@ func ListTransactions(c *gin.Context, database *db.DB) {
 
 	if v := c.Query("end_date"); v != "" {
 		if ms, err := strconv.ParseInt(v, 10, 64); err == nil {
-			query += fmt.Sprintf(" AND date <= $%d", n)
+			query += fmt.Sprintf(" AND t.date <= $%d", n)
 			countQuery += fmt.Sprintf(" AND date <= $%d", n)
 			args = append(args, time.UnixMilli(ms).UTC())
 			n++
@@ -204,7 +215,7 @@ func ListTransactions(c *gin.Context, database *db.DB) {
 
 	if v := c.Query("group_transaction_id"); v != "" {
 		if id, err := uuid.Parse(v); err == nil {
-			query += fmt.Sprintf(" AND group_transaction_id = $%d", n)
+			query += fmt.Sprintf(" AND t.group_transaction_id = $%d", n)
 			countQuery += fmt.Sprintf(" AND group_transaction_id = $%d", n)
 			args = append(args, id)
 			n++
@@ -213,7 +224,7 @@ func ListTransactions(c *gin.Context, database *db.DB) {
 
 	if v := c.Query("recurring_transaction_id"); v != "" {
 		if id, err := uuid.Parse(v); err == nil {
-			query += fmt.Sprintf(" AND recurring_transaction_id = $%d", n)
+			query += fmt.Sprintf(" AND t.recurring_transaction_id = $%d", n)
 			countQuery += fmt.Sprintf(" AND recurring_transaction_id = $%d", n)
 			args = append(args, id)
 			n++
@@ -226,7 +237,7 @@ func ListTransactions(c *gin.Context, database *db.DB) {
 		return
 	}
 
-	query += fmt.Sprintf(" ORDER BY date DESC, created_at DESC LIMIT $%d OFFSET $%d", n, n+1)
+	query += fmt.Sprintf(" ORDER BY t.date DESC, t.created_at DESC LIMIT $%d OFFSET $%d", n, n+1)
 	args = append(args, limit, offset)
 
 	rows, err := database.Pool.Query(c.Request.Context(), query, args...)
@@ -244,7 +255,7 @@ func ListTransactions(c *gin.Context, database *db.DB) {
 		if err := rows.Scan(
 			&tx.ID, &tx.UserID, &tx.Type, &tx.Amount, &tx.Category,
 			&rawDate, &rawTime, &tx.Description, &tx.Notes,
-			&tx.RecurringTransactionID, &tx.GroupTransactionID, &tx.SettlementID,
+			&tx.RecurringTransactionID, &tx.GroupTransactionID, &tx.GroupName, &tx.SettlementID,
 			&tx.IsDeleted, &rawCreatedAt, &rawUpdatedAt,
 		); err != nil {
 			c.JSON(500, gin.H{"error": "failed to scan transaction"})
@@ -285,13 +296,16 @@ func GetTransaction(c *gin.Context, database *db.DB) {
 	var rawTime *time.Time
 
 	err = database.Pool.QueryRow(c.Request.Context(),
-		`SELECT id, user_id, type, amount, category, date, time, description, notes, recurring_transaction_id, group_transaction_id, settlement_id, is_deleted, created_at, updated_at
-		 FROM transactions WHERE id = $1 AND user_id = $2`,
+		`SELECT t.id, t.user_id, t.type, t.amount, t.category, t.date, t.time, t.description, t.notes, t.recurring_transaction_id, t.group_transaction_id, g.name, t.settlement_id, t.is_deleted, t.created_at, t.updated_at
+		 FROM transactions t
+		 LEFT JOIN group_transactions gt ON t.group_transaction_id = gt.id
+		 LEFT JOIN groups g ON gt.group_id = g.id
+		 WHERE t.id = $1 AND t.user_id = $2`,
 		id, userID,
 	).Scan(
 		&tx.ID, &tx.UserID, &tx.Type, &tx.Amount, &tx.Category,
 		&rawDate, &rawTime, &tx.Description, &tx.Notes,
-		&tx.RecurringTransactionID, &tx.GroupTransactionID, &tx.SettlementID,
+		&tx.RecurringTransactionID, &tx.GroupTransactionID, &tx.GroupName, &tx.SettlementID,
 		&tx.IsDeleted, &rawCreatedAt, &rawUpdatedAt,
 	)
 	if err != nil {
@@ -413,11 +427,20 @@ func UpdateTransaction(c *gin.Context, database *db.DB) {
 	var rawDate, rawCreatedAt, rawUpdatedAt time.Time
 	var rawTime *time.Time
 
-	err = database.Pool.QueryRow(c.Request.Context(), query, args...).Scan(
+	// Wrap in CTE to join group name
+	wrappedQuery := fmt.Sprintf(
+		`WITH upd AS (%s)
+		 SELECT upd.*, g.name AS group_name
+		 FROM upd
+		 LEFT JOIN group_transactions gt ON upd.group_transaction_id = gt.id
+		 LEFT JOIN groups g ON gt.group_id = g.id`, query)
+
+	err = database.Pool.QueryRow(c.Request.Context(), wrappedQuery, args...).Scan(
 		&tx.ID, &tx.UserID, &tx.Type, &tx.Amount, &tx.Category,
 		&rawDate, &rawTime, &tx.Description, &tx.Notes,
 		&tx.RecurringTransactionID, &tx.GroupTransactionID, &tx.SettlementID,
 		&tx.IsDeleted, &rawCreatedAt, &rawUpdatedAt,
+		&tx.GroupName,
 	)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "failed to update transaction"})
