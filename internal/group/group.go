@@ -760,29 +760,33 @@ func CreateGroupTransaction(c *gin.Context, database *db.DB) {
 	gt.CreatedAt = helpers.FromTime(rawGTCreatedAt)
 	gt.UpdatedAt = helpers.FromTime(rawGTUpdatedAt)
 
-	// For each split: create personal transaction + insert split row
+	// Create a single personal expense transaction for the payer with the full amount
+	var payerTxID uuid.UUID
+	err = tx.QueryRow(c.Request.Context(),
+		`INSERT INTO transactions (user_id, type, amount, category, date, description, notes, group_transaction_id, updated_at)
+		 VALUES ($1, 'expense', $2, $3, $4, $5, $6, $7, NOW())
+		 RETURNING id`,
+		req.PaidByUserID, totalAmount, req.Category, gtDate, req.Description, req.Notes, gt.ID,
+	).Scan(&payerTxID)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "failed to create personal transaction for payer"})
+		return
+	}
+
+	// For each split: insert split row (link payer's transaction only for the payer's split)
 	var splits []SplitDetail
 	for i, s := range req.Splits {
-		// Create personal transaction for this member
-		var personalTxID uuid.UUID
-		err = tx.QueryRow(c.Request.Context(),
-			`INSERT INTO transactions (user_id, type, amount, category, date, description, notes, group_transaction_id, updated_at)
-			 VALUES ($1, 'expense', $2, $3, $4, $5, $6, $7, NOW())
-			 RETURNING id`,
-			s.UserID, splitAmounts[i], req.Category, gtDate, req.Description, req.Notes, gt.ID,
-		).Scan(&personalTxID)
-		if err != nil {
-			c.JSON(500, gin.H{"error": "failed to create personal transaction for split"})
-			return
+		var txIDForSplit *uuid.UUID
+		if s.UserID == req.PaidByUserID {
+			txIDForSplit = &payerTxID
 		}
 
-		// Insert split row
 		var split SplitDetail
 		err = tx.QueryRow(c.Request.Context(),
 			`INSERT INTO group_transaction_splits (group_transaction_id, user_id, amount, transaction_id)
 			 VALUES ($1, $2, $3, $4)
 			 RETURNING id, user_id, amount, transaction_id`,
-			gt.ID, s.UserID, splitAmounts[i], personalTxID,
+			gt.ID, s.UserID, splitAmounts[i], txIDForSplit,
 		).Scan(&split.ID, &split.UserID, &split.Amount, &split.TransactionID)
 		if err != nil {
 			c.JSON(500, gin.H{"error": "failed to create split"})

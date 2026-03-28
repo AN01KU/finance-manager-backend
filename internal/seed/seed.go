@@ -382,24 +382,30 @@ func Seed(ctx context.Context, database *db.DB) error {
 			return fmt.Errorf("insert group transaction %s: %w", gt.description, err)
 		}
 
-		// For each split: create personal transaction + split row
+		// Create a single personal expense transaction for the payer with the full amount
+		var payerTxID uuid.UUID
+		if err := database.Pool.QueryRow(ctx,
+			`INSERT INTO transactions (user_id, type, amount, category, date, description, group_transaction_id)
+			 VALUES ($1,'expense',$2,$3,$4,$5,$6)
+			 RETURNING id`,
+			gt.paidBy, gt.total, gt.category, gt.date, gt.description, gt.id,
+		).Scan(&payerTxID); err != nil {
+			return fmt.Errorf("insert personal tx for payer of %s: %w", gt.description, err)
+		}
+
+		// For each split: insert split row (link payer's transaction only for the payer's split)
 		for _, sp := range gt.splits {
 			splitID := uuid.New()
 
-			var personalTxID uuid.UUID
-			if err := database.Pool.QueryRow(ctx,
-				`INSERT INTO transactions (user_id, type, amount, category, date, description, group_transaction_id)
-				 VALUES ($1,'expense',$2,$3,$4,$5,$6)
-				 RETURNING id`,
-				sp.userID, sp.amount, gt.category, gt.date, gt.description, gt.id,
-			).Scan(&personalTxID); err != nil {
-				return fmt.Errorf("insert personal tx for split of %s: %w", gt.description, err)
+			var txIDForSplit *uuid.UUID
+			if sp.userID == gt.paidBy {
+				txIDForSplit = &payerTxID
 			}
 
 			if _, err := database.Pool.Exec(ctx,
 				`INSERT INTO group_transaction_splits (id, group_transaction_id, user_id, amount, transaction_id)
 				 VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING`,
-				splitID, gt.id, sp.userID, sp.amount, personalTxID); err != nil {
+				splitID, gt.id, sp.userID, sp.amount, txIDForSplit); err != nil {
 				return fmt.Errorf("insert split of %s: %w", gt.description, err)
 			}
 		}
@@ -407,22 +413,58 @@ func Seed(ctx context.Context, database *db.DB) error {
 	log.Println("[seed] ✓ Group transactions & splits")
 
 	// ── Settlements ────────────────────────────────────────────────────────────
-	// Priya settles ₹600 to Ankush (Roommates, partial)
-	if _, err := database.Pool.Exec(ctx,
-		`INSERT INTO settlements (id, group_id, from_user, to_user, amount)
-		 VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING`,
-		uuid.MustParse("c1000001-0000-0000-0000-000000000000"),
-		GroupRoommatesID, UserPriyaID, UserAnkushID, 600.00); err != nil {
-		return fmt.Errorf("insert settlement: %w", err)
+	type settlementRow struct {
+		id      uuid.UUID
+		groupID uuid.UUID
+		from    uuid.UUID
+		to      uuid.UUID
+		amount  float64
+		date    time.Time
 	}
 
-	// Sara settles ₹4000 to Ankush (Goa hotel)
-	if _, err := database.Pool.Exec(ctx,
-		`INSERT INTO settlements (id, group_id, from_user, to_user, amount)
-		 VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING`,
-		uuid.MustParse("c2000001-0000-0000-0000-000000000000"),
-		GroupTripGoaID, UserSaraID, UserAnkushID, 4000.00); err != nil {
-		return fmt.Errorf("insert settlement: %w", err)
+	settlements := []settlementRow{
+		// Priya settles ₹600 to Ankush (Roommates, partial)
+		{uuid.MustParse("c1000001-0000-0000-0000-000000000000"), GroupRoommatesID, UserPriyaID, UserAnkushID, 600.00, yesterday},
+		// Sara settles ₹4000 to Ankush (Goa hotel)
+		{uuid.MustParse("c2000001-0000-0000-0000-000000000000"), GroupTripGoaID, UserSaraID, UserAnkushID, 4000.00, lastWeek},
+		// Ankush settles ₹600 to Priya (Roommates — electricity share)
+		{uuid.MustParse("c3000001-0000-0000-0000-000000000000"), GroupRoommatesID, UserAnkushID, UserPriyaID, 600.00, twoDaysAgo},
+		// Ankush settles ₹1500 to Priya (Goa — activities share)
+		{uuid.MustParse("c4000001-0000-0000-0000-000000000000"), GroupTripGoaID, UserAnkushID, UserPriyaID, 1500.00, threeDaysAgo},
+	}
+
+	for _, st := range settlements {
+		var exists bool
+		if err := database.Pool.QueryRow(ctx,
+			`SELECT EXISTS(SELECT 1 FROM settlements WHERE id = $1)`, st.id).Scan(&exists); err != nil {
+			return fmt.Errorf("check settlement exists: %w", err)
+		}
+		if exists {
+			continue
+		}
+
+		if _, err := database.Pool.Exec(ctx,
+			`INSERT INTO settlements (id, group_id, from_user, to_user, amount)
+			 VALUES ($1,$2,$3,$4,$5)`,
+			st.id, st.groupID, st.from, st.to, st.amount); err != nil {
+			return fmt.Errorf("insert settlement: %w", err)
+		}
+
+		// Income transaction for to_user (received money)
+		if _, err := database.Pool.Exec(ctx,
+			`INSERT INTO transactions (user_id, type, amount, category, date, description, settlement_id)
+			 VALUES ($1, 'income', $2, 'Debt & Payments', $3, 'Settlement received', $4)`,
+			st.to, st.amount, st.date, st.id); err != nil {
+			return fmt.Errorf("insert settlement income tx: %w", err)
+		}
+
+		// Expense transaction for from_user (paid money)
+		if _, err := database.Pool.Exec(ctx,
+			`INSERT INTO transactions (user_id, type, amount, category, date, description, settlement_id)
+			 VALUES ($1, 'expense', $2, 'Debt & Payments', $3, 'Settlement paid', $4)`,
+			st.from, st.amount, st.date, st.id); err != nil {
+			return fmt.Errorf("insert settlement expense tx: %w", err)
+		}
 	}
 	log.Println("[seed] ✓ Settlements")
 

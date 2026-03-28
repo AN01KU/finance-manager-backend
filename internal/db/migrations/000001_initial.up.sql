@@ -43,6 +43,7 @@ CREATE TABLE transactions (
     notes TEXT,
     recurring_transaction_id UUID REFERENCES recurring_transactions(id) ON DELETE SET NULL,
     group_transaction_id UUID,
+    settlement_id UUID,
     is_deleted BOOLEAN DEFAULT FALSE,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
@@ -52,6 +53,7 @@ CREATE INDEX idx_transactions_user_id ON transactions(user_id);
 CREATE INDEX idx_transactions_date ON transactions(user_id, date DESC);
 CREATE INDEX idx_transactions_type ON transactions(user_id, type);
 CREATE INDEX idx_transactions_not_deleted ON transactions(user_id, is_deleted) WHERE is_deleted = FALSE;
+CREATE INDEX idx_transactions_settlement ON transactions(settlement_id) WHERE settlement_id IS NOT NULL;
 
 -- Monthly budgets
 CREATE TABLE monthly_budgets (
@@ -150,3 +152,8 @@ CREATE TABLE settlements (
 );
 
 CREATE INDEX idx_settlements_group ON settlements(group_id);
+
+-- FK from transactions back to settlements
+ALTER TABLE transactions
+    ADD CONSTRAINT fk_transactions_settlement
+    FOREIGN KEY (settlement_id) REFERENCES settlements(id) ON DELETE SET NULL;

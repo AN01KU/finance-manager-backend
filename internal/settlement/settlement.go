@@ -109,11 +109,21 @@ func CreateSettlement(c *gin.Context, db *db.DB) {
 
 	// Create income transaction for the to_user (they received money)
 	_, err = dbTx.Exec(c.Request.Context(),
-		`INSERT INTO transactions (user_id, type, amount, category, date, description, notes)
-		 VALUES ($1, 'income', $2, 'Debt & Payments', NOW(), $3, $4)`,
-		req.ToUser, amount, "Settlement received", req.Notes)
+		`INSERT INTO transactions (user_id, type, amount, category, date, description, notes, settlement_id)
+		 VALUES ($1, 'income', $2, 'Debt & Payments', NOW(), $3, $4, $5)`,
+		req.ToUser, amount, "Settlement received", req.Notes, s.ID)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "failed to create income transaction for settlement"})
+		return
+	}
+
+	// Create expense transaction for the from_user (they paid money)
+	_, err = dbTx.Exec(c.Request.Context(),
+		`INSERT INTO transactions (user_id, type, amount, category, date, description, notes, settlement_id)
+		 VALUES ($1, 'expense', $2, 'Debt & Payments', NOW(), $3, $4, $5)`,
+		req.FromUser, amount, "Settlement paid", req.Notes, s.ID)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "failed to create expense transaction for settlement"})
 		return
 	}
 
