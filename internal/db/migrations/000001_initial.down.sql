@@ -7,5 +7,5 @@ DROP INDEX IF EXISTS idx_custom_categories_user_predefined_key;
 DROP TABLE IF EXISTS custom_categories CASCADE;
 DROP TABLE IF EXISTS monthly_budgets CASCADE;
 DROP TABLE IF EXISTS transactions CASCADE;
-DROP TABLE IF EXISTS recurring_expenses CASCADE;
+DROP TABLE IF EXISTS recurring_transactions CASCADE;
 DROP TABLE IF EXISTS users CASCADE;

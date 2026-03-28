@@ -7,10 +7,11 @@ CREATE TABLE users (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Recurring expenses (must come before transactions due to FK)
-CREATE TABLE recurring_expenses (
+-- Recurring transactions (must come before transactions due to FK)
+CREATE TABLE recurring_transactions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    type VARCHAR(10) NOT NULL DEFAULT 'expense' CHECK (type IN ('expense', 'income')),
     name VARCHAR(255) NOT NULL,
     amount DECIMAL(12,2) NOT NULL CHECK (amount > 0),
     category VARCHAR(100) NOT NULL,
@@ -26,8 +27,8 @@ CREATE TABLE recurring_expenses (
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX idx_recurring_expenses_user_id ON recurring_expenses(user_id);
-CREATE INDEX idx_recurring_expenses_active ON recurring_expenses(user_id, is_active) WHERE is_active = TRUE;
+CREATE INDEX idx_recurring_transactions_user_id ON recurring_transactions(user_id);
+CREATE INDEX idx_recurring_transactions_active ON recurring_transactions(user_id, is_active) WHERE is_active = TRUE;
 
 -- Personal transactions (expenses + income)
 CREATE TABLE transactions (
@@ -40,7 +41,7 @@ CREATE TABLE transactions (
     time TIMESTAMPTZ,
     description VARCHAR(255),
     notes TEXT,
-    recurring_expense_id UUID REFERENCES recurring_expenses(id) ON DELETE SET NULL,
+    recurring_transaction_id UUID REFERENCES recurring_transactions(id) ON DELETE SET NULL,
     group_transaction_id UUID,
     is_deleted BOOLEAN DEFAULT FALSE,
     created_at TIMESTAMPTZ DEFAULT NOW(),

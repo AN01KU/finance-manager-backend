@@ -25,7 +25,7 @@ type Transaction struct {
 	Time               *helpers.EpochMillis   `json:"time,omitempty"`
 	Description        *string                `json:"description,omitempty"`
 	Notes              *string                `json:"notes,omitempty"`
-	RecurringExpenseID *uuid.UUID             `json:"recurring_expense_id,omitempty"`
+	RecurringTransactionID *uuid.UUID             `json:"recurring_transaction_id,omitempty"`
 	GroupTransactionID *uuid.UUID             `json:"group_transaction_id,omitempty"`
 	IsDeleted          bool                   `json:"is_deleted"`
 	CreatedAt          helpers.EpochMillis    `json:"created_at"`
@@ -41,7 +41,7 @@ type CreateTransactionRequest struct {
 	TimeMs             *int64     `json:"time,omitempty"`
 	Description        *string    `json:"description,omitempty" validate:"omitempty,max=255"`
 	Notes              *string    `json:"notes,omitempty"`
-	RecurringExpenseID *uuid.UUID `json:"recurring_expense_id,omitempty"`
+	RecurringTransactionID *uuid.UUID `json:"recurring_transaction_id,omitempty"`
 }
 
 type UpdateTransactionRequest struct {
@@ -96,7 +96,7 @@ func CreateTransaction(c *gin.Context, database *db.DB) {
 	var rawTime *time.Time
 
 	err = database.Pool.QueryRow(c.Request.Context(),
-		`INSERT INTO transactions (id, user_id, type, amount, category, date, time, description, notes, recurring_expense_id, updated_at)
+		`INSERT INTO transactions (id, user_id, type, amount, category, date, time, description, notes, recurring_transaction_id, updated_at)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())
 		 ON CONFLICT (id) DO UPDATE SET
 		   type = EXCLUDED.type,
@@ -106,15 +106,15 @@ func CreateTransaction(c *gin.Context, database *db.DB) {
 		   time = EXCLUDED.time,
 		   description = EXCLUDED.description,
 		   notes = EXCLUDED.notes,
-		   recurring_expense_id = EXCLUDED.recurring_expense_id,
+		   recurring_transaction_id = EXCLUDED.recurring_transaction_id,
 		   updated_at = NOW()
-		 RETURNING id, user_id, type, amount, category, date, time, description, notes, recurring_expense_id, group_transaction_id, is_deleted, created_at, updated_at`,
+		 RETURNING id, user_id, type, amount, category, date, time, description, notes, recurring_transaction_id, group_transaction_id, is_deleted, created_at, updated_at`,
 		id, userID, req.Type, amount, req.Category, date, txTime,
-		req.Description, req.Notes, req.RecurringExpenseID,
+		req.Description, req.Notes, req.RecurringTransactionID,
 	).Scan(
 		&tx.ID, &tx.UserID, &tx.Type, &tx.Amount, &tx.Category,
 		&rawDate, &rawTime, &tx.Description, &tx.Notes,
-		&tx.RecurringExpenseID, &tx.GroupTransactionID,
+		&tx.RecurringTransactionID, &tx.GroupTransactionID,
 		&tx.IsDeleted, &rawCreatedAt, &rawUpdatedAt,
 	)
 	if err != nil {
@@ -151,7 +151,7 @@ func ListTransactions(c *gin.Context, database *db.DB) {
 		}
 	}
 
-	query := `SELECT id, user_id, type, amount, category, date, time, description, notes, recurring_expense_id, group_transaction_id, is_deleted, created_at, updated_at
+	query := `SELECT id, user_id, type, amount, category, date, time, description, notes, recurring_transaction_id, group_transaction_id, is_deleted, created_at, updated_at
 		      FROM transactions WHERE user_id = $1`
 	countQuery := `SELECT COUNT(*) FROM transactions WHERE user_id = $1`
 	args := []interface{}{userID}
@@ -210,10 +210,10 @@ func ListTransactions(c *gin.Context, database *db.DB) {
 		}
 	}
 
-	if v := c.Query("recurring_expense_id"); v != "" {
+	if v := c.Query("recurring_transaction_id"); v != "" {
 		if id, err := uuid.Parse(v); err == nil {
-			query += fmt.Sprintf(" AND recurring_expense_id = $%d", n)
-			countQuery += fmt.Sprintf(" AND recurring_expense_id = $%d", n)
+			query += fmt.Sprintf(" AND recurring_transaction_id = $%d", n)
+			countQuery += fmt.Sprintf(" AND recurring_transaction_id = $%d", n)
 			args = append(args, id)
 			n++
 		}
@@ -243,7 +243,7 @@ func ListTransactions(c *gin.Context, database *db.DB) {
 		if err := rows.Scan(
 			&tx.ID, &tx.UserID, &tx.Type, &tx.Amount, &tx.Category,
 			&rawDate, &rawTime, &tx.Description, &tx.Notes,
-			&tx.RecurringExpenseID, &tx.GroupTransactionID,
+			&tx.RecurringTransactionID, &tx.GroupTransactionID,
 			&tx.IsDeleted, &rawCreatedAt, &rawUpdatedAt,
 		); err != nil {
 			c.JSON(500, gin.H{"error": "failed to scan transaction"})
@@ -284,13 +284,13 @@ func GetTransaction(c *gin.Context, database *db.DB) {
 	var rawTime *time.Time
 
 	err = database.Pool.QueryRow(c.Request.Context(),
-		`SELECT id, user_id, type, amount, category, date, time, description, notes, recurring_expense_id, group_transaction_id, is_deleted, created_at, updated_at
+		`SELECT id, user_id, type, amount, category, date, time, description, notes, recurring_transaction_id, group_transaction_id, is_deleted, created_at, updated_at
 		 FROM transactions WHERE id = $1 AND user_id = $2`,
 		id, userID,
 	).Scan(
 		&tx.ID, &tx.UserID, &tx.Type, &tx.Amount, &tx.Category,
 		&rawDate, &rawTime, &tx.Description, &tx.Notes,
-		&tx.RecurringExpenseID, &tx.GroupTransactionID,
+		&tx.RecurringTransactionID, &tx.GroupTransactionID,
 		&tx.IsDeleted, &rawCreatedAt, &rawUpdatedAt,
 	)
 	if err != nil {
@@ -405,7 +405,7 @@ func UpdateTransaction(c *gin.Context, database *db.DB) {
 	}
 
 	query += fmt.Sprintf(` WHERE id = $%d
-		RETURNING id, user_id, type, amount, category, date, time, description, notes, recurring_expense_id, group_transaction_id, is_deleted, created_at, updated_at`, n)
+		RETURNING id, user_id, type, amount, category, date, time, description, notes, recurring_transaction_id, group_transaction_id, is_deleted, created_at, updated_at`, n)
 	args = append(args, id)
 
 	var tx Transaction
@@ -415,7 +415,7 @@ func UpdateTransaction(c *gin.Context, database *db.DB) {
 	err = database.Pool.QueryRow(c.Request.Context(), query, args...).Scan(
 		&tx.ID, &tx.UserID, &tx.Type, &tx.Amount, &tx.Category,
 		&rawDate, &rawTime, &tx.Description, &tx.Notes,
-		&tx.RecurringExpenseID, &tx.GroupTransactionID,
+		&tx.RecurringTransactionID, &tx.GroupTransactionID,
 		&tx.IsDeleted, &rawCreatedAt, &rawUpdatedAt,
 	)
 	if err != nil {

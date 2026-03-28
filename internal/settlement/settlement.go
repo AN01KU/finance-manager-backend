@@ -87,10 +87,18 @@ func CreateSettlement(c *gin.Context, db *db.DB) {
 		return
 	}
 
+	// Use a DB transaction so settlement + income transaction are atomic
+	dbTx, err := db.Pool.Begin(c.Request.Context())
+	if err != nil {
+		c.JSON(500, gin.H{"error": "failed to start transaction"})
+		return
+	}
+	defer dbTx.Rollback(c.Request.Context())
+
 	// Insert settlement
 	var s Settlement
 	var rawCreatedAt time.Time
-	err = db.Pool.QueryRow(c.Request.Context(),
+	err = dbTx.QueryRow(c.Request.Context(),
 		"INSERT INTO settlements (group_id, from_user, to_user, amount, notes) VALUES ($1, $2, $3, $4, $5) RETURNING id, group_id, from_user, to_user, amount, notes, created_at",
 		groupID, req.FromUser, req.ToUser, amount, req.Notes).Scan(&s.ID, &s.GroupID, &s.FromUser, &s.ToUser, &s.Amount, &s.Notes, &rawCreatedAt)
 	if err != nil {
@@ -98,6 +106,21 @@ func CreateSettlement(c *gin.Context, db *db.DB) {
 		return
 	}
 	s.CreatedAt = helpers.FromTime(rawCreatedAt)
+
+	// Create income transaction for the to_user (they received money)
+	_, err = dbTx.Exec(c.Request.Context(),
+		`INSERT INTO transactions (user_id, type, amount, category, date, description, notes)
+		 VALUES ($1, 'income', $2, 'Debt & Payments', NOW(), $3, $4)`,
+		req.ToUser, amount, "Settlement received", req.Notes)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "failed to create income transaction for settlement"})
+		return
+	}
+
+	if err := dbTx.Commit(c.Request.Context()); err != nil {
+		c.JSON(500, gin.H{"error": "failed to commit"})
+		return
+	}
 
 	c.JSON(201, s)
 }

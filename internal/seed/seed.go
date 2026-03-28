@@ -25,11 +25,12 @@ var (
 	GroupTripGoaID   = uuid.MustParse("ffffffff-0002-0002-0002-ffffffffffff")
 	GroupOldTripID   = uuid.MustParse("11111111-0003-0003-0003-111111111111") // group Ankush is NOT a member of
 
-	// Recurring expenses (Ankush)
+	// Recurring transactions (Ankush)
 	RecurringRentID     = uuid.MustParse("22222222-0001-0001-0001-222222222222")
 	RecurringNetflixID  = uuid.MustParse("33333333-0002-0002-0002-333333333333")
 	RecurringGymID      = uuid.MustParse("44444444-0003-0003-0003-444444444444")
 	RecurringInactiveID = uuid.MustParse("55555555-0004-0004-0004-555555555555")
+	RecurringSalaryID   = uuid.MustParse("66666666-0005-0005-0005-666666666666")
 )
 
 var seededUserIDs = []uuid.UUID{UserAnkushID, UserPriyaID, UserRahulID, UserSaraID}
@@ -161,9 +162,10 @@ func Seed(ctx context.Context, database *db.DB) error {
 	}
 	log.Println("[seed] ✓ Budgets")
 
-	// ── Recurring expenses (Ankush) ────────────────────────────────────────────
+	// ── Recurring transactions (Ankush) ────────────────────────────────────────
 	recs := []struct {
 		id         uuid.UUID
+		txType     string
 		name       string
 		amount     float64
 		category   string
@@ -176,24 +178,25 @@ func Seed(ctx context.Context, database *db.DB) error {
 		lastAdded  *time.Time
 		notes      string
 	}{
-		{RecurringRentID, "House Rent", 15000.00, "Housing", "monthly", intPtr(1), nil, lastMonth, nil, true, &today, "Monthly rent for flat"},
-		{RecurringNetflixID, "Netflix", 649.00, "Subscriptions", "monthly", intPtr(15), nil, lastMonth, nil, true, &lastMonth, "Streaming subscription"},
-		{RecurringGymID, "Gym Membership", 1200.00, "Gym & Fitness", "monthly", intPtr(5), nil, lastMonth, nil, true, &today, "Monthly gym fee"},
-		{RecurringInactiveID, "Spotify", 119.00, "Subscriptions", "monthly", intPtr(20), nil, lastMonth.AddDate(-1, 0, 0), &lastMonth, false, &lastMonth, "Cancelled — switched to YouTube Music"},
+		{RecurringRentID, "expense", "House Rent", 15000.00, "Housing", "monthly", intPtr(1), nil, lastMonth, nil, true, &today, "Monthly rent for flat"},
+		{RecurringNetflixID, "expense", "Netflix", 649.00, "Subscriptions", "monthly", intPtr(15), nil, lastMonth, nil, true, &lastMonth, "Streaming subscription"},
+		{RecurringGymID, "expense", "Gym Membership", 1200.00, "Gym & Fitness", "monthly", intPtr(5), nil, lastMonth, nil, true, &today, "Monthly gym fee"},
+		{RecurringInactiveID, "expense", "Spotify", 119.00, "Subscriptions", "monthly", intPtr(20), nil, lastMonth.AddDate(-1, 0, 0), &lastMonth, false, &lastMonth, "Cancelled — switched to YouTube Music"},
+		{RecurringSalaryID, "income", "Monthly Salary", 85000.00, "Work & Professional", "monthly", intPtr(1), nil, lastMonth, nil, true, &today, "Net salary after TDS"},
 	}
 
 	for _, r := range recs {
 		if _, err := database.Pool.Exec(ctx,
-			`INSERT INTO recurring_expenses
-			 (id, user_id, name, amount, category, frequency, day_of_month, days_of_week, start_date, end_date, is_active, last_added_date, notes)
-			 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+			`INSERT INTO recurring_transactions
+			 (id, user_id, type, name, amount, category, frequency, day_of_month, days_of_week, start_date, end_date, is_active, last_added_date, notes)
+			 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
 			 ON CONFLICT (id) DO NOTHING`,
-			r.id, UserAnkushID, r.name, r.amount, r.category, r.frequency,
+			r.id, UserAnkushID, r.txType, r.name, r.amount, r.category, r.frequency,
 			r.dayOfMonth, r.daysOfWeek, r.startDate, r.endDate, r.isActive, r.lastAdded, r.notes); err != nil {
 			return fmt.Errorf("insert recurring %s: %w", r.name, err)
 		}
 	}
-	log.Println("[seed] ✓ Recurring expenses")
+	log.Println("[seed] ✓ Recurring transactions")
 
 	// ── Personal transactions (Ankush) ─────────────────────────────────────────
 	// type: 'expense' or 'income'
@@ -206,7 +209,7 @@ func Seed(ctx context.Context, database *db.DB) error {
 		description        string
 		notes              string
 		isDeleted          bool
-		recurringExpID     *uuid.UUID
+		recurringTxID      *uuid.UUID
 	}
 
 	personalTxs := []txRow{
@@ -216,7 +219,7 @@ func Seed(ctx context.Context, database *db.DB) error {
 		{uuid.MustParse("a1000003-0000-0000-0000-000000000000"), "expense", 15000.00, "Housing", today, "House Rent - March", "Paid via UPI", false, &RecurringRentID},
 		{uuid.MustParse("a1000004-0000-0000-0000-000000000000"), "expense", 1200.00, "Gym & Fitness", today, "Gym Membership March", "", false, &RecurringGymID},
 		// Today — income (salary)
-		{uuid.MustParse("a1000005-0000-0000-0000-000000000000"), "income", 85000.00, "Work & Professional", today, "March Salary", "Net after TDS", false, nil},
+		{uuid.MustParse("a1000005-0000-0000-0000-000000000000"), "income", 85000.00, "Work & Professional", today, "March Salary", "Net after TDS", false, &RecurringSalaryID},
 
 		// Yesterday
 		{uuid.MustParse("a2000001-0000-0000-0000-000000000000"), "expense", 580.00, "Food & Dining", yesterday, "Dinner - Barbeque Nation", "Split with friends", false, nil},
@@ -252,11 +255,11 @@ func Seed(ctx context.Context, database *db.DB) error {
 
 	for _, t := range personalTxs {
 		if _, err := database.Pool.Exec(ctx,
-			`INSERT INTO transactions (id, user_id, type, amount, category, date, description, notes, is_deleted, recurring_expense_id)
+			`INSERT INTO transactions (id, user_id, type, amount, category, date, description, notes, is_deleted, recurring_transaction_id)
 			 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
 			 ON CONFLICT (id) DO NOTHING`,
 			t.id, UserAnkushID, t.txType, t.amount, t.category, t.date,
-			t.description, t.notes, t.isDeleted, t.recurringExpID); err != nil {
+			t.description, t.notes, t.isDeleted, t.recurringTxID); err != nil {
 			return fmt.Errorf("insert transaction %s: %w", t.description, err)
 		}
 	}
@@ -448,7 +451,7 @@ func Cleanup(ctx context.Context, database *db.DB) {
 		fmt.Sprintf(`DELETE FROM group_transactions WHERE group_id IN (%s)`, joinStrings(groupIDStrs)),
 		fmt.Sprintf(`DELETE FROM group_members WHERE group_id IN (%s)`, joinStrings(groupIDStrs)),
 		fmt.Sprintf(`DELETE FROM groups WHERE id IN (%s)`, joinStrings(groupIDStrs)),
-		fmt.Sprintf(`DELETE FROM recurring_expenses WHERE user_id IN (%s)`, joinStrings(userIDStrs)),
+		fmt.Sprintf(`DELETE FROM recurring_transactions WHERE user_id IN (%s)`, joinStrings(userIDStrs)),
 		fmt.Sprintf(`DELETE FROM monthly_budgets WHERE user_id IN (%s)`, joinStrings(userIDStrs)),
 		fmt.Sprintf(`DELETE FROM custom_categories WHERE user_id IN (%s)`, joinStrings(userIDStrs)),
 		fmt.Sprintf(`DELETE FROM users WHERE id IN (%s)`, joinStrings(userIDStrs)),

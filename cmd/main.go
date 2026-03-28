@@ -113,12 +113,12 @@ func main() {
 		protected.PATCH("/transactions/:id", func(c *gin.Context) { transaction.UpdateTransaction(c, database) })
 		protected.DELETE("/transactions/:id", func(c *gin.Context) { transaction.DeleteTransaction(c, database) })
 
-		// Recurring Expenses
-		protected.POST("/recurring-expenses", func(c *gin.Context) { recurring.CreateRecurringExpense(c, database) })
-		protected.GET("/recurring-expenses", func(c *gin.Context) { recurring.ListRecurringExpenses(c, database) })
-		protected.GET("/recurring-expenses/:id", func(c *gin.Context) { recurring.GetRecurringExpense(c, database) })
-		protected.PUT("/recurring-expenses/:id", func(c *gin.Context) { recurring.UpdateRecurringExpense(c, database) })
-		protected.DELETE("/recurring-expenses/:id", func(c *gin.Context) { recurring.DeleteRecurringExpense(c, database) })
+		// Recurring Transactions
+		protected.POST("/recurring-transactions", func(c *gin.Context) { recurring.CreateRecurringTransaction(c, database) })
+		protected.GET("/recurring-transactions", func(c *gin.Context) { recurring.ListRecurringTransactions(c, database) })
+		protected.GET("/recurring-transactions/:id", func(c *gin.Context) { recurring.GetRecurringTransaction(c, database) })
+		protected.PUT("/recurring-transactions/:id", func(c *gin.Context) { recurring.UpdateRecurringTransaction(c, database) })
+		protected.DELETE("/recurring-transactions/:id", func(c *gin.Context) { recurring.DeleteRecurringTransaction(c, database) })
 
 		// Budgets
 		protected.POST("/budgets", func(c *gin.Context) { budget.CreateBudget(c, database) })

@@ -14,9 +14,10 @@ import (
 	"github.com/yanonymousV2/finance-manager-backend/internal/middleware"
 )
 
-type RecurringExpense struct {
+type RecurringTransaction struct {
 	ID            uuid.UUID              `json:"id"`
 	UserID        uuid.UUID              `json:"user_id"`
+	Type          string                 `json:"type"`
 	Name          string                 `json:"name"`
 	Amount        helpers.StringDecimal  `json:"amount"`
 	Category      string                 `json:"category"`
@@ -32,8 +33,9 @@ type RecurringExpense struct {
 	UpdatedAt     helpers.EpochMillis    `json:"updated_at"`
 }
 
-type CreateRecurringExpenseRequest struct {
+type CreateRecurringTransactionRequest struct {
 	ID         *uuid.UUID `json:"id,omitempty"`
+	Type       string     `json:"type" validate:"required,oneof=expense income"`
 	Name       string     `json:"name" validate:"required"`
 	Amount     string     `json:"amount" validate:"required,numeric"`
 	Category   string     `json:"category" validate:"required"`
@@ -45,7 +47,8 @@ type CreateRecurringExpenseRequest struct {
 	Notes      *string    `json:"notes,omitempty"`
 }
 
-type UpdateRecurringExpenseRequest struct {
+type UpdateRecurringTransactionRequest struct {
+	Type       *string `json:"type,omitempty" validate:"omitempty,oneof=expense income"`
 	Name       *string `json:"name,omitempty" validate:"omitempty"`
 	Amount     *string `json:"amount,omitempty" validate:"omitempty,numeric"`
 	Category   *string `json:"category,omitempty" validate:"omitempty"`
@@ -58,14 +61,14 @@ type UpdateRecurringExpenseRequest struct {
 	Notes      *string `json:"notes,omitempty"`
 }
 
-func CreateRecurringExpense(c *gin.Context, db *db.DB) {
+func CreateRecurringTransaction(c *gin.Context, db *db.DB) {
 	userID, ok := middleware.GetUserID(c)
 	if !ok {
 		c.JSON(401, gin.H{"error": "unauthorized"})
 		return
 	}
 
-	var req CreateRecurringExpenseRequest
+	var req CreateRecurringTransactionRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
@@ -120,13 +123,14 @@ func CreateRecurringExpense(c *gin.Context, db *db.DB) {
 		recurringID = *req.ID
 	}
 
-	var expense RecurringExpense
+	var rt RecurringTransaction
 	var rawStartDate, rawCreatedAt, rawUpdatedAt time.Time
 	var rawEndDate, rawLastAddedDate *time.Time
 	err = db.Pool.QueryRow(c.Request.Context(),
-		`INSERT INTO recurring_expenses (id, user_id, name, amount, category, frequency, day_of_month, days_of_week, start_date, end_date, is_active, notes, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, true, $11, NOW())
+		`INSERT INTO recurring_transactions (id, user_id, type, name, amount, category, frequency, day_of_month, days_of_week, start_date, end_date, is_active, notes, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, true, $12, NOW())
 		 ON CONFLICT (id) DO UPDATE SET
+		   type = EXCLUDED.type,
 		   name = EXCLUDED.name,
 		   amount = EXCLUDED.amount,
 		   category = EXCLUDED.category,
@@ -137,33 +141,33 @@ func CreateRecurringExpense(c *gin.Context, db *db.DB) {
 		   end_date = EXCLUDED.end_date,
 		   notes = EXCLUDED.notes,
 		   updated_at = NOW()
-		 RETURNING id, user_id, name, amount, category, frequency, day_of_month, days_of_week, start_date, end_date, is_active, last_added_date, notes, created_at, updated_at`,
-		recurringID, userID, req.Name, amount, req.Category, req.Frequency, req.DayOfMonth, req.DaysOfWeek, startDate, endDate, req.Notes).Scan(
-		&expense.ID, &expense.UserID, &expense.Name, &expense.Amount, &expense.Category,
-		&expense.Frequency, &expense.DayOfMonth, &expense.DaysOfWeek, &rawStartDate,
-		&rawEndDate, &expense.IsActive, &rawLastAddedDate, &expense.Notes, &rawCreatedAt, &rawUpdatedAt)
+		 RETURNING id, user_id, type, name, amount, category, frequency, day_of_month, days_of_week, start_date, end_date, is_active, last_added_date, notes, created_at, updated_at`,
+		recurringID, userID, req.Type, req.Name, amount, req.Category, req.Frequency, req.DayOfMonth, req.DaysOfWeek, startDate, endDate, req.Notes).Scan(
+		&rt.ID, &rt.UserID, &rt.Type, &rt.Name, &rt.Amount, &rt.Category,
+		&rt.Frequency, &rt.DayOfMonth, &rt.DaysOfWeek, &rawStartDate,
+		&rawEndDate, &rt.IsActive, &rawLastAddedDate, &rt.Notes, &rawCreatedAt, &rawUpdatedAt)
 	if err != nil {
-		c.JSON(500, gin.H{"error": "failed to create recurring expense"})
+		c.JSON(500, gin.H{"error": "failed to create recurring transaction"})
 		return
 	}
-	expense.StartDate = helpers.FromTime(rawStartDate)
-	expense.EndDate = helpers.FromTimePtr(rawEndDate)
-	expense.LastAddedDate = helpers.FromTimePtr(rawLastAddedDate)
-	expense.CreatedAt = helpers.FromTime(rawCreatedAt)
-	expense.UpdatedAt = helpers.FromTime(rawUpdatedAt)
+	rt.StartDate = helpers.FromTime(rawStartDate)
+	rt.EndDate = helpers.FromTimePtr(rawEndDate)
+	rt.LastAddedDate = helpers.FromTimePtr(rawLastAddedDate)
+	rt.CreatedAt = helpers.FromTime(rawCreatedAt)
+	rt.UpdatedAt = helpers.FromTime(rawUpdatedAt)
 
-	c.JSON(201, expense)
+	c.JSON(201, rt)
 }
 
-func ListRecurringExpenses(c *gin.Context, db *db.DB) {
+func ListRecurringTransactions(c *gin.Context, db *db.DB) {
 	userID, ok := middleware.GetUserID(c)
 	if !ok {
 		c.JSON(401, gin.H{"error": "unauthorized"})
 		return
 	}
 
-	query := `SELECT id, user_id, name, amount, category, frequency, day_of_month, days_of_week, start_date, end_date, is_active, last_added_date, notes, created_at, updated_at
-		      FROM recurring_expenses
+	query := `SELECT id, user_id, type, name, amount, category, frequency, day_of_month, days_of_week, start_date, end_date, is_active, last_added_date, notes, created_at, updated_at
+		      FROM recurring_transactions
 		      WHERE user_id = $1`
 	args := []interface{}{userID}
 
@@ -175,38 +179,38 @@ func ListRecurringExpenses(c *gin.Context, db *db.DB) {
 
 	rows, err := db.Pool.Query(c.Request.Context(), query, args...)
 	if err != nil {
-		c.JSON(500, gin.H{"error": "failed to retrieve recurring expenses"})
+		c.JSON(500, gin.H{"error": "failed to retrieve recurring transactions"})
 		return
 	}
 	defer rows.Close()
 
-	var expenses []RecurringExpense
+	var transactions []RecurringTransaction
 	for rows.Next() {
-		var exp RecurringExpense
+		var rt RecurringTransaction
 		var rawStartDate, rawCreatedAt, rawUpdatedAt time.Time
 		var rawEndDate, rawLastAddedDate *time.Time
-		if err := rows.Scan(&exp.ID, &exp.UserID, &exp.Name, &exp.Amount, &exp.Category,
-			&exp.Frequency, &exp.DayOfMonth, &exp.DaysOfWeek, &rawStartDate,
-			&rawEndDate, &exp.IsActive, &rawLastAddedDate, &exp.Notes, &rawCreatedAt, &rawUpdatedAt); err != nil {
-			c.JSON(500, gin.H{"error": "failed to scan recurring expense"})
+		if err := rows.Scan(&rt.ID, &rt.UserID, &rt.Type, &rt.Name, &rt.Amount, &rt.Category,
+			&rt.Frequency, &rt.DayOfMonth, &rt.DaysOfWeek, &rawStartDate,
+			&rawEndDate, &rt.IsActive, &rawLastAddedDate, &rt.Notes, &rawCreatedAt, &rawUpdatedAt); err != nil {
+			c.JSON(500, gin.H{"error": "failed to scan recurring transaction"})
 			return
 		}
-		exp.StartDate = helpers.FromTime(rawStartDate)
-		exp.EndDate = helpers.FromTimePtr(rawEndDate)
-		exp.LastAddedDate = helpers.FromTimePtr(rawLastAddedDate)
-		exp.CreatedAt = helpers.FromTime(rawCreatedAt)
-		exp.UpdatedAt = helpers.FromTime(rawUpdatedAt)
-		expenses = append(expenses, exp)
+		rt.StartDate = helpers.FromTime(rawStartDate)
+		rt.EndDate = helpers.FromTimePtr(rawEndDate)
+		rt.LastAddedDate = helpers.FromTimePtr(rawLastAddedDate)
+		rt.CreatedAt = helpers.FromTime(rawCreatedAt)
+		rt.UpdatedAt = helpers.FromTime(rawUpdatedAt)
+		transactions = append(transactions, rt)
 	}
 
-	if expenses == nil {
-		expenses = []RecurringExpense{}
+	if transactions == nil {
+		transactions = []RecurringTransaction{}
 	}
 
-	c.JSON(200, gin.H{"data": expenses})
+	c.JSON(200, gin.H{"data": transactions})
 }
 
-func GetRecurringExpense(c *gin.Context, db *db.DB) {
+func GetRecurringTransaction(c *gin.Context, db *db.DB) {
 	userID, ok := middleware.GetUserID(c)
 	if !ok {
 		c.JSON(401, gin.H{"error": "unauthorized"})
@@ -216,34 +220,34 @@ func GetRecurringExpense(c *gin.Context, db *db.DB) {
 	idStr := c.Param("id")
 	id, err := uuid.Parse(idStr)
 	if err != nil {
-		c.JSON(400, gin.H{"error": "invalid recurring expense id"})
+		c.JSON(400, gin.H{"error": "invalid recurring transaction id"})
 		return
 	}
 
-	var expense RecurringExpense
+	var rt RecurringTransaction
 	var rawStartDate, rawCreatedAt, rawUpdatedAt time.Time
 	var rawEndDate, rawLastAddedDate *time.Time
 	err = db.Pool.QueryRow(c.Request.Context(),
-		`SELECT id, user_id, name, amount, category, frequency, day_of_month, days_of_week, start_date, end_date, is_active, last_added_date, notes, created_at, updated_at
-		 FROM recurring_expenses
+		`SELECT id, user_id, type, name, amount, category, frequency, day_of_month, days_of_week, start_date, end_date, is_active, last_added_date, notes, created_at, updated_at
+		 FROM recurring_transactions
 		 WHERE id = $1 AND user_id = $2`,
-		id, userID).Scan(&expense.ID, &expense.UserID, &expense.Name, &expense.Amount, &expense.Category,
-		&expense.Frequency, &expense.DayOfMonth, &expense.DaysOfWeek, &rawStartDate,
-		&rawEndDate, &expense.IsActive, &rawLastAddedDate, &expense.Notes, &rawCreatedAt, &rawUpdatedAt)
+		id, userID).Scan(&rt.ID, &rt.UserID, &rt.Type, &rt.Name, &rt.Amount, &rt.Category,
+		&rt.Frequency, &rt.DayOfMonth, &rt.DaysOfWeek, &rawStartDate,
+		&rawEndDate, &rt.IsActive, &rawLastAddedDate, &rt.Notes, &rawCreatedAt, &rawUpdatedAt)
 	if err != nil {
-		c.JSON(404, gin.H{"error": "recurring expense not found"})
+		c.JSON(404, gin.H{"error": "recurring transaction not found"})
 		return
 	}
-	expense.StartDate = helpers.FromTime(rawStartDate)
-	expense.EndDate = helpers.FromTimePtr(rawEndDate)
-	expense.LastAddedDate = helpers.FromTimePtr(rawLastAddedDate)
-	expense.CreatedAt = helpers.FromTime(rawCreatedAt)
-	expense.UpdatedAt = helpers.FromTime(rawUpdatedAt)
+	rt.StartDate = helpers.FromTime(rawStartDate)
+	rt.EndDate = helpers.FromTimePtr(rawEndDate)
+	rt.LastAddedDate = helpers.FromTimePtr(rawLastAddedDate)
+	rt.CreatedAt = helpers.FromTime(rawCreatedAt)
+	rt.UpdatedAt = helpers.FromTime(rawUpdatedAt)
 
-	c.JSON(200, expense)
+	c.JSON(200, rt)
 }
 
-func UpdateRecurringExpense(c *gin.Context, db *db.DB) {
+func UpdateRecurringTransaction(c *gin.Context, db *db.DB) {
 	userID, ok := middleware.GetUserID(c)
 	if !ok {
 		c.JSON(401, gin.H{"error": "unauthorized"})
@@ -253,11 +257,11 @@ func UpdateRecurringExpense(c *gin.Context, db *db.DB) {
 	idStr := c.Param("id")
 	id, err := uuid.Parse(idStr)
 	if err != nil {
-		c.JSON(400, gin.H{"error": "invalid recurring expense id"})
+		c.JSON(400, gin.H{"error": "invalid recurring transaction id"})
 		return
 	}
 
-	var req UpdateRecurringExpenseRequest
+	var req UpdateRecurringTransactionRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
@@ -302,20 +306,25 @@ func UpdateRecurringExpense(c *gin.Context, db *db.DB) {
 
 	var ownerID uuid.UUID
 	err = db.Pool.QueryRow(c.Request.Context(),
-		`SELECT user_id FROM recurring_expenses WHERE id = $1`, id).Scan(&ownerID)
+		`SELECT user_id FROM recurring_transactions WHERE id = $1`, id).Scan(&ownerID)
 	if err != nil {
-		c.JSON(404, gin.H{"error": "recurring expense not found"})
+		c.JSON(404, gin.H{"error": "recurring transaction not found"})
 		return
 	}
 	if ownerID != userID {
-		c.JSON(403, gin.H{"error": "not authorized to update this recurring expense"})
+		c.JSON(403, gin.H{"error": "not authorized to update this recurring transaction"})
 		return
 	}
 
-	query := `UPDATE recurring_expenses SET updated_at = NOW()`
+	query := `UPDATE recurring_transactions SET updated_at = NOW()`
 	args := []interface{}{}
 	argCount := 1
 
+	if req.Type != nil {
+		query += fmt.Sprintf(", type = $%d", argCount)
+		args = append(args, req.Type)
+		argCount++
+	}
 	if req.Name != nil {
 		query += fmt.Sprintf(", name = $%d", argCount)
 		args = append(args, req.Name)
@@ -372,30 +381,30 @@ func UpdateRecurringExpense(c *gin.Context, db *db.DB) {
 		return
 	}
 
-	query += fmt.Sprintf(" WHERE id = $%d RETURNING id, user_id, name, amount, category, frequency, day_of_month, days_of_week, start_date, end_date, is_active, last_added_date, notes, created_at, updated_at", argCount)
+	query += fmt.Sprintf(" WHERE id = $%d RETURNING id, user_id, type, name, amount, category, frequency, day_of_month, days_of_week, start_date, end_date, is_active, last_added_date, notes, created_at, updated_at", argCount)
 	args = append(args, id)
 
-	var expense RecurringExpense
+	var rt RecurringTransaction
 	var rawStartDate, rawCreatedAt, rawUpdatedAt time.Time
 	var rawEndDate, rawLastAddedDate *time.Time
 	err = db.Pool.QueryRow(c.Request.Context(), query, args...).Scan(
-		&expense.ID, &expense.UserID, &expense.Name, &expense.Amount, &expense.Category,
-		&expense.Frequency, &expense.DayOfMonth, &expense.DaysOfWeek, &rawStartDate,
-		&rawEndDate, &expense.IsActive, &rawLastAddedDate, &expense.Notes, &rawCreatedAt, &rawUpdatedAt)
+		&rt.ID, &rt.UserID, &rt.Type, &rt.Name, &rt.Amount, &rt.Category,
+		&rt.Frequency, &rt.DayOfMonth, &rt.DaysOfWeek, &rawStartDate,
+		&rawEndDate, &rt.IsActive, &rawLastAddedDate, &rt.Notes, &rawCreatedAt, &rawUpdatedAt)
 	if err != nil {
-		c.JSON(500, gin.H{"error": "failed to update recurring expense"})
+		c.JSON(500, gin.H{"error": "failed to update recurring transaction"})
 		return
 	}
-	expense.StartDate = helpers.FromTime(rawStartDate)
-	expense.EndDate = helpers.FromTimePtr(rawEndDate)
-	expense.LastAddedDate = helpers.FromTimePtr(rawLastAddedDate)
-	expense.CreatedAt = helpers.FromTime(rawCreatedAt)
-	expense.UpdatedAt = helpers.FromTime(rawUpdatedAt)
+	rt.StartDate = helpers.FromTime(rawStartDate)
+	rt.EndDate = helpers.FromTimePtr(rawEndDate)
+	rt.LastAddedDate = helpers.FromTimePtr(rawLastAddedDate)
+	rt.CreatedAt = helpers.FromTime(rawCreatedAt)
+	rt.UpdatedAt = helpers.FromTime(rawUpdatedAt)
 
-	c.JSON(200, expense)
+	c.JSON(200, rt)
 }
 
-func DeleteRecurringExpense(c *gin.Context, db *db.DB) {
+func DeleteRecurringTransaction(c *gin.Context, db *db.DB) {
 	userID, ok := middleware.GetUserID(c)
 	if !ok {
 		c.JSON(401, gin.H{"error": "unauthorized"})
@@ -405,28 +414,28 @@ func DeleteRecurringExpense(c *gin.Context, db *db.DB) {
 	idStr := c.Param("id")
 	id, err := uuid.Parse(idStr)
 	if err != nil {
-		c.JSON(400, gin.H{"error": "invalid recurring expense id"})
+		c.JSON(400, gin.H{"error": "invalid recurring transaction id"})
 		return
 	}
 
 	var ownerID uuid.UUID
 	err = db.Pool.QueryRow(c.Request.Context(),
-		`SELECT user_id FROM recurring_expenses WHERE id = $1`, id).Scan(&ownerID)
+		`SELECT user_id FROM recurring_transactions WHERE id = $1`, id).Scan(&ownerID)
 	if err != nil {
-		c.JSON(404, gin.H{"error": "recurring expense not found"})
+		c.JSON(404, gin.H{"error": "recurring transaction not found"})
 		return
 	}
 	if ownerID != userID {
-		c.JSON(403, gin.H{"error": "not authorized to delete this recurring expense"})
+		c.JSON(403, gin.H{"error": "not authorized to delete this recurring transaction"})
 		return
 	}
 
 	_, err = db.Pool.Exec(c.Request.Context(),
-		`DELETE FROM recurring_expenses WHERE id = $1`, id)
+		`DELETE FROM recurring_transactions WHERE id = $1`, id)
 	if err != nil {
-		c.JSON(500, gin.H{"error": "failed to delete recurring expense"})
+		c.JSON(500, gin.H{"error": "failed to delete recurring transaction"})
 		return
 	}
 
-	c.JSON(200, gin.H{"message": "recurring expense deleted successfully"})
+	c.JSON(200, gin.H{"message": "recurring transaction deleted successfully"})
 }
