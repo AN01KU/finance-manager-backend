@@ -216,7 +216,7 @@
       ]
     },
     {
-      "name": "Recurring Expenses",
+      "name": "Recurring Transactions",
       "item": [
         {
           "name": "Create Recurring Expense (monthly)",
@@ -228,9 +228,24 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"House Rent\",\n  \"amount\": \"15000\",\n  \"category\": \"Housing\",\n  \"frequency\": \"monthly\",\n  \"day_of_month\": 1,\n  \"start_date\": 1767225600000,\n  \"notes\": \"Monthly rent\"\n}"
+              "raw": "{\n  \"type\": \"expense\",\n  \"name\": \"House Rent\",\n  \"amount\": \"15000\",\n  \"category\": \"Housing\",\n  \"frequency\": \"monthly\",\n  \"day_of_month\": 1,\n  \"start_date\": 1767225600000,\n  \"notes\": \"Monthly rent\"\n}"
             },
-            "url": { "raw": "{{base_url}}/recurring-expenses", "host": ["{{base_url}}"], "path": ["recurring-expenses"] }
+            "url": { "raw": "{{base_url}}/recurring-transactions", "host": ["{{base_url}}"], "path": ["recurring-transactions"] }
+          }
+        },
+        {
+          "name": "Create Recurring Income (monthly)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"income\",\n  \"name\": \"Monthly Salary\",\n  \"amount\": \"85000\",\n  \"category\": \"Work & Professional\",\n  \"frequency\": \"monthly\",\n  \"day_of_month\": 1,\n  \"start_date\": 1767225600000,\n  \"notes\": \"Net salary after TDS\"\n}"
+            },
+            "url": { "raw": "{{base_url}}/recurring-transactions", "host": ["{{base_url}}"], "path": ["recurring-transactions"] }
           }
         },
         {
@@ -243,34 +258,34 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"Weekly groceries\",\n  \"amount\": \"800\",\n  \"category\": \"Food & Dining\",\n  \"frequency\": \"weekly\",\n  \"days_of_week\": [6],\n  \"start_date\": 1767225600000\n}"
+              "raw": "{\n  \"type\": \"expense\",\n  \"name\": \"Weekly groceries\",\n  \"amount\": \"800\",\n  \"category\": \"Food & Dining\",\n  \"frequency\": \"weekly\",\n  \"days_of_week\": [6],\n  \"start_date\": 1767225600000\n}"
             },
-            "url": { "raw": "{{base_url}}/recurring-expenses", "host": ["{{base_url}}"], "path": ["recurring-expenses"] }
+            "url": { "raw": "{{base_url}}/recurring-transactions", "host": ["{{base_url}}"], "path": ["recurring-transactions"] }
           }
         },
         {
-          "name": "List Recurring Expenses",
+          "name": "List Recurring Transactions",
           "request": {
             "method": "GET",
             "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
             "url": {
-              "raw": "{{base_url}}/recurring-expenses",
+              "raw": "{{base_url}}/recurring-transactions",
               "host": ["{{base_url}}"],
-              "path": ["recurring-expenses"],
+              "path": ["recurring-transactions"],
               "query": [{ "key": "active", "value": "true", "disabled": true }]
             }
           }
         },
         {
-          "name": "Get Recurring Expense",
+          "name": "Get Recurring Transaction",
           "request": {
             "method": "GET",
             "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
-            "url": { "raw": "{{base_url}}/recurring-expenses/22222222-0001-0001-0001-222222222222", "host": ["{{base_url}}"], "path": ["recurring-expenses", "22222222-0001-0001-0001-222222222222"] }
+            "url": { "raw": "{{base_url}}/recurring-transactions/22222222-0001-0001-0001-222222222222", "host": ["{{base_url}}"], "path": ["recurring-transactions", "22222222-0001-0001-0001-222222222222"] }
           }
         },
         {
-          "name": "Update Recurring Expense",
+          "name": "Update Recurring Transaction",
           "request": {
             "method": "PUT",
             "header": [
@@ -281,15 +296,15 @@
               "mode": "raw",
               "raw": "{\n  \"amount\": \"16000\",\n  \"is_active\": true\n}"
             },
-            "url": { "raw": "{{base_url}}/recurring-expenses/22222222-0001-0001-0001-222222222222", "host": ["{{base_url}}"], "path": ["recurring-expenses", "22222222-0001-0001-0001-222222222222"] }
+            "url": { "raw": "{{base_url}}/recurring-transactions/22222222-0001-0001-0001-222222222222", "host": ["{{base_url}}"], "path": ["recurring-transactions", "22222222-0001-0001-0001-222222222222"] }
           }
         },
         {
-          "name": "Delete Recurring Expense",
+          "name": "Delete Recurring Transaction",
           "request": {
             "method": "DELETE",
             "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
-            "url": { "raw": "{{base_url}}/recurring-expenses/22222222-0001-0001-0001-222222222222", "host": ["{{base_url}}"], "path": ["recurring-expenses", "22222222-0001-0001-0001-222222222222"] }
+            "url": { "raw": "{{base_url}}/recurring-transactions/22222222-0001-0001-0001-222222222222", "host": ["{{base_url}}"], "path": ["recurring-transactions", "22222222-0001-0001-0001-222222222222"] }
           }
         }
       ]
