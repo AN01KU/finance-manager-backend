@@ -127,6 +127,7 @@ func CreateTransaction(c *gin.Context, database *db.DB) {
 		&tx.GroupName,
 	)
 	if err != nil {
+		fmt.Printf("[ERROR] CreateTransaction: %v\n", err)
 		c.JSON(500, gin.H{"error": "failed to create transaction"})
 		return
 	}
@@ -233,6 +234,7 @@ func ListTransactions(c *gin.Context, database *db.DB) {
 
 	var total int
 	if err := database.Pool.QueryRow(c.Request.Context(), countQuery, args...).Scan(&total); err != nil {
+		fmt.Printf("[ERROR] ListTransactions count: %v\n", err)
 		c.JSON(500, gin.H{"error": "failed to get total count"})
 		return
 	}
@@ -242,6 +244,7 @@ func ListTransactions(c *gin.Context, database *db.DB) {
 
 	rows, err := database.Pool.Query(c.Request.Context(), query, args...)
 	if err != nil {
+		fmt.Printf("[ERROR] ListTransactions query: %v\n", err)
 		c.JSON(500, gin.H{"error": "failed to retrieve transactions"})
 		return
 	}
@@ -258,6 +261,7 @@ func ListTransactions(c *gin.Context, database *db.DB) {
 			&tx.RecurringTransactionID, &tx.GroupTransactionID, &tx.GroupName, &tx.SettlementID,
 			&tx.IsDeleted, &rawCreatedAt, &rawUpdatedAt,
 		); err != nil {
+			fmt.Printf("[ERROR] ListTransactions scan: %v\n", err)
 			c.JSON(500, gin.H{"error": "failed to scan transaction"})
 			return
 		}
