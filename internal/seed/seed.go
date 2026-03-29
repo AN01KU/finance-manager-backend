@@ -382,30 +382,29 @@ func Seed(ctx context.Context, database *db.DB) error {
 			return fmt.Errorf("insert group transaction %s: %w", gt.description, err)
 		}
 
-		// Create a single personal expense transaction for the payer with the full amount
-		var payerTxID uuid.UUID
-		if err := database.Pool.QueryRow(ctx,
-			`INSERT INTO transactions (user_id, type, amount, category, date, description, group_transaction_id)
-			 VALUES ($1,'expense',$2,$3,$4,$5,$6)
-			 RETURNING id`,
-			gt.paidBy, gt.total, gt.category, gt.date, gt.description, gt.id,
-		).Scan(&payerTxID); err != nil {
-			return fmt.Errorf("insert personal tx for payer of %s: %w", gt.description, err)
-		}
-
-		// For each split: insert split row (link payer's transaction only for the payer's split)
+		// For each split: create a personal expense transaction and insert the split row.
+		// Payer gets full total amount; non-payers get their split amount.
 		for _, sp := range gt.splits {
-			splitID := uuid.New()
-
-			var txIDForSplit *uuid.UUID
+			txAmount := sp.amount
 			if sp.userID == gt.paidBy {
-				txIDForSplit = &payerTxID
+				txAmount = gt.total
 			}
 
+			var memberTxID uuid.UUID
+			if err := database.Pool.QueryRow(ctx,
+				`INSERT INTO transactions (user_id, type, amount, category, date, description, group_transaction_id)
+				 VALUES ($1,'expense',$2,$3,$4,$5,$6)
+				 RETURNING id`,
+				sp.userID, txAmount, gt.category, gt.date, gt.description, gt.id,
+			).Scan(&memberTxID); err != nil {
+				return fmt.Errorf("insert personal tx for member of %s: %w", gt.description, err)
+			}
+
+			splitID := uuid.New()
 			if _, err := database.Pool.Exec(ctx,
 				`INSERT INTO group_transaction_splits (id, group_transaction_id, user_id, amount, transaction_id)
 				 VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING`,
-				splitID, gt.id, sp.userID, sp.amount, txIDForSplit); err != nil {
+				splitID, gt.id, sp.userID, sp.amount, &memberTxID); err != nil {
 				return fmt.Errorf("insert split of %s: %w", gt.description, err)
 			}
 		}
