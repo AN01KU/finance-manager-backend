@@ -43,7 +43,7 @@ CREATE TABLE transactions (
     notes TEXT,
     recurring_transaction_id UUID REFERENCES recurring_transactions(id) ON DELETE SET NULL,
     group_transaction_id UUID,
-    group_id UUID REFERENCES groups(id) ON DELETE SET NULL,
+    group_id UUID,
     settlement_id UUID,
     is_deleted BOOLEAN DEFAULT FALSE,
     created_at TIMESTAMPTZ DEFAULT NOW(),
@@ -134,6 +134,11 @@ CREATE TABLE group_transaction_splits (
 
 CREATE INDEX idx_group_splits_group_tx ON group_transaction_splits(group_transaction_id);
 CREATE INDEX idx_group_splits_user ON group_transaction_splits(user_id);
+
+-- FK from transactions back to groups
+ALTER TABLE transactions
+    ADD CONSTRAINT fk_transactions_group
+    FOREIGN KEY (group_id) REFERENCES groups(id) ON DELETE SET NULL;
 
 -- FK from transactions back to group_transactions
 ALTER TABLE transactions
