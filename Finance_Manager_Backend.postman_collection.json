@@ -183,6 +183,19 @@
           }
         },
         {
+          "name": "List Transactions (Debt & Payments — settlements)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": {
+              "raw": "{{base_url}}/transactions?category=Debt & Payments",
+              "host": ["{{base_url}}"],
+              "path": ["transactions"],
+              "query": [{ "key": "category", "value": "Debt & Payments" }]
+            }
+          }
+        },
+        {
           "name": "Get Transaction",
           "request": {
             "method": "GET",
@@ -627,7 +640,7 @@
       "name": "Settlements",
       "item": [
         {
-          "name": "Create Settlement",
+          "name": "Create Settlement (Roommates — Priya pays Ankush)",
           "request": {
             "method": "POST",
             "header": [
@@ -637,6 +650,21 @@
             "body": {
               "mode": "raw",
               "raw": "{\n  \"group_id\": \"eeeeeeee-0001-0001-0001-eeeeeeeeeeee\",\n  \"from_user\": \"bbbbbbbb-0002-0002-0002-bbbbbbbbbbbb\",\n  \"to_user\": \"aaaaaaaa-0001-0001-0001-aaaaaaaaaaaa\",\n  \"amount\": \"800\",\n  \"notes\": \"Settling electricity + wifi\"\n}"
+            },
+            "url": { "raw": "{{base_url}}/settlements", "host": ["{{base_url}}"], "path": ["settlements"] }
+          }
+        },
+        {
+          "name": "Create Settlement (Goa Trip — Sara pays Ankush)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"group_id\": \"ffffffff-0002-0002-0002-ffffffffffff\",\n  \"from_user\": \"dddddddd-0004-0004-0004-dddddddddddd\",\n  \"to_user\": \"aaaaaaaa-0001-0001-0001-aaaaaaaaaaaa\",\n  \"amount\": \"500\",\n  \"notes\": \"Partial hotel payment\"\n}"
             },
             "url": { "raw": "{{base_url}}/settlements", "host": ["{{base_url}}"], "path": ["settlements"] }
           }

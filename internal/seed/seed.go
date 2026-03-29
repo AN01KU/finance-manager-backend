@@ -458,17 +458,17 @@ func Seed(ctx context.Context, database *db.DB) error {
 
 		// Income transaction for to_user (received money)
 		if _, err := database.Pool.Exec(ctx,
-			`INSERT INTO transactions (user_id, type, amount, category, date, description, settlement_id)
-			 VALUES ($1, 'income', $2, 'Debt & Payments', $3, 'Settlement received', $4)`,
-			st.to, st.amount, st.date, st.id); err != nil {
+			`INSERT INTO transactions (user_id, type, amount, category, date, description, group_id, settlement_id)
+			 VALUES ($1, 'income', $2, 'Debt & Payments', $3, 'Settlement received', $4, $5)`,
+			st.to, st.amount, st.date, st.groupID, st.id); err != nil {
 			return fmt.Errorf("insert settlement income tx: %w", err)
 		}
 
 		// Expense transaction for from_user (paid money)
 		if _, err := database.Pool.Exec(ctx,
-			`INSERT INTO transactions (user_id, type, amount, category, date, description, settlement_id)
-			 VALUES ($1, 'expense', $2, 'Debt & Payments', $3, 'Settlement paid', $4)`,
-			st.from, st.amount, st.date, st.id); err != nil {
+			`INSERT INTO transactions (user_id, type, amount, category, date, description, group_id, settlement_id)
+			 VALUES ($1, 'expense', $2, 'Debt & Payments', $3, 'Settlement paid', $4, $5)`,
+			st.from, st.amount, st.date, st.groupID, st.id); err != nil {
 			return fmt.Errorf("insert settlement expense tx: %w", err)
 		}
 	}

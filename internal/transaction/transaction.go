@@ -27,6 +27,7 @@ type Transaction struct {
 	Notes              *string                `json:"notes,omitempty"`
 	RecurringTransactionID *uuid.UUID             `json:"recurring_transaction_id,omitempty"`
 	GroupTransactionID *uuid.UUID             `json:"group_transaction_id,omitempty"`
+	GroupID            *uuid.UUID             `json:"group_id,omitempty"`
 	GroupName          *string                `json:"group_name,omitempty"`
 	SettlementID       *uuid.UUID             `json:"settlement_id,omitempty"`
 	IsDeleted          bool                   `json:"is_deleted"`
@@ -161,10 +162,11 @@ func ListTransactions(c *gin.Context, database *db.DB) {
 		}
 	}
 
-	query := `SELECT t.id, t.user_id, t.type, t.amount, t.category, t.date, t.time, t.description, t.notes, t.recurring_transaction_id, t.group_transaction_id, g.name, t.settlement_id, t.is_deleted, t.created_at, t.updated_at
+	query := `SELECT t.id, t.user_id, t.type, t.amount, t.category, t.date, t.time, t.description, t.notes, t.recurring_transaction_id, t.group_transaction_id, t.group_id, COALESCE(g1.name, g2.name), t.settlement_id, t.is_deleted, t.created_at, t.updated_at
 		      FROM transactions t
 		      LEFT JOIN group_transactions gt ON t.group_transaction_id = gt.id
-		      LEFT JOIN groups g ON gt.group_id = g.id
+		      LEFT JOIN groups g1 ON gt.group_id = g1.id
+		      LEFT JOIN groups g2 ON t.group_id = g2.id
 		      WHERE t.user_id = $1`
 	countQuery := `SELECT COUNT(*) FROM transactions WHERE user_id = $1`
 	args := []interface{}{userID}
@@ -258,7 +260,7 @@ func ListTransactions(c *gin.Context, database *db.DB) {
 		if err := rows.Scan(
 			&tx.ID, &tx.UserID, &tx.Type, &tx.Amount, &tx.Category,
 			&rawDate, &rawTime, &tx.Description, &tx.Notes,
-			&tx.RecurringTransactionID, &tx.GroupTransactionID, &tx.GroupName, &tx.SettlementID,
+			&tx.RecurringTransactionID, &tx.GroupTransactionID, &tx.GroupID, &tx.GroupName, &tx.SettlementID,
 			&tx.IsDeleted, &rawCreatedAt, &rawUpdatedAt,
 		); err != nil {
 			fmt.Printf("[ERROR] ListTransactions scan: %v\n", err)
@@ -300,16 +302,17 @@ func GetTransaction(c *gin.Context, database *db.DB) {
 	var rawTime *time.Time
 
 	err = database.Pool.QueryRow(c.Request.Context(),
-		`SELECT t.id, t.user_id, t.type, t.amount, t.category, t.date, t.time, t.description, t.notes, t.recurring_transaction_id, t.group_transaction_id, g.name, t.settlement_id, t.is_deleted, t.created_at, t.updated_at
+		`SELECT t.id, t.user_id, t.type, t.amount, t.category, t.date, t.time, t.description, t.notes, t.recurring_transaction_id, t.group_transaction_id, t.group_id, COALESCE(g1.name, g2.name), t.settlement_id, t.is_deleted, t.created_at, t.updated_at
 		 FROM transactions t
 		 LEFT JOIN group_transactions gt ON t.group_transaction_id = gt.id
-		 LEFT JOIN groups g ON gt.group_id = g.id
+		 LEFT JOIN groups g1 ON gt.group_id = g1.id
+		 LEFT JOIN groups g2 ON t.group_id = g2.id
 		 WHERE t.id = $1 AND t.user_id = $2`,
 		id, userID,
 	).Scan(
 		&tx.ID, &tx.UserID, &tx.Type, &tx.Amount, &tx.Category,
 		&rawDate, &rawTime, &tx.Description, &tx.Notes,
-		&tx.RecurringTransactionID, &tx.GroupTransactionID, &tx.GroupName, &tx.SettlementID,
+		&tx.RecurringTransactionID, &tx.GroupTransactionID, &tx.GroupID, &tx.GroupName, &tx.SettlementID,
 		&tx.IsDeleted, &rawCreatedAt, &rawUpdatedAt,
 	)
 	if err != nil {

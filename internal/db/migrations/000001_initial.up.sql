@@ -43,6 +43,7 @@ CREATE TABLE transactions (
     notes TEXT,
     recurring_transaction_id UUID REFERENCES recurring_transactions(id) ON DELETE SET NULL,
     group_transaction_id UUID,
+    group_id UUID REFERENCES groups(id) ON DELETE SET NULL,
     settlement_id UUID,
     is_deleted BOOLEAN DEFAULT FALSE,
     created_at TIMESTAMPTZ DEFAULT NOW(),
