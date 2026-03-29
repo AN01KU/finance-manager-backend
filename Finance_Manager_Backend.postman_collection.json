@@ -488,11 +488,19 @@
           }
         },
         {
-          "name": "Get Group",
+          "name": "Get Group (Roommates)",
           "request": {
             "method": "GET",
             "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
             "url": { "raw": "{{base_url}}/groups/eeeeeeee-0001-0001-0001-eeeeeeeeeeee", "host": ["{{base_url}}"], "path": ["groups", "eeeeeeee-0001-0001-0001-eeeeeeeeeeee"] }
+          }
+        },
+        {
+          "name": "Get Group (Goa Trip)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": { "raw": "{{base_url}}/groups/ffffffff-0002-0002-0002-ffffffffffff", "host": ["{{base_url}}"], "path": ["groups", "ffffffff-0002-0002-0002-ffffffffffff"] }
           }
         },
         {
@@ -521,6 +529,22 @@
             "method": "GET",
             "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
             "url": { "raw": "{{base_url}}/groups/eeeeeeee-0001-0001-0001-eeeeeeeeeeee/balances", "host": ["{{base_url}}"], "path": ["groups", "eeeeeeee-0001-0001-0001-eeeeeeeeeeee", "balances"] }
+          }
+        },
+        {
+          "name": "Get Group Settlements (Goa Trip)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": { "raw": "{{base_url}}/groups/ffffffff-0002-0002-0002-ffffffffffff/settlements?limit=20&offset=0", "host": ["{{base_url}}"], "path": ["groups", "ffffffff-0002-0002-0002-ffffffffffff", "settlements"], "query": [{ "key": "limit", "value": "20" }, { "key": "offset", "value": "0" }] }
+          }
+        },
+        {
+          "name": "Get Group Settlements (Roommates)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": { "raw": "{{base_url}}/groups/eeeeeeee-0001-0001-0001-eeeeeeeeeeee/settlements?limit=20&offset=0", "host": ["{{base_url}}"], "path": ["groups", "eeeeeeee-0001-0001-0001-eeeeeeeeeeee", "settlements"], "query": [{ "key": "limit", "value": "20" }, { "key": "offset", "value": "0" }] }
           }
         }
       ]

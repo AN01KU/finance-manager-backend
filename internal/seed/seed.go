@@ -425,12 +425,18 @@ func Seed(ctx context.Context, database *db.DB) error {
 	settlements := []settlementRow{
 		// Priya settles ₹600 to Ankush (Roommates, partial)
 		{uuid.MustParse("c1000001-0000-0000-0000-000000000000"), GroupRoommatesID, UserPriyaID, UserAnkushID, 600.00, yesterday},
-		// Sara settles ₹4000 to Ankush (Goa hotel)
+		// Sara settles ₹4000 to Ankush (Goa — hotel share, full)
 		{uuid.MustParse("c2000001-0000-0000-0000-000000000000"), GroupTripGoaID, UserSaraID, UserAnkushID, 4000.00, lastWeek},
 		// Ankush settles ₹600 to Priya (Roommates — electricity share)
 		{uuid.MustParse("c3000001-0000-0000-0000-000000000000"), GroupRoommatesID, UserAnkushID, UserPriyaID, 600.00, twoDaysAgo},
 		// Ankush settles ₹1500 to Priya (Goa — activities share)
 		{uuid.MustParse("c4000001-0000-0000-0000-000000000000"), GroupTripGoaID, UserAnkushID, UserPriyaID, 1500.00, threeDaysAgo},
+		// Priya settles ₹1200 to Ankush (Goa — hotel partial)
+		{uuid.MustParse("c5000001-0000-0000-0000-000000000000"), GroupTripGoaID, UserPriyaID, UserAnkushID, 1200.00, lastWeek},
+		// Sara settles ₹600 to Priya (Goa — activities share)
+		{uuid.MustParse("c6000001-0000-0000-0000-000000000000"), GroupTripGoaID, UserSaraID, UserPriyaID, 600.00, twoDaysAgo},
+		// Rahul settles ₹333 to Ankush (Roommates — wifi share)
+		{uuid.MustParse("c7000001-0000-0000-0000-000000000000"), GroupRoommatesID, UserRahulID, UserAnkushID, 333.00, yesterday},
 	}
 
 	for _, st := range settlements {
