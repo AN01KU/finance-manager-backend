@@ -2,6 +2,7 @@ package group
 
 import (
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -402,33 +403,50 @@ func GetGroup(c *gin.Context, database *db.DB) {
 	}
 
 	settRows, err := database.Pool.Query(c.Request.Context(),
-		"SELECT from_user, to_user, amount FROM settlements WHERE group_id = $1", groupID)
+		`SELECT id, from_user, to_user, amount, notes, created_at FROM settlements WHERE group_id = $1 ORDER BY created_at DESC`, groupID)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "failed to get settlements"})
 		return
 	}
 	defer settRows.Close()
 
+	type settlementResponse struct {
+		ID        uuid.UUID             `json:"id"`
+		FromUser  uuid.UUID             `json:"from_user"`
+		ToUser    uuid.UUID             `json:"to_user"`
+		Amount    helpers.StringDecimal `json:"amount"`
+		Notes     *string               `json:"notes,omitempty"`
+		CreatedAt helpers.EpochMillis   `json:"created_at"`
+	}
 	var setts []settlementEntry
+	settlementsResp := []settlementResponse{}
 	for settRows.Next() {
 		var s settlementEntry
-		if err := settRows.Scan(&s.from, &s.to, &s.amount); err != nil {
+		var sr settlementResponse
+		var rawCreatedAt time.Time
+		if err := settRows.Scan(&sr.ID, &s.from, &s.to, &s.amount, &sr.Notes, &rawCreatedAt); err != nil {
 			c.JSON(500, gin.H{"error": "failed to scan settlement"})
 			return
 		}
+		sr.FromUser = s.from
+		sr.ToUser = s.to
+		sr.Amount = helpers.StringDecimal{Decimal: s.amount}
+		sr.CreatedAt = helpers.FromTime(rawCreatedAt)
 		setts = append(setts, s)
+		settlementsResp = append(settlementsResp, sr)
 	}
 
 	balances := computeBalances(members, payers, splits, setts)
 
 	c.JSON(200, gin.H{
 		"group": gin.H{
-			"id":         g.ID,
-			"name":       g.Name,
-			"created_by": g.CreatedBy,
-			"created_at": g.CreatedAt,
-			"members":    members,
-			"balances":   balances,
+			"id":          g.ID,
+			"name":        g.Name,
+			"created_by":  g.CreatedBy,
+			"created_at":  g.CreatedAt,
+			"members":     members,
+			"balances":    balances,
+			"settlements": settlementsResp,
 		},
 		"is_member": isMember,
 	})
@@ -641,6 +659,85 @@ func GetBalances(c *gin.Context, database *db.DB) {
 
 	balances := computeBalances(members, payers, splits, setts)
 	c.JSON(200, gin.H{"data": balances})
+}
+
+func GetGroupSettlements(c *gin.Context, database *db.DB) {
+	userID, ok := middleware.GetUserID(c)
+	if !ok {
+		c.JSON(401, gin.H{"error": "unauthorized"})
+		return
+	}
+
+	groupID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(400, gin.H{"error": "invalid group id"})
+		return
+	}
+
+	isMember, err := helpers.IsGroupMember(c.Request.Context(), database, groupID, userID)
+	if err != nil || !isMember {
+		c.JSON(403, gin.H{"error": "not a member of the group"})
+		return
+	}
+
+	limit := 20
+	if s := c.Query("limit"); s != "" {
+		if l, err := strconv.Atoi(s); err == nil && l > 0 {
+			limit = l
+		}
+	}
+	offset := 0
+	if s := c.Query("offset"); s != "" {
+		if o, err := strconv.Atoi(s); err == nil && o >= 0 {
+			offset = o
+		}
+	}
+
+	var total int
+	if err := database.Pool.QueryRow(c.Request.Context(),
+		`SELECT COUNT(*) FROM settlements WHERE group_id = $1`, groupID).Scan(&total); err != nil {
+		c.JSON(500, gin.H{"error": "failed to get settlement count"})
+		return
+	}
+
+	rows, err := database.Pool.Query(c.Request.Context(),
+		`SELECT id, from_user, to_user, amount, notes, created_at
+		 FROM settlements WHERE group_id = $1
+		 ORDER BY created_at DESC LIMIT $2 OFFSET $3`, groupID, limit, offset)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "failed to get settlements"})
+		return
+	}
+	defer rows.Close()
+
+	type settlementItem struct {
+		ID        uuid.UUID             `json:"id"`
+		FromUser  uuid.UUID             `json:"from_user"`
+		ToUser    uuid.UUID             `json:"to_user"`
+		Amount    helpers.StringDecimal `json:"amount"`
+		Notes     *string               `json:"notes,omitempty"`
+		CreatedAt helpers.EpochMillis   `json:"created_at"`
+	}
+	result := []settlementItem{}
+	for rows.Next() {
+		var item settlementItem
+		var rawCreatedAt time.Time
+		if err := rows.Scan(&item.ID, &item.FromUser, &item.ToUser, &item.Amount, &item.Notes, &rawCreatedAt); err != nil {
+			c.JSON(500, gin.H{"error": "failed to scan settlement"})
+			return
+		}
+		item.CreatedAt = helpers.FromTime(rawCreatedAt)
+		result = append(result, item)
+	}
+
+	c.JSON(200, gin.H{
+		"data": result,
+		"pagination": gin.H{
+			"limit":  limit,
+			"offset": offset,
+			"total":  total,
+		},
+	})
 }
 
 // ---------------------------------------------------------------------------
