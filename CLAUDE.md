@@ -33,6 +33,7 @@ docker-compose up --build
 | `PORT` | No | `8080` | |
 | `RATE_LIMIT` | No | `10` | Max requests per window |
 | `RATE_WINDOW_SECONDS` | No | `60` | Rate limit window in seconds |
+| `GIN_MODE` | No | `debug` | Set to `release` in production to enable rate limiting (rate limiter is skipped in non-release mode) |
 
 Migrations run automatically on startup via `golang-migrate`. No manual migration step needed.
 
@@ -54,7 +55,7 @@ internal/
   group/              — Group management, member ops, balances
   helpers/            — Shared DB utilities and decimal serialization
   middleware/         — JWT auth, CORS, rate limiter, request logger
-  recurring/          — Recurring expense definitions + scheduling
+  recurring/          — Recurring transaction definitions + scheduling (expenses & income)
   settlement/         — Settlement recording between group members
   user/               — User domain model
 ```
@@ -84,8 +85,8 @@ All requests pass through: `RequestLogger → CORS → (JWTAuth on protected rou
 
 - **Groups**: Creating a group auto-adds the creator as the first member. Group expenses require splits summing to the expense amount.
 - **Categories**: 15 predefined categories are seeded on signup via `SeedPredefinedCategories()`. Custom categories are user-scoped. Both share the `custom_categories` table (`is_predefined` flag distinguishes them).
-- **Recurring expenses**: `last_added_date` tracks when the last expense instance was generated. Scheduling logic lives in `recurring/`.
-- **Settlements**: Recorded as `from_user → to_user` payments within a group; affect balance calculations.
+- **Recurring transactions**: `last_added_date` tracks when the last transaction instance was generated. Supports both expense and income types. Scheduling logic lives in `recurring/`.
+- **Settlements**: Recorded as `from_user → to_user` payments within a group; affect balance calculations. Creating a settlement also inserts an income transaction for the `to_user`.
 
 ### API Response Shape
 

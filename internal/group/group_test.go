@@ -19,7 +19,7 @@ func setupBalanceTestDB(t *testing.T) *db.DB {
 	require.NoError(t, err)
 
 	// Clean up tables
-	_, err = pool.Exec(context.Background(), "TRUNCATE users, groups, group_members, expenses, expense_splits, settlements CASCADE")
+	_, err = pool.Exec(context.Background(), "TRUNCATE users, groups, group_members, group_transactions, group_transaction_splits, settlements CASCADE")
 	require.NoError(t, err)
 
 	return &db.DB{Pool: pool}
@@ -28,8 +28,8 @@ func setupBalanceTestDB(t *testing.T) *db.DB {
 func createBalanceTestUser(t *testing.T, testDB *db.DB, email string) uuid.UUID {
 	userID := uuid.New()
 	_, err := testDB.Pool.Exec(context.Background(),
-		"INSERT INTO users (id, email, password_hash) VALUES ($1, $2, $3)",
-		userID, email, "hashedpassword")
+		"INSERT INTO users (id, email, username, password_hash) VALUES ($1, $2, $3, $4)",
+		userID, email, "testuser", "hashedpassword")
 	require.NoError(t, err)
 	return userID
 }
@@ -57,21 +57,21 @@ func addGroupMember(t *testing.T, testDB *db.DB, groupID, userID uuid.UUID) {
 	require.NoError(t, err)
 }
 
-func createExpense(t *testing.T, testDB *db.DB, groupID, paidBy uuid.UUID, total decimal.Decimal, splits map[uuid.UUID]decimal.Decimal) uuid.UUID {
-	expenseID := uuid.New()
+func createGroupTx(t *testing.T, testDB *db.DB, groupID, paidBy uuid.UUID, total decimal.Decimal, splits map[uuid.UUID]decimal.Decimal) uuid.UUID {
+	gtID := uuid.New()
 	_, err := testDB.Pool.Exec(context.Background(),
-		"INSERT INTO expenses (id, group_id, description, total_amount, paid_by) VALUES ($1, $2, $3, $4, $5)",
-		expenseID, groupID, "Test Expense", total, paidBy)
+		"INSERT INTO group_transactions (id, group_id, paid_by_user_id, total_amount, category, date, description) VALUES ($1, $2, $3, $4, 'Other', NOW(), 'Test Expense')",
+		gtID, groupID, paidBy, total)
 	require.NoError(t, err)
 
 	for userID, amount := range splits {
 		_, err := testDB.Pool.Exec(context.Background(),
-			"INSERT INTO expense_splits (expense_id, user_id, amount) VALUES ($1, $2, $3)",
-			expenseID, userID, amount)
+			"INSERT INTO group_transaction_splits (group_transaction_id, user_id, amount) VALUES ($1, $2, $3)",
+			gtID, userID, amount)
 		require.NoError(t, err)
 	}
 
-	return expenseID
+	return gtID
 }
 
 func createSettlement(t *testing.T, testDB *db.DB, groupID, fromUser, toUser uuid.UUID, amount decimal.Decimal) uuid.UUID {
@@ -103,7 +103,7 @@ func TestBalanceCalculation(t *testing.T) {
 		{
 			name: "simple expense - A pays 100, split equally",
 			setup: func() {
-				createExpense(t, testDB, groupID, userA, decimal.NewFromFloat(100),
+				createGroupTx(t, testDB, groupID, userA, decimal.NewFromFloat(100),
 					map[uuid.UUID]decimal.Decimal{
 						userA: decimal.NewFromFloat(33.33),
 						userB: decimal.NewFromFloat(33.33),
@@ -119,7 +119,7 @@ func TestBalanceCalculation(t *testing.T) {
 		{
 			name: "settlement reduces balance",
 			setup: func() {
-				createExpense(t, testDB, groupID, userA, decimal.NewFromFloat(60),
+				createGroupTx(t, testDB, groupID, userA, decimal.NewFromFloat(60),
 					map[uuid.UUID]decimal.Decimal{
 						userA: decimal.NewFromFloat(20),
 						userB: decimal.NewFromFloat(20),
@@ -137,14 +137,14 @@ func TestBalanceCalculation(t *testing.T) {
 			name: "multiple expenses and settlements",
 			setup: func() {
 				// Expense 1: A pays 90, split equally
-				createExpense(t, testDB, groupID, userA, decimal.NewFromFloat(90),
+				createGroupTx(t, testDB, groupID, userA, decimal.NewFromFloat(90),
 					map[uuid.UUID]decimal.Decimal{
 						userA: decimal.NewFromFloat(30),
 						userB: decimal.NewFromFloat(30),
 						userC: decimal.NewFromFloat(30),
 					})
 				// Expense 2: B pays 60, split equally
-				createExpense(t, testDB, groupID, userB, decimal.NewFromFloat(60),
+				createGroupTx(t, testDB, groupID, userB, decimal.NewFromFloat(60),
 					map[uuid.UUID]decimal.Decimal{
 						userA: decimal.NewFromFloat(20),
 						userB: decimal.NewFromFloat(20),
@@ -164,7 +164,7 @@ func TestBalanceCalculation(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Clean up for each test
-			_, err := testDB.Pool.Exec(context.Background(), "TRUNCATE expenses, expense_splits, settlements CASCADE")
+			_, err := testDB.Pool.Exec(context.Background(), "TRUNCATE group_transactions, group_transaction_splits, settlements CASCADE")
 			require.NoError(t, err)
 
 			tt.setup()
@@ -175,9 +175,9 @@ func TestBalanceCalculation(t *testing.T) {
 			balances[userB] = decimal.Zero
 			balances[userC] = decimal.Zero
 
-			// Add from expenses
+			// Add from group_transactions
 			expRows, err := testDB.Pool.Query(context.Background(),
-				"SELECT paid_by, total_amount FROM expenses WHERE group_id = $1", groupID)
+				"SELECT paid_by_user_id, total_amount FROM group_transactions WHERE group_id = $1 AND is_deleted = FALSE", groupID)
 			require.NoError(t, err)
 			defer expRows.Close()
 
@@ -191,7 +191,9 @@ func TestBalanceCalculation(t *testing.T) {
 
 			// Subtract splits
 			splitRows, err := testDB.Pool.Query(context.Background(),
-				"SELECT es.user_id, es.amount FROM expense_splits es JOIN expenses e ON es.expense_id = e.id WHERE e.group_id = $1", groupID)
+				`SELECT gts.user_id, gts.amount FROM group_transaction_splits gts
+				 JOIN group_transactions gt ON gts.group_transaction_id = gt.id
+				 WHERE gt.group_id = $1 AND gt.is_deleted = FALSE`, groupID)
 			require.NoError(t, err)
 			defer splitRows.Close()
 

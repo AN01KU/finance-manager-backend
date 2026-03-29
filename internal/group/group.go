@@ -1,6 +1,8 @@
 package group
 
 import (
+	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -13,20 +15,81 @@ import (
 	"github.com/yanonymousV2/finance-manager-backend/internal/middleware"
 )
 
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
 type Group struct {
-	ID        uuid.UUID `json:"id" db:"id"`
-	Name      string    `json:"name" db:"name"`
-	CreatedBy uuid.UUID `json:"created_by" db:"created_by"`
-	CreatedAt time.Time `json:"created_at" db:"created_at"`
+	ID        uuid.UUID           `json:"id"`
+	Name      string              `json:"name"`
+	CreatedBy uuid.UUID           `json:"created_by"`
+	CreatedAt helpers.EpochMillis `json:"created_at"`
+}
+
+type GroupMember struct {
+	UserID    uuid.UUID           `json:"id"`
+	Email     string              `json:"email"`
+	Username  string              `json:"username"`
+	CreatedAt helpers.EpochMillis `json:"joined_at"`
+}
+
+type Balance struct {
+	UserID uuid.UUID             `json:"user_id"`
+	Amount helpers.StringDecimal `json:"amount"`
 }
 
 type GroupWithDetails struct {
-	ID        uuid.UUID     `json:"id" db:"id"`
-	Name      string        `json:"name" db:"name"`
-	CreatedBy uuid.UUID     `json:"created_by" db:"created_by"`
-	CreatedAt time.Time     `json:"created_at" db:"created_at"`
-	Members   []GroupMember `json:"members"`
-	Balances  []Balance     `json:"balances"`
+	ID        uuid.UUID           `json:"id"`
+	Name      string              `json:"name"`
+	CreatedBy uuid.UUID           `json:"created_by"`
+	CreatedAt helpers.EpochMillis `json:"created_at"`
+	Members   []GroupMember       `json:"members"`
+	Balances  []Balance           `json:"balances"`
+}
+
+type GroupTransaction struct {
+	ID           uuid.UUID             `json:"id"`
+	GroupID      uuid.UUID             `json:"group_id"`
+	PaidByUserID uuid.UUID             `json:"paid_by_user_id"`
+	TotalAmount  helpers.StringDecimal `json:"total_amount"`
+	Category     string                `json:"category"`
+	Date         helpers.EpochMillis   `json:"date"`
+	Description  *string               `json:"description,omitempty"`
+	Notes        *string               `json:"notes,omitempty"`
+	IsDeleted    bool                  `json:"is_deleted"`
+	CreatedAt    helpers.EpochMillis   `json:"created_at"`
+	UpdatedAt    helpers.EpochMillis   `json:"updated_at"`
+	Splits       []SplitDetail         `json:"splits"`
+}
+
+type SplitDetail struct {
+	ID            uuid.UUID             `json:"id"`
+	UserID        uuid.UUID             `json:"user_id"`
+	Amount        helpers.StringDecimal `json:"amount"`
+	TransactionID *uuid.UUID            `json:"transaction_id,omitempty"`
+}
+
+type SplitInput struct {
+	UserID uuid.UUID `json:"user_id" validate:"required"`
+	Amount string    `json:"amount" validate:"required,numeric"`
+}
+
+type CreateGroupTransactionRequest struct {
+	ID           *uuid.UUID   `json:"id,omitempty"`
+	PaidByUserID uuid.UUID    `json:"paid_by_user_id" validate:"required"`
+	TotalAmount  string       `json:"total_amount" validate:"required,numeric"`
+	Category     string       `json:"category" validate:"required,max=100"`
+	Date         int64        `json:"date" validate:"required"`
+	Description  *string      `json:"description,omitempty" validate:"omitempty,max=255"`
+	Notes        *string      `json:"notes,omitempty"`
+	Splits       []SplitInput `json:"splits" validate:"required,min=1,dive"`
+}
+
+type UpdateGroupTransactionRequest struct {
+	Category    *string `json:"category,omitempty" validate:"omitempty,max=100"`
+	Date        *int64  `json:"date,omitempty"`
+	Description *string `json:"description,omitempty" validate:"omitempty,max=255"`
+	Notes       *string `json:"notes,omitempty"`
 }
 
 type CreateGroupRequest struct {
@@ -37,12 +100,11 @@ type AddMemberRequest struct {
 	Email string `json:"email" validate:"required,email"`
 }
 
-type Balance struct {
-	UserID uuid.UUID             `json:"user_id"`
-	Amount helpers.StringDecimal `json:"amount"`
-}
+// ---------------------------------------------------------------------------
+// Group CRUD
+// ---------------------------------------------------------------------------
 
-func CreateGroup(c *gin.Context, db *db.DB) {
+func CreateGroup(c *gin.Context, database *db.DB) {
 	userID, ok := middleware.GetUserID(c)
 	if !ok {
 		c.JSON(401, gin.H{"error": "unauthorized"})
@@ -61,8 +123,7 @@ func CreateGroup(c *gin.Context, db *db.DB) {
 		return
 	}
 
-	// Start transaction to create group and add creator as member
-	tx, err := db.Pool.Begin(c.Request.Context())
+	tx, err := database.Pool.Begin(c.Request.Context())
 	if err != nil {
 		c.JSON(500, gin.H{"error": "failed to start transaction"})
 		return
@@ -70,49 +131,341 @@ func CreateGroup(c *gin.Context, db *db.DB) {
 	defer tx.Rollback(c.Request.Context())
 
 	var g Group
+	var rawGroupCreatedAt time.Time
 	err = tx.QueryRow(c.Request.Context(),
 		"INSERT INTO groups (name, created_by) VALUES ($1, $2) RETURNING id, name, created_by, created_at",
-		req.Name, userID).Scan(&g.ID, &g.Name, &g.CreatedBy, &g.CreatedAt)
+		req.Name, userID).Scan(&g.ID, &g.Name, &g.CreatedBy, &rawGroupCreatedAt)
+	g.CreatedAt = helpers.FromTime(rawGroupCreatedAt)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "failed to create group"})
 		return
 	}
 
-	// Add creator as member
 	_, err = tx.Exec(c.Request.Context(),
-		"INSERT INTO group_members (group_id, user_id) VALUES ($1, $2)",
-		g.ID, userID)
+		"INSERT INTO group_members (group_id, user_id) VALUES ($1, $2)", g.ID, userID)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "failed to add creator as member"})
 		return
 	}
 
 	if err := tx.Commit(c.Request.Context()); err != nil {
-		c.JSON(500, gin.H{"error": "failed to commit transaction"})
+		c.JSON(500, gin.H{"error": "failed to commit"})
 		return
 	}
 
 	c.JSON(201, g)
 }
 
-func AddMember(c *gin.Context, db *db.DB) {
+func GetUserGroups(c *gin.Context, database *db.DB) {
 	userID, ok := middleware.GetUserID(c)
 	if !ok {
 		c.JSON(401, gin.H{"error": "unauthorized"})
 		return
 	}
 
-	groupIDStr := c.Param("id")
-	groupID, err := uuid.Parse(groupIDStr)
+	rows, err := database.Pool.Query(c.Request.Context(),
+		`SELECT g.id, g.name, g.created_by, g.created_at
+		 FROM groups g
+		 JOIN group_members gm ON g.id = gm.group_id
+		 WHERE gm.user_id = $1
+		 ORDER BY g.created_at DESC`, userID)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "failed to get groups"})
+		return
+	}
+	defer rows.Close()
+
+	var groups []Group
+	var groupIDs []uuid.UUID
+	for rows.Next() {
+		var g Group
+		var rawCreatedAt time.Time
+		if err := rows.Scan(&g.ID, &g.Name, &g.CreatedBy, &rawCreatedAt); err != nil {
+			c.JSON(500, gin.H{"error": "failed to scan group"})
+			return
+		}
+		g.CreatedAt = helpers.FromTime(rawCreatedAt)
+		groups = append(groups, g)
+		groupIDs = append(groupIDs, g.ID)
+	}
+
+	if len(groupIDs) == 0 {
+		c.JSON(200, gin.H{"data": []GroupWithDetails{}})
+		return
+	}
+
+	// Fetch members for all groups
+	memberRows, err := database.Pool.Query(c.Request.Context(),
+		`SELECT gm.group_id, u.id, u.email, u.username, gm.joined_at
+		 FROM group_members gm
+		 JOIN users u ON gm.user_id = u.id
+		 WHERE gm.group_id = ANY($1)
+		 ORDER BY gm.group_id, gm.joined_at`, groupIDs)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "failed to get members"})
+		return
+	}
+	defer memberRows.Close()
+
+	membersByGroup := make(map[uuid.UUID][]GroupMember)
+	for memberRows.Next() {
+		var gid uuid.UUID
+		var m GroupMember
+		var rawJoinedAt time.Time
+		if err := memberRows.Scan(&gid, &m.UserID, &m.Email, &m.Username, &rawJoinedAt); err != nil {
+			c.JSON(500, gin.H{"error": "failed to scan member"})
+			return
+		}
+		m.CreatedAt = helpers.FromTime(rawJoinedAt)
+		membersByGroup[gid] = append(membersByGroup[gid], m)
+	}
+
+	// Fetch balance data: payer side from group_transactions
+	gtRows, err := database.Pool.Query(c.Request.Context(),
+		`SELECT group_id, paid_by_user_id, total_amount
+		 FROM group_transactions
+		 WHERE group_id = ANY($1) AND is_deleted = FALSE`, groupIDs)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "failed to get group transactions"})
+		return
+	}
+	defer gtRows.Close()
+
+	payersByGroup := make(map[uuid.UUID][]payerEntry)
+	for gtRows.Next() {
+		var gid, paidBy uuid.UUID
+		var amount decimal.Decimal
+		if err := gtRows.Scan(&gid, &paidBy, &amount); err != nil {
+			c.JSON(500, gin.H{"error": "failed to scan group transaction"})
+			return
+		}
+		payersByGroup[gid] = append(payersByGroup[gid], payerEntry{paidBy, amount})
+	}
+
+	// Fetch split side
+	splitRows, err := database.Pool.Query(c.Request.Context(),
+		`SELECT gts.user_id, gts.amount, gt.group_id
+		 FROM group_transaction_splits gts
+		 JOIN group_transactions gt ON gts.group_transaction_id = gt.id
+		 WHERE gt.group_id = ANY($1) AND gt.is_deleted = FALSE`, groupIDs)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "failed to get splits"})
+		return
+	}
+	defer splitRows.Close()
+
+	splitsByGroup := make(map[uuid.UUID][]splitEntry)
+	for splitRows.Next() {
+		var uid, gid uuid.UUID
+		var amount decimal.Decimal
+		if err := splitRows.Scan(&uid, &amount, &gid); err != nil {
+			c.JSON(500, gin.H{"error": "failed to scan split"})
+			return
+		}
+		splitsByGroup[gid] = append(splitsByGroup[gid], splitEntry{uid, amount})
+	}
+
+	// Fetch settlements
+	settRows, err := database.Pool.Query(c.Request.Context(),
+		`SELECT from_user, to_user, amount, group_id
+		 FROM settlements WHERE group_id = ANY($1)`, groupIDs)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "failed to get settlements"})
+		return
+	}
+	defer settRows.Close()
+
+	settByGroup := make(map[uuid.UUID][]settlementEntry)
+	for settRows.Next() {
+		var from, to, gid uuid.UUID
+		var amount decimal.Decimal
+		if err := settRows.Scan(&from, &to, &amount, &gid); err != nil {
+			c.JSON(500, gin.H{"error": "failed to scan settlement"})
+			return
+		}
+		settByGroup[gid] = append(settByGroup[gid], settlementEntry{from, to, amount})
+	}
+
+	var result []GroupWithDetails
+	for _, g := range groups {
+		members := membersByGroup[g.ID]
+		if members == nil {
+			members = []GroupMember{}
+		}
+
+		balances := computeBalances(members, payersByGroup[g.ID], splitsByGroup[g.ID], settByGroup[g.ID])
+
+		result = append(result, GroupWithDetails{
+			ID:        g.ID,
+			Name:      g.Name,
+			CreatedBy: g.CreatedBy,
+			CreatedAt: g.CreatedAt,
+			Members:   members,
+			Balances:  balances,
+		})
+	}
+
+	c.JSON(200, gin.H{"data": result})
+}
+
+func GetGroup(c *gin.Context, database *db.DB) {
+	userID, ok := middleware.GetUserID(c)
+	if !ok {
+		c.JSON(401, gin.H{"error": "unauthorized"})
+		return
+	}
+
+	groupID, err := uuid.Parse(c.Param("id"))
 	if err != nil {
 		c.JSON(400, gin.H{"error": "invalid group id"})
 		return
 	}
 
-	// Check if user is member of group
-	var isMember bool
-	err = db.Pool.QueryRow(c.Request.Context(),
-		"SELECT EXISTS(SELECT 1 FROM group_members WHERE group_id = $1 AND user_id = $2)", groupID, userID).Scan(&isMember)
+	var g Group
+	var rawGroupCreatedAt2 time.Time
+	err = database.Pool.QueryRow(c.Request.Context(),
+		"SELECT id, name, created_by, created_at FROM groups WHERE id = $1", groupID,
+	).Scan(&g.ID, &g.Name, &g.CreatedBy, &rawGroupCreatedAt2)
+	g.CreatedAt = helpers.FromTime(rawGroupCreatedAt2)
+	if err != nil {
+		c.JSON(404, gin.H{"error": "group not found"})
+		return
+	}
+
+	memberRows, err := database.Pool.Query(c.Request.Context(),
+		`SELECT u.id, u.email, u.username, gm.joined_at
+		 FROM users u
+		 JOIN group_members gm ON u.id = gm.user_id
+		 WHERE gm.group_id = $1 ORDER BY gm.joined_at`, groupID)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "failed to get members"})
+		return
+	}
+	defer memberRows.Close()
+
+	var members []GroupMember
+	isMember := false
+	for memberRows.Next() {
+		var m GroupMember
+		var rawJoinedAt time.Time
+		if err := memberRows.Scan(&m.UserID, &m.Email, &m.Username, &rawJoinedAt); err != nil {
+			c.JSON(500, gin.H{"error": "failed to scan member"})
+			return
+		}
+		m.CreatedAt = helpers.FromTime(rawJoinedAt)
+		if m.UserID == userID {
+			isMember = true
+		}
+		members = append(members, m)
+	}
+	if members == nil {
+		members = []GroupMember{}
+	}
+
+	gtRows, err := database.Pool.Query(c.Request.Context(),
+		`SELECT paid_by_user_id, total_amount FROM group_transactions
+		 WHERE group_id = $1 AND is_deleted = FALSE`, groupID)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "failed to get group transactions"})
+		return
+	}
+	defer gtRows.Close()
+
+	var payers []payerEntry
+	for gtRows.Next() {
+		var e payerEntry
+		if err := gtRows.Scan(&e.paidBy, &e.amount); err != nil {
+			c.JSON(500, gin.H{"error": "failed to scan group transaction"})
+			return
+		}
+		payers = append(payers, e)
+	}
+
+	splitRows, err := database.Pool.Query(c.Request.Context(),
+		`SELECT gts.user_id, gts.amount
+		 FROM group_transaction_splits gts
+		 JOIN group_transactions gt ON gts.group_transaction_id = gt.id
+		 WHERE gt.group_id = $1 AND gt.is_deleted = FALSE`, groupID)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "failed to get splits"})
+		return
+	}
+	defer splitRows.Close()
+
+	var splits []splitEntry
+	for splitRows.Next() {
+		var s splitEntry
+		if err := splitRows.Scan(&s.userID, &s.amount); err != nil {
+			c.JSON(500, gin.H{"error": "failed to scan split"})
+			return
+		}
+		splits = append(splits, s)
+	}
+
+	settRows, err := database.Pool.Query(c.Request.Context(),
+		`SELECT id, from_user, to_user, amount, notes, created_at FROM settlements WHERE group_id = $1 ORDER BY created_at DESC`, groupID)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "failed to get settlements"})
+		return
+	}
+	defer settRows.Close()
+
+	type settlementResponse struct {
+		ID        uuid.UUID             `json:"id"`
+		FromUser  uuid.UUID             `json:"from_user"`
+		ToUser    uuid.UUID             `json:"to_user"`
+		Amount    helpers.StringDecimal `json:"amount"`
+		Notes     *string               `json:"notes,omitempty"`
+		CreatedAt helpers.EpochMillis   `json:"created_at"`
+	}
+	var setts []settlementEntry
+	settlementsResp := []settlementResponse{}
+	for settRows.Next() {
+		var s settlementEntry
+		var sr settlementResponse
+		var rawCreatedAt time.Time
+		if err := settRows.Scan(&sr.ID, &s.from, &s.to, &s.amount, &sr.Notes, &rawCreatedAt); err != nil {
+			c.JSON(500, gin.H{"error": "failed to scan settlement"})
+			return
+		}
+		sr.FromUser = s.from
+		sr.ToUser = s.to
+		sr.Amount = helpers.StringDecimal{Decimal: s.amount}
+		sr.CreatedAt = helpers.FromTime(rawCreatedAt)
+		setts = append(setts, s)
+		settlementsResp = append(settlementsResp, sr)
+	}
+
+	balances := computeBalances(members, payers, splits, setts)
+
+	c.JSON(200, gin.H{
+		"group": gin.H{
+			"id":          g.ID,
+			"name":        g.Name,
+			"created_by":  g.CreatedBy,
+			"created_at":  g.CreatedAt,
+			"members":     members,
+			"balances":    balances,
+			"settlements": settlementsResp,
+		},
+		"is_member": isMember,
+	})
+}
+
+func AddMember(c *gin.Context, database *db.DB) {
+	userID, ok := middleware.GetUserID(c)
+	if !ok {
+		c.JSON(401, gin.H{"error": "unauthorized"})
+		return
+	}
+
+	groupID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(400, gin.H{"error": "invalid group id"})
+		return
+	}
+
+	isMember, err := helpers.IsGroupMember(c.Request.Context(), database, groupID, userID)
 	if err != nil || !isMember {
 		c.JSON(403, gin.H{"error": "not a member of the group"})
 		return
@@ -130,8 +483,7 @@ func AddMember(c *gin.Context, db *db.DB) {
 		return
 	}
 
-	// Check if user exists by email
-	userID, exists, err := helpers.GetUserByEmail(c.Request.Context(), db, req.Email)
+	newUserID, exists, err := helpers.GetUserByEmail(c.Request.Context(), database, req.Email)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "database error"})
 		return
@@ -141,20 +493,18 @@ func AddMember(c *gin.Context, db *db.DB) {
 		return
 	}
 
-	// Check if already member
-	exists, err = helpers.IsGroupMember(c.Request.Context(), db, groupID, userID)
+	already, err := helpers.IsGroupMember(c.Request.Context(), database, groupID, newUserID)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "database error"})
 		return
 	}
-	if exists {
+	if already {
 		c.JSON(400, gin.H{"error": "user already in group"})
 		return
 	}
 
-	// Add member
-	_, err = db.Pool.Exec(c.Request.Context(),
-		"INSERT INTO group_members (group_id, user_id) VALUES ($1, $2)", groupID, userID)
+	_, err = database.Pool.Exec(c.Request.Context(),
+		"INSERT INTO group_members (group_id, user_id) VALUES ($1, $2)", groupID, newUserID)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "failed to add member"})
 		return
@@ -163,89 +513,133 @@ func AddMember(c *gin.Context, db *db.DB) {
 	c.JSON(200, gin.H{"message": "member added"})
 }
 
-func GetBalances(c *gin.Context, db *db.DB) {
+func GetMembers(c *gin.Context, database *db.DB) {
 	userID, ok := middleware.GetUserID(c)
 	if !ok {
 		c.JSON(401, gin.H{"error": "unauthorized"})
 		return
 	}
 
-	groupIDStr := c.Param("id")
-	groupID, err := uuid.Parse(groupIDStr)
+	groupID, err := uuid.Parse(c.Param("id"))
 	if err != nil {
 		c.JSON(400, gin.H{"error": "invalid group id"})
 		return
 	}
 
-	// Check if user is member of group
-	isMember, err := helpers.IsGroupMember(c.Request.Context(), db, groupID, userID)
+	isMember, err := helpers.IsGroupMember(c.Request.Context(), database, groupID, userID)
 	if err != nil || !isMember {
 		c.JSON(403, gin.H{"error": "not a member of the group"})
 		return
 	}
 
-	// Get all members
-	rows, err := db.Pool.Query(c.Request.Context(),
-		"SELECT user_id FROM group_members WHERE group_id = $1", groupID)
+	rows, err := database.Pool.Query(c.Request.Context(),
+		`SELECT u.id, u.email, u.username, gm.joined_at
+		 FROM users u
+		 JOIN group_members gm ON u.id = gm.user_id
+		 WHERE gm.group_id = $1 ORDER BY gm.joined_at ASC`, groupID)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "failed to get members"})
 		return
 	}
 	defer rows.Close()
 
-	members := make(map[uuid.UUID]decimal.Decimal)
+	members := []GroupMember{}
 	for rows.Next() {
-		var uid uuid.UUID
-		if err := rows.Scan(&uid); err != nil {
+		var m GroupMember
+		var rawJoinedAt time.Time
+		if err := rows.Scan(&m.UserID, &m.Email, &m.Username, &rawJoinedAt); err != nil {
 			c.JSON(500, gin.H{"error": "failed to scan member"})
 			return
 		}
-		members[uid] = decimal.Zero
+		m.CreatedAt = helpers.FromTime(rawJoinedAt)
+		members = append(members, m)
 	}
 
-	// Add from expenses: paid_by gets +total, split users get -amount
-	expRows, err := db.Pool.Query(c.Request.Context(),
-		"SELECT user_id, amount FROM expenses WHERE group_id = $1 AND is_deleted = FALSE", groupID)
-	if err != nil {
-		c.JSON(500, gin.H{"error": "failed to get expenses"})
+	c.JSON(200, gin.H{"data": members})
+}
+
+func GetBalances(c *gin.Context, database *db.DB) {
+	userID, ok := middleware.GetUserID(c)
+	if !ok {
+		c.JSON(401, gin.H{"error": "unauthorized"})
 		return
 	}
-	defer expRows.Close()
 
-	for expRows.Next() {
-		var paidBy uuid.UUID
-		var total decimal.Decimal
-		if err := expRows.Scan(&paidBy, &total); err != nil {
-			c.JSON(500, gin.H{"error": "failed to scan expense"})
-			return
-		}
-		if bal, ok := members[paidBy]; ok {
-			members[paidBy] = bal.Add(total)
-		}
+	groupID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(400, gin.H{"error": "invalid group id"})
+		return
 	}
 
-	splitRows, err := db.Pool.Query(c.Request.Context(),
-		"SELECT es.user_id, es.amount FROM expense_splits es JOIN expenses e ON es.expense_id = e.id WHERE e.group_id = $1", groupID)
+	isMember, err := helpers.IsGroupMember(c.Request.Context(), database, groupID, userID)
+	if err != nil || !isMember {
+		c.JSON(403, gin.H{"error": "not a member of the group"})
+		return
+	}
+
+	memberRows, err := database.Pool.Query(c.Request.Context(),
+		`SELECT u.id, u.email, u.username, gm.joined_at
+		 FROM users u JOIN group_members gm ON u.id = gm.user_id
+		 WHERE gm.group_id = $1`, groupID)
 	if err != nil {
-		c.JSON(500, gin.H{"error": "failed to get expense splits"})
+		c.JSON(500, gin.H{"error": "failed to get members"})
+		return
+	}
+	defer memberRows.Close()
+
+	var members []GroupMember
+	for memberRows.Next() {
+		var m GroupMember
+		var rawJoinedAt time.Time
+		if err := memberRows.Scan(&m.UserID, &m.Email, &m.Username, &rawJoinedAt); err != nil {
+			c.JSON(500, gin.H{"error": "failed to scan member"})
+			return
+		}
+		m.CreatedAt = helpers.FromTime(rawJoinedAt)
+		members = append(members, m)
+	}
+
+	gtRows, err := database.Pool.Query(c.Request.Context(),
+		`SELECT paid_by_user_id, total_amount FROM group_transactions
+		 WHERE group_id = $1 AND is_deleted = FALSE`, groupID)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "failed to get group transactions"})
+		return
+	}
+	defer gtRows.Close()
+
+	var payers []payerEntry
+	for gtRows.Next() {
+		var e payerEntry
+		if err := gtRows.Scan(&e.paidBy, &e.amount); err != nil {
+			c.JSON(500, gin.H{"error": "failed to scan group transaction"})
+			return
+		}
+		payers = append(payers, e)
+	}
+
+	splitRows, err := database.Pool.Query(c.Request.Context(),
+		`SELECT gts.user_id, gts.amount
+		 FROM group_transaction_splits gts
+		 JOIN group_transactions gt ON gts.group_transaction_id = gt.id
+		 WHERE gt.group_id = $1 AND gt.is_deleted = FALSE`, groupID)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "failed to get splits"})
 		return
 	}
 	defer splitRows.Close()
 
+	var splits []splitEntry
 	for splitRows.Next() {
-		var uid uuid.UUID
-		var amt decimal.Decimal
-		if err := splitRows.Scan(&uid, &amt); err != nil {
+		var s splitEntry
+		if err := splitRows.Scan(&s.userID, &s.amount); err != nil {
 			c.JSON(500, gin.H{"error": "failed to scan split"})
 			return
 		}
-		if bal, ok := members[uid]; ok {
-			members[uid] = bal.Sub(amt)
-		}
+		splits = append(splits, s)
 	}
 
-	// Subtract settlements: from_user -amount, to_user +amount
-	settRows, err := db.Pool.Query(c.Request.Context(),
+	settRows, err := database.Pool.Query(c.Request.Context(),
 		"SELECT from_user, to_user, amount FROM settlements WHERE group_id = $1", groupID)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "failed to get settlements"})
@@ -253,446 +647,655 @@ func GetBalances(c *gin.Context, db *db.DB) {
 	}
 	defer settRows.Close()
 
+	var setts []settlementEntry
 	for settRows.Next() {
-		var from, to uuid.UUID
-		var amt decimal.Decimal
-		if err := settRows.Scan(&from, &to, &amt); err != nil {
+		var s settlementEntry
+		if err := settRows.Scan(&s.from, &s.to, &s.amount); err != nil {
 			c.JSON(500, gin.H{"error": "failed to scan settlement"})
 			return
 		}
-		if bal, ok := members[from]; ok {
-			members[from] = bal.Add(amt)
-		}
-		if bal, ok := members[to]; ok {
-			members[to] = bal.Sub(amt)
-		}
+		setts = append(setts, s)
 	}
 
-	// Convert to slice
-	var balances []Balance
-	for uid, amt := range members {
-		balances = append(balances, Balance{UserID: uid, Amount: helpers.StringDecimal{amt}})
-	}
-
-	c.JSON(200, balances)
+	balances := computeBalances(members, payers, splits, setts)
+	c.JSON(200, gin.H{"data": balances})
 }
 
-func GetUserGroups(c *gin.Context, db *db.DB) {
+func GetGroupSettlements(c *gin.Context, database *db.DB) {
 	userID, ok := middleware.GetUserID(c)
 	if !ok {
 		c.JSON(401, gin.H{"error": "unauthorized"})
 		return
 	}
 
-	rows, err := db.Pool.Query(c.Request.Context(),
-		`SELECT g.id, g.name, g.created_by, g.created_at 
-		FROM groups g 
-		JOIN group_members gm ON g.id = gm.group_id 
-		WHERE gm.user_id = $1 
-		ORDER BY g.created_at DESC`, userID)
-	if err != nil {
-		c.JSON(500, gin.H{"error": "failed to get groups"})
-		return
-	}
-	defer rows.Close()
-
-	var groups []Group
-	var groupIDs []uuid.UUID
-	for rows.Next() {
-		var g Group
-		if err := rows.Scan(&g.ID, &g.Name, &g.CreatedBy, &g.CreatedAt); err != nil {
-			c.JSON(500, gin.H{"error": "failed to scan group"})
-			return
-		}
-		groups = append(groups, g)
-		groupIDs = append(groupIDs, g.ID)
-	}
-
-	if len(groupIDs) == 0 {
-		c.JSON(200, gin.H{"data": []GroupWithDetails{}})
-		return
-	}
-
-	memberRows, err := db.Pool.Query(c.Request.Context(),
-		`SELECT gm.group_id, u.id, u.email, u.username, gm.joined_at
-		 FROM group_members gm
-		 JOIN users u ON gm.user_id = u.id
-		 WHERE gm.group_id = ANY($1)
-		 ORDER BY gm.group_id, gm.joined_at`,
-		groupIDs)
-	if err != nil {
-		c.JSON(500, gin.H{"error": "failed to get members"})
-		return
-	}
-	defer memberRows.Close()
-
-	membersByGroup := make(map[uuid.UUID][]GroupMember)
-	for memberRows.Next() {
-		var groupID uuid.UUID
-		var m GroupMember
-		if err := memberRows.Scan(&groupID, &m.UserID, &m.Email, &m.Username, &m.CreatedAt); err != nil {
-			c.JSON(500, gin.H{"error": "failed to scan member"})
-			return
-		}
-		membersByGroup[groupID] = append(membersByGroup[groupID], m)
-	}
-
-	expenseRows, err := db.Pool.Query(c.Request.Context(),
-		`SELECT e.group_id, e.user_id, e.amount
-		 FROM expenses e
-		 WHERE e.group_id = ANY($1) AND e.is_deleted = FALSE`,
-		groupIDs)
-	if err != nil {
-		c.JSON(500, gin.H{"error": "failed to get expenses"})
-		return
-	}
-	defer expenseRows.Close()
-
-	expenseByGroup := make(map[uuid.UUID][]struct {
-		paidBy uuid.UUID
-		amount decimal.Decimal
-	})
-	for expenseRows.Next() {
-		var groupID, paidBy uuid.UUID
-		var amount decimal.Decimal
-		if err := expenseRows.Scan(&groupID, &paidBy, &amount); err != nil {
-			c.JSON(500, gin.H{"error": "failed to scan expense"})
-			return
-		}
-		expenseByGroup[groupID] = append(expenseByGroup[groupID], struct {
-			paidBy uuid.UUID
-			amount decimal.Decimal
-		}{paidBy, amount})
-	}
-
-	splitRows, err := db.Pool.Query(c.Request.Context(),
-		`SELECT es.user_id, es.amount, e.group_id
-		 FROM expense_splits es
-		 JOIN expenses e ON es.expense_id = e.id
-		 WHERE e.group_id = ANY($1)`,
-		groupIDs)
-	if err != nil {
-		c.JSON(500, gin.H{"error": "failed to get splits"})
-		return
-	}
-	defer splitRows.Close()
-
-	splitsByGroup := make(map[uuid.UUID][]struct {
-		userID uuid.UUID
-		amount decimal.Decimal
-	})
-	for splitRows.Next() {
-		var userID, groupID uuid.UUID
-		var amount decimal.Decimal
-		if err := splitRows.Scan(&userID, &amount, &groupID); err != nil {
-			c.JSON(500, gin.H{"error": "failed to scan split"})
-			return
-		}
-		splitsByGroup[groupID] = append(splitsByGroup[groupID], struct {
-			userID uuid.UUID
-			amount decimal.Decimal
-		}{userID, amount})
-	}
-
-	settlementRows, err := db.Pool.Query(c.Request.Context(),
-		`SELECT from_user, to_user, amount, group_id
-		 FROM settlements
-		 WHERE group_id = ANY($1)`,
-		groupIDs)
-	if err != nil {
-		c.JSON(500, gin.H{"error": "failed to get settlements"})
-		return
-	}
-	defer settlementRows.Close()
-
-	settlementsByGroup := make(map[uuid.UUID][]struct {
-		from, to uuid.UUID
-		amount   decimal.Decimal
-	})
-	for settlementRows.Next() {
-		var groupID, from, to uuid.UUID
-		var amount decimal.Decimal
-		if err := settlementRows.Scan(&from, &to, &amount, &groupID); err != nil {
-			c.JSON(500, gin.H{"error": "failed to scan settlement"})
-			return
-		}
-		settlementsByGroup[groupID] = append(settlementsByGroup[groupID], struct {
-			from, to uuid.UUID
-			amount   decimal.Decimal
-		}{from, to, amount})
-	}
-
-	var groupsWithDetails []GroupWithDetails
-	for _, g := range groups {
-		members := membersByGroup[g.ID]
-		if members == nil {
-			members = []GroupMember{}
-		}
-
-		memberBalances := make(map[uuid.UUID]decimal.Decimal)
-		for _, m := range members {
-			memberBalances[m.UserID] = decimal.Zero
-		}
-
-		for _, exp := range expenseByGroup[g.ID] {
-			if bal, ok := memberBalances[exp.paidBy]; ok {
-				memberBalances[exp.paidBy] = bal.Add(exp.amount)
-			}
-		}
-
-		for _, split := range splitsByGroup[g.ID] {
-			if _, ok := memberBalances[split.userID]; ok {
-				memberBalances[split.userID] = memberBalances[split.userID].Sub(split.amount)
-			}
-		}
-
-		for _, sett := range settlementsByGroup[g.ID] {
-			if bal, ok := memberBalances[sett.from]; ok {
-				memberBalances[sett.from] = bal.Add(sett.amount)
-			}
-			if bal, ok := memberBalances[sett.to]; ok {
-				memberBalances[sett.to] = bal.Sub(sett.amount)
-			}
-		}
-
-		var balances []Balance
-		for uid, amt := range memberBalances {
-			balances = append(balances, Balance{UserID: uid, Amount: helpers.StringDecimal{amt}})
-		}
-
-		groupsWithDetails = append(groupsWithDetails, GroupWithDetails{
-			ID:        g.ID,
-			Name:      g.Name,
-			CreatedBy: g.CreatedBy,
-			CreatedAt: g.CreatedAt,
-			Members:   members,
-			Balances:  balances,
-		})
-	}
-
-	c.JSON(200, gin.H{"data": groupsWithDetails})
-}
-
-func GetMembers(c *gin.Context, db *db.DB) {
-	userID, ok := middleware.GetUserID(c)
-	if !ok {
-		c.JSON(401, gin.H{"error": "unauthorized"})
-		return
-	}
-
-	groupIDStr := c.Param("id")
-	groupID, err := uuid.Parse(groupIDStr)
+	groupID, err := uuid.Parse(c.Param("id"))
 	if err != nil {
 		c.JSON(400, gin.H{"error": "invalid group id"})
 		return
 	}
 
-	isMember, err := helpers.IsGroupMember(c.Request.Context(), db, groupID, userID)
+	isMember, err := helpers.IsGroupMember(c.Request.Context(), database, groupID, userID)
 	if err != nil || !isMember {
 		c.JSON(403, gin.H{"error": "not a member of the group"})
 		return
 	}
 
-	rows, err := db.Pool.Query(c.Request.Context(),
-		`SELECT u.id, u.email, u.username, gm.joined_at
-		 FROM users u
-		 JOIN group_members gm ON u.id = gm.user_id
-		 WHERE gm.group_id = $1
-		 ORDER BY gm.joined_at ASC`,
-		groupID)
+	limit := 20
+	if s := c.Query("limit"); s != "" {
+		if l, err := strconv.Atoi(s); err == nil && l > 0 {
+			limit = l
+		}
+	}
+	offset := 0
+	if s := c.Query("offset"); s != "" {
+		if o, err := strconv.Atoi(s); err == nil && o >= 0 {
+			offset = o
+		}
+	}
+
+	var total int
+	if err := database.Pool.QueryRow(c.Request.Context(),
+		`SELECT COUNT(*) FROM settlements WHERE group_id = $1`, groupID).Scan(&total); err != nil {
+		c.JSON(500, gin.H{"error": "failed to get settlement count"})
+		return
+	}
+
+	rows, err := database.Pool.Query(c.Request.Context(),
+		`SELECT id, from_user, to_user, amount, notes, created_at
+		 FROM settlements WHERE group_id = $1
+		 ORDER BY created_at DESC LIMIT $2 OFFSET $3`, groupID, limit, offset)
 	if err != nil {
-		c.JSON(500, gin.H{"error": "failed to get members"})
+		c.JSON(500, gin.H{"error": "failed to get settlements"})
 		return
 	}
 	defer rows.Close()
 
-	var members []GroupMember
+	type settlementItem struct {
+		ID        uuid.UUID             `json:"id"`
+		FromUser  uuid.UUID             `json:"from_user"`
+		ToUser    uuid.UUID             `json:"to_user"`
+		Amount    helpers.StringDecimal `json:"amount"`
+		Notes     *string               `json:"notes,omitempty"`
+		CreatedAt helpers.EpochMillis   `json:"created_at"`
+	}
+	result := []settlementItem{}
 	for rows.Next() {
-		var m GroupMember
-		if err := rows.Scan(&m.UserID, &m.Email, &m.Username, &m.CreatedAt); err != nil {
-			c.JSON(500, gin.H{"error": "failed to scan member"})
+		var item settlementItem
+		var rawCreatedAt time.Time
+		if err := rows.Scan(&item.ID, &item.FromUser, &item.ToUser, &item.Amount, &item.Notes, &rawCreatedAt); err != nil {
+			c.JSON(500, gin.H{"error": "failed to scan settlement"})
 			return
 		}
-		members = append(members, m)
+		item.CreatedAt = helpers.FromTime(rawCreatedAt)
+		result = append(result, item)
 	}
 
-	if members == nil {
-		members = []GroupMember{}
-	}
-
-	c.JSON(200, gin.H{"members": members})
+	c.JSON(200, gin.H{
+		"data": result,
+		"pagination": gin.H{
+			"limit":  limit,
+			"offset": offset,
+			"total":  total,
+		},
+	})
 }
 
-type GroupMember struct {
-	UserID    uuid.UUID `json:"id"`
-	Email     string    `json:"email"`
-	Username  string    `json:"username"`
-	CreatedAt time.Time `json:"createdAt"`
-}
+// ---------------------------------------------------------------------------
+// Group Transactions
+// ---------------------------------------------------------------------------
 
-type GroupExpense struct {
-	ID          uuid.UUID             `json:"id"`
-	Description string                `json:"description"`
-	TotalAmount helpers.StringDecimal `json:"total_amount"`
-	PaidBy      uuid.UUID             `json:"paid_by"`
-	CreatedAt   time.Time             `json:"created_at"`
-}
-
-type GroupDetails struct {
-	ID        uuid.UUID      `json:"id"`
-	Name      string         `json:"name"`
-	CreatedBy uuid.UUID      `json:"created_by"`
-	CreatedAt time.Time      `json:"created_at"`
-	Members   []GroupMember  `json:"members"`
-	Balances  []Balance      `json:"balances"`
-	Expenses  []GroupExpense `json:"expenses"`
-}
-
-func GetGroup(c *gin.Context, db *db.DB) {
+func CreateGroupTransaction(c *gin.Context, database *db.DB) {
 	userID, ok := middleware.GetUserID(c)
 	if !ok {
 		c.JSON(401, gin.H{"error": "unauthorized"})
 		return
 	}
 
-	groupIDStr := c.Param("id")
-	groupID, err := uuid.Parse(groupIDStr)
+	groupID, err := uuid.Parse(c.Param("id"))
 	if err != nil {
 		c.JSON(400, gin.H{"error": "invalid group id"})
 		return
 	}
 
-	// Get group details
-	var g Group
-	err = db.Pool.QueryRow(c.Request.Context(),
-		"SELECT id, name, created_by, created_at FROM groups WHERE id = $1",
-		groupID).Scan(&g.ID, &g.Name, &g.CreatedBy, &g.CreatedAt)
-	if err != nil {
-		c.JSON(404, gin.H{"error": "group not found"})
+	isMember, err := helpers.IsGroupMember(c.Request.Context(), database, groupID, userID)
+	if err != nil || !isMember {
+		c.JSON(403, gin.H{"error": "not a member of the group"})
 		return
 	}
 
-	// Get members
-	memberRows, err := db.Pool.Query(c.Request.Context(),
-		`SELECT u.id, u.email, u.username 
-		FROM users u 
-		JOIN group_members gm ON u.id = gm.user_id 
-		WHERE gm.group_id = $1`, groupID)
-	if err != nil {
-		c.JSON(500, gin.H{"error": "failed to get members"})
+	var req CreateGroupTransactionRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
-	defer memberRows.Close()
 
-	var members []GroupMember
-	for memberRows.Next() {
-		var m GroupMember
-		if err := memberRows.Scan(&m.UserID, &m.Email, &m.Username); err != nil {
-			c.JSON(500, gin.H{"error": "failed to scan member"})
+	validate := validator.New()
+	if err := validate.Struct(req); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+
+	totalAmount, err := decimal.NewFromString(req.TotalAmount)
+	if err != nil || totalAmount.LessThanOrEqual(decimal.Zero) {
+		c.JSON(400, gin.H{"error": "invalid total_amount"})
+		return
+	}
+
+	// Parse and validate split amounts
+	splitAmounts := make([]decimal.Decimal, len(req.Splits))
+	splitSum := decimal.Zero
+	for i, s := range req.Splits {
+		amt, err := decimal.NewFromString(s.Amount)
+		if err != nil || amt.LessThan(decimal.Zero) {
+			c.JSON(400, gin.H{"error": fmt.Sprintf("invalid amount for split %d", i)})
 			return
 		}
-		members = append(members, m)
+		splitAmounts[i] = amt
+		splitSum = splitSum.Add(amt)
 	}
 
-	// Get expenses
-	expenseRows, err := db.Pool.Query(c.Request.Context(),
-		`SELECT id, description, amount, user_id, created_at
-		FROM expenses
-		WHERE group_id = $1 AND is_deleted = FALSE
-		ORDER BY created_at DESC`, groupID)
-	if err != nil {
-		c.JSON(500, gin.H{"error": "failed to get expenses"})
+	if !splitSum.Equal(totalAmount) {
+		c.JSON(400, gin.H{"error": fmt.Sprintf("splits sum (%s) must equal total_amount (%s)", splitSum, totalAmount)})
 		return
 	}
-	defer expenseRows.Close()
 
-	var expenses []GroupExpense
-	for expenseRows.Next() {
-		var e GroupExpense
-		if err := expenseRows.Scan(&e.ID, &e.Description, &e.TotalAmount, &e.PaidBy, &e.CreatedAt); err != nil {
-			c.JSON(500, gin.H{"error": "failed to scan expense"})
+	// Validate paid_by is a member
+	paidByIsMember, err := helpers.IsGroupMember(c.Request.Context(), database, groupID, req.PaidByUserID)
+	if err != nil || !paidByIsMember {
+		c.JSON(400, gin.H{"error": "paid_by_user_id is not a member of the group"})
+		return
+	}
+
+	// Validate all split users are members
+	for _, s := range req.Splits {
+		ok, err := helpers.IsGroupMember(c.Request.Context(), database, groupID, s.UserID)
+		if err != nil || !ok {
+			c.JSON(400, gin.H{"error": fmt.Sprintf("user %s is not a member of the group", s.UserID)})
 			return
 		}
-		expenses = append(expenses, e)
 	}
 
-	// Check if current user is a member
-	isMember := false
-	for _, m := range members {
-		if m.UserID == userID {
-			isMember = true
-			break
+	gtDate := time.UnixMilli(req.Date).UTC()
+
+	gtID := uuid.New()
+	if req.ID != nil {
+		gtID = *req.ID
+	}
+
+	tx, err := database.Pool.Begin(c.Request.Context())
+	if err != nil {
+		c.JSON(500, gin.H{"error": "failed to start transaction"})
+		return
+	}
+	defer tx.Rollback(c.Request.Context())
+
+	// Insert group_transaction
+	var gt GroupTransaction
+	var rawGTDate, rawGTCreatedAt, rawGTUpdatedAt time.Time
+	err = tx.QueryRow(c.Request.Context(),
+		`INSERT INTO group_transactions (id, group_id, paid_by_user_id, total_amount, category, date, description, notes, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+		 ON CONFLICT (id) DO UPDATE SET
+		   paid_by_user_id = EXCLUDED.paid_by_user_id,
+		   total_amount = EXCLUDED.total_amount,
+		   category = EXCLUDED.category,
+		   date = EXCLUDED.date,
+		   description = EXCLUDED.description,
+		   notes = EXCLUDED.notes,
+		   updated_at = NOW()
+		 RETURNING id, group_id, paid_by_user_id, total_amount, category, date, description, notes, is_deleted, created_at, updated_at`,
+		gtID, groupID, req.PaidByUserID, totalAmount, req.Category, gtDate, req.Description, req.Notes,
+	).Scan(
+		&gt.ID, &gt.GroupID, &gt.PaidByUserID, &gt.TotalAmount, &gt.Category, &rawGTDate,
+		&gt.Description, &gt.Notes, &gt.IsDeleted, &rawGTCreatedAt, &rawGTUpdatedAt,
+	)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "failed to create group transaction"})
+		return
+	}
+	gt.Date = helpers.FromTime(rawGTDate)
+	gt.CreatedAt = helpers.FromTime(rawGTCreatedAt)
+	gt.UpdatedAt = helpers.FromTime(rawGTUpdatedAt)
+
+	// For each split: create a personal expense transaction and insert the split row.
+	// Payer gets full total_amount (reflects what they paid); non-payers get their split amount.
+	var splits []SplitDetail
+	for i, s := range req.Splits {
+		txAmount := splitAmounts[i]
+		if s.UserID == req.PaidByUserID {
+			txAmount = totalAmount
 		}
-	}
 
-	memberBalances := make(map[uuid.UUID]decimal.Decimal)
-	for _, m := range members {
-		memberBalances[m.UserID] = decimal.Zero
-	}
-
-	for _, e := range expenses {
-		if bal, ok := memberBalances[e.PaidBy]; ok {
-			memberBalances[e.PaidBy] = bal.Add(e.TotalAmount.Decimal)
+		var memberTxID uuid.UUID
+		err = tx.QueryRow(c.Request.Context(),
+			`INSERT INTO transactions (user_id, type, amount, category, date, description, notes, group_transaction_id, updated_at)
+			 VALUES ($1, 'expense', $2, $3, $4, $5, $6, $7, NOW())
+			 RETURNING id`,
+			s.UserID, txAmount, req.Category, gtDate, req.Description, req.Notes, gt.ID,
+		).Scan(&memberTxID)
+		if err != nil {
+			c.JSON(500, gin.H{"error": "failed to create personal transaction for member"})
+			return
 		}
+
+		var split SplitDetail
+		err = tx.QueryRow(c.Request.Context(),
+			`INSERT INTO group_transaction_splits (group_transaction_id, user_id, amount, transaction_id)
+			 VALUES ($1, $2, $3, $4)
+			 RETURNING id, user_id, amount, transaction_id`,
+			gt.ID, s.UserID, splitAmounts[i], memberTxID,
+		).Scan(&split.ID, &split.UserID, &split.Amount, &split.TransactionID)
+		if err != nil {
+			c.JSON(500, gin.H{"error": "failed to create split"})
+			return
+		}
+		splits = append(splits, split)
 	}
 
-	splitRows, err := db.Pool.Query(c.Request.Context(),
-		`SELECT es.user_id, es.amount 
-		 FROM expense_splits es
-		 JOIN expenses e ON es.expense_id = e.id
-		 WHERE e.group_id = $1`,
-		groupID)
+	if err := tx.Commit(c.Request.Context()); err != nil {
+		c.JSON(500, gin.H{"error": "failed to commit"})
+		return
+	}
+
+	gt.Splits = splits
+	c.JSON(201, gt)
+}
+
+func ListGroupTransactions(c *gin.Context, database *db.DB) {
+	userID, ok := middleware.GetUserID(c)
+	if !ok {
+		c.JSON(401, gin.H{"error": "unauthorized"})
+		return
+	}
+
+	groupID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(400, gin.H{"error": "invalid group id"})
+		return
+	}
+
+	isMember, err := helpers.IsGroupMember(c.Request.Context(), database, groupID, userID)
+	if err != nil || !isMember {
+		c.JSON(403, gin.H{"error": "not a member of the group"})
+		return
+	}
+
+	rows, err := database.Pool.Query(c.Request.Context(),
+		`SELECT id, group_id, paid_by_user_id, total_amount, category, date, description, notes, is_deleted, created_at, updated_at
+		 FROM group_transactions
+		 WHERE group_id = $1 AND is_deleted = FALSE
+		 ORDER BY date DESC, created_at DESC`, groupID)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "failed to retrieve group transactions"})
+		return
+	}
+	defer rows.Close()
+
+	var gts []GroupTransaction
+	var gtIDs []uuid.UUID
+	for rows.Next() {
+		var gt GroupTransaction
+		var rawDate, rawCreatedAt, rawUpdatedAt time.Time
+		if err := rows.Scan(
+			&gt.ID, &gt.GroupID, &gt.PaidByUserID, &gt.TotalAmount, &gt.Category, &rawDate,
+			&gt.Description, &gt.Notes, &gt.IsDeleted, &rawCreatedAt, &rawUpdatedAt,
+		); err != nil {
+			c.JSON(500, gin.H{"error": "failed to scan group transaction"})
+			return
+		}
+		gt.Date = helpers.FromTime(rawDate)
+		gt.CreatedAt = helpers.FromTime(rawCreatedAt)
+		gt.UpdatedAt = helpers.FromTime(rawUpdatedAt)
+		gt.Splits = []SplitDetail{}
+		gts = append(gts, gt)
+		gtIDs = append(gtIDs, gt.ID)
+	}
+
+	if len(gtIDs) == 0 {
+		c.JSON(200, gin.H{"data": []GroupTransaction{}})
+		return
+	}
+
+	// Fetch all splits for these transactions
+	splitRows, err := database.Pool.Query(c.Request.Context(),
+		`SELECT id, group_transaction_id, user_id, amount, transaction_id
+		 FROM group_transaction_splits WHERE group_transaction_id = ANY($1)`, gtIDs)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "failed to get splits"})
 		return
 	}
 	defer splitRows.Close()
 
+	splitsByGT := make(map[uuid.UUID][]SplitDetail)
 	for splitRows.Next() {
-		var userID uuid.UUID
-		var amount decimal.Decimal
-		if err := splitRows.Scan(&userID, &amount); err != nil {
+		var gtID uuid.UUID
+		var s SplitDetail
+		if err := splitRows.Scan(&s.ID, &gtID, &s.UserID, &s.Amount, &s.TransactionID); err != nil {
 			c.JSON(500, gin.H{"error": "failed to scan split"})
 			return
 		}
-		if _, ok := memberBalances[userID]; ok {
-			memberBalances[userID] = memberBalances[userID].Sub(amount)
+		splitsByGT[gtID] = append(splitsByGT[gtID], s)
+	}
+
+	for i := range gts {
+		if splits, ok := splitsByGT[gts[i].ID]; ok {
+			gts[i].Splits = splits
 		}
 	}
 
-	settlementRows, err := db.Pool.Query(c.Request.Context(),
-		`SELECT from_user, to_user, amount 
-		 FROM settlements
-		 WHERE group_id = $1`,
-		groupID)
-	if err != nil {
-		c.JSON(500, gin.H{"error": "failed to get settlements"})
+	c.JSON(200, gin.H{"data": gts})
+}
+
+func GetGroupTransaction(c *gin.Context, database *db.DB) {
+	userID, ok := middleware.GetUserID(c)
+	if !ok {
+		c.JSON(401, gin.H{"error": "unauthorized"})
 		return
 	}
-	defer settlementRows.Close()
 
-	for settlementRows.Next() {
-		var from, to uuid.UUID
-		var amount decimal.Decimal
-		if err := settlementRows.Scan(&from, &to, &amount); err != nil {
-			c.JSON(500, gin.H{"error": "failed to scan settlement"})
+	groupID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(400, gin.H{"error": "invalid group id"})
+		return
+	}
+
+	txID, err := uuid.Parse(c.Param("txId"))
+	if err != nil {
+		c.JSON(400, gin.H{"error": "invalid transaction id"})
+		return
+	}
+
+	isMember, err := helpers.IsGroupMember(c.Request.Context(), database, groupID, userID)
+	if err != nil || !isMember {
+		c.JSON(403, gin.H{"error": "not a member of the group"})
+		return
+	}
+
+	var gt GroupTransaction
+	var rawGTDate2, rawGTCreatedAt2, rawGTUpdatedAt2 time.Time
+	err = database.Pool.QueryRow(c.Request.Context(),
+		`SELECT id, group_id, paid_by_user_id, total_amount, category, date, description, notes, is_deleted, created_at, updated_at
+		 FROM group_transactions WHERE id = $1 AND group_id = $2`,
+		txID, groupID,
+	).Scan(
+		&gt.ID, &gt.GroupID, &gt.PaidByUserID, &gt.TotalAmount, &gt.Category, &rawGTDate2,
+		&gt.Description, &gt.Notes, &gt.IsDeleted, &rawGTCreatedAt2, &rawGTUpdatedAt2,
+	)
+	if err != nil {
+		c.JSON(404, gin.H{"error": "group transaction not found"})
+		return
+	}
+	gt.Date = helpers.FromTime(rawGTDate2)
+	gt.CreatedAt = helpers.FromTime(rawGTCreatedAt2)
+	gt.UpdatedAt = helpers.FromTime(rawGTUpdatedAt2)
+
+	splitRows, err := database.Pool.Query(c.Request.Context(),
+		`SELECT id, user_id, amount, transaction_id
+		 FROM group_transaction_splits WHERE group_transaction_id = $1`, gt.ID)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "failed to get splits"})
+		return
+	}
+	defer splitRows.Close()
+
+	gt.Splits = []SplitDetail{}
+	for splitRows.Next() {
+		var s SplitDetail
+		if err := splitRows.Scan(&s.ID, &s.UserID, &s.Amount, &s.TransactionID); err != nil {
+			c.JSON(500, gin.H{"error": "failed to scan split"})
 			return
 		}
-		if bal, ok := memberBalances[from]; ok {
-			memberBalances[from] = bal.Add(amount)
+		gt.Splits = append(gt.Splits, s)
+	}
+
+	c.JSON(200, gt)
+}
+
+func UpdateGroupTransaction(c *gin.Context, database *db.DB) {
+	userID, ok := middleware.GetUserID(c)
+	if !ok {
+		c.JSON(401, gin.H{"error": "unauthorized"})
+		return
+	}
+
+	groupID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(400, gin.H{"error": "invalid group id"})
+		return
+	}
+
+	txID, err := uuid.Parse(c.Param("txId"))
+	if err != nil {
+		c.JSON(400, gin.H{"error": "invalid transaction id"})
+		return
+	}
+
+	isMember, err := helpers.IsGroupMember(c.Request.Context(), database, groupID, userID)
+	if err != nil || !isMember {
+		c.JSON(403, gin.H{"error": "not a member of the group"})
+		return
+	}
+
+	// Only the payer can update
+	var paidByUserID uuid.UUID
+	err = database.Pool.QueryRow(c.Request.Context(),
+		`SELECT paid_by_user_id FROM group_transactions WHERE id = $1 AND group_id = $2`,
+		txID, groupID,
+	).Scan(&paidByUserID)
+	if err != nil {
+		c.JSON(404, gin.H{"error": "group transaction not found"})
+		return
+	}
+	if paidByUserID != userID {
+		c.JSON(403, gin.H{"error": "only the payer can update this transaction"})
+		return
+	}
+
+	var req UpdateGroupTransactionRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+
+	validate := validator.New()
+	if err := validate.Struct(req); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+
+	query := `UPDATE group_transactions SET updated_at = NOW()`
+	args := []interface{}{}
+	n := 1
+
+	if req.Category != nil {
+		query += fmt.Sprintf(", category = $%d", n)
+		args = append(args, *req.Category)
+		n++
+	}
+	if req.Date != nil {
+		query += fmt.Sprintf(", date = $%d", n)
+		args = append(args, time.UnixMilli(*req.Date).UTC())
+		n++
+	}
+	if req.Description != nil {
+		query += fmt.Sprintf(", description = $%d", n)
+		args = append(args, *req.Description)
+		n++
+	}
+	if req.Notes != nil {
+		query += fmt.Sprintf(", notes = $%d", n)
+		args = append(args, *req.Notes)
+		n++
+	}
+
+	if n == 1 {
+		c.JSON(400, gin.H{"error": "no fields to update"})
+		return
+	}
+
+	query += fmt.Sprintf(` WHERE id = $%d
+		RETURNING id, group_id, paid_by_user_id, total_amount, category, date, description, notes, is_deleted, created_at, updated_at`, n)
+	args = append(args, txID)
+
+	var gt GroupTransaction
+	var rawGTDate3, rawGTCreatedAt3, rawGTUpdatedAt3 time.Time
+	err = database.Pool.QueryRow(c.Request.Context(), query, args...).Scan(
+		&gt.ID, &gt.GroupID, &gt.PaidByUserID, &gt.TotalAmount, &gt.Category, &rawGTDate3,
+		&gt.Description, &gt.Notes, &gt.IsDeleted, &rawGTCreatedAt3, &rawGTUpdatedAt3,
+	)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "failed to update group transaction"})
+		return
+	}
+	gt.Date = helpers.FromTime(rawGTDate3)
+	gt.CreatedAt = helpers.FromTime(rawGTCreatedAt3)
+	gt.UpdatedAt = helpers.FromTime(rawGTUpdatedAt3)
+
+	splitRows, err := database.Pool.Query(c.Request.Context(),
+		`SELECT id, user_id, amount, transaction_id
+		 FROM group_transaction_splits WHERE group_transaction_id = $1`, gt.ID)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "failed to get splits"})
+		return
+	}
+	defer splitRows.Close()
+
+	gt.Splits = []SplitDetail{}
+	for splitRows.Next() {
+		var s SplitDetail
+		if err := splitRows.Scan(&s.ID, &s.UserID, &s.Amount, &s.TransactionID); err != nil {
+			c.JSON(500, gin.H{"error": "failed to scan split"})
+			return
 		}
-		if bal, ok := memberBalances[to]; ok {
-			memberBalances[to] = bal.Sub(amount)
+		gt.Splits = append(gt.Splits, s)
+	}
+
+	c.JSON(200, gt)
+}
+
+func DeleteGroupTransaction(c *gin.Context, database *db.DB) {
+	userID, ok := middleware.GetUserID(c)
+	if !ok {
+		c.JSON(401, gin.H{"error": "unauthorized"})
+		return
+	}
+
+	groupID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(400, gin.H{"error": "invalid group id"})
+		return
+	}
+
+	txID, err := uuid.Parse(c.Param("txId"))
+	if err != nil {
+		c.JSON(400, gin.H{"error": "invalid transaction id"})
+		return
+	}
+
+	isMember, err := helpers.IsGroupMember(c.Request.Context(), database, groupID, userID)
+	if err != nil || !isMember {
+		c.JSON(403, gin.H{"error": "not a member of the group"})
+		return
+	}
+
+	var paidByUserID uuid.UUID
+	err = database.Pool.QueryRow(c.Request.Context(),
+		`SELECT paid_by_user_id FROM group_transactions WHERE id = $1 AND group_id = $2`,
+		txID, groupID,
+	).Scan(&paidByUserID)
+	if err != nil {
+		c.JSON(404, gin.H{"error": "group transaction not found"})
+		return
+	}
+	if paidByUserID != userID {
+		c.JSON(403, gin.H{"error": "only the payer can delete this transaction"})
+		return
+	}
+
+	dbTx, err := database.Pool.Begin(c.Request.Context())
+	if err != nil {
+		c.JSON(500, gin.H{"error": "failed to start transaction"})
+		return
+	}
+	defer dbTx.Rollback(c.Request.Context())
+
+	// Soft-delete all linked personal transactions
+	_, err = dbTx.Exec(c.Request.Context(),
+		`UPDATE transactions SET is_deleted = true, updated_at = NOW()
+		 WHERE group_transaction_id = $1`, txID)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "failed to delete personal transactions"})
+		return
+	}
+
+	// Soft-delete the group transaction
+	_, err = dbTx.Exec(c.Request.Context(),
+		`UPDATE group_transactions SET is_deleted = true, updated_at = NOW() WHERE id = $1`, txID)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "failed to delete group transaction"})
+		return
+	}
+
+	if err := dbTx.Commit(c.Request.Context()); err != nil {
+		c.JSON(500, gin.H{"error": "failed to commit"})
+		return
+	}
+
+	c.JSON(200, gin.H{"message": "group transaction deleted successfully"})
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+type payerEntry struct {
+	paidBy uuid.UUID
+	amount decimal.Decimal
+}
+
+type splitEntry struct {
+	userID uuid.UUID
+	amount decimal.Decimal
+}
+
+type settlementEntry struct {
+	from, to uuid.UUID
+	amount   decimal.Decimal
+}
+
+// computeBalances calculates net balance per member.
+// Positive = owed money (paid more than share), Negative = owes money.
+func computeBalances(members []GroupMember, payers []payerEntry, splits []splitEntry, settlements []settlementEntry) []Balance {
+	bal := make(map[uuid.UUID]decimal.Decimal)
+	for _, m := range members {
+		bal[m.UserID] = decimal.Zero
+	}
+
+	for _, p := range payers {
+		if _, ok := bal[p.paidBy]; ok {
+			bal[p.paidBy] = bal[p.paidBy].Add(p.amount)
 		}
 	}
 
-	var balances []Balance
-	for uid, amt := range memberBalances {
-		balances = append(balances, Balance{UserID: uid, Amount: helpers.StringDecimal{amt}})
+	for _, s := range splits {
+		if _, ok := bal[s.userID]; ok {
+			bal[s.userID] = bal[s.userID].Sub(s.amount)
+		}
 	}
 
-	c.JSON(200, gin.H{
-		"group":     GroupDetails{g.ID, g.Name, g.CreatedBy, g.CreatedAt, members, balances, expenses},
-		"is_member": isMember,
-	})
+	// Settlements: from_user paid their debt (+), to_user received (-)
+	for _, s := range settlements {
+		if _, ok := bal[s.from]; ok {
+			bal[s.from] = bal[s.from].Add(s.amount)
+		}
+		if _, ok := bal[s.to]; ok {
+			bal[s.to] = bal[s.to].Sub(s.amount)
+		}
+	}
+
+	balances := []Balance{}
+	for uid, amt := range bal {
+		balances = append(balances, Balance{UserID: uid, Amount: helpers.StringDecimal{Decimal: amt}})
+	}
+	return balances
 }

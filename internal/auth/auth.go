@@ -11,6 +11,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/yanonymousV2/finance-manager-backend/internal/db"
+	"github.com/yanonymousV2/finance-manager-backend/internal/helpers"
 	"github.com/yanonymousV2/finance-manager-backend/internal/user"
 )
 
@@ -77,9 +78,11 @@ func Signup(c *gin.Context, service *AuthService) {
 
 	// Insert user
 	var u user.User
+	var rawCreatedAt time.Time
 	err = db.Pool.QueryRow(c.Request.Context(),
 		"INSERT INTO users (email, username, password_hash) VALUES ($1, $2, $3) RETURNING id, email, username, created_at",
-		req.Email, req.Username, string(hash)).Scan(&u.ID, &u.Email, &u.Username, &u.CreatedAt)
+		req.Email, req.Username, string(hash)).Scan(&u.ID, &u.Email, &u.Username, &rawCreatedAt)
+	u.CreatedAt = helpers.FromTime(rawCreatedAt)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "failed to create user"})
 		return
@@ -113,9 +116,11 @@ func GetMe(c *gin.Context, service *AuthService) {
 	}
 
 	var u user.User
+	var rawCreatedAt time.Time
 	err := service.DB.Pool.QueryRow(c.Request.Context(),
 		"SELECT id, email, username, created_at FROM users WHERE id = $1", userID).Scan(
-		&u.ID, &u.Email, &u.Username, &u.CreatedAt)
+		&u.ID, &u.Email, &u.Username, &rawCreatedAt)
+	u.CreatedAt = helpers.FromTime(rawCreatedAt)
 	if err != nil {
 		c.JSON(404, gin.H{"error": "user not found"})
 		return
@@ -140,9 +145,11 @@ func Login(c *gin.Context, service *AuthService) {
 
 	// Get user
 	var u user.User
+	var rawCreatedAt time.Time
 	err := db.Pool.QueryRow(c.Request.Context(),
 		"SELECT id, email, username, password_hash, created_at FROM users WHERE email = $1", req.Email).Scan(
-		&u.ID, &u.Email, &u.Username, &u.PasswordHash, &u.CreatedAt)
+		&u.ID, &u.Email, &u.Username, &u.PasswordHash, &rawCreatedAt)
+	u.CreatedAt = helpers.FromTime(rawCreatedAt)
 	if err != nil {
 		c.JSON(401, gin.H{"error": "invalid credentials"})
 		return

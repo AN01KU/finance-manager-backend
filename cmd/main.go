@@ -20,12 +20,12 @@ import (
 	"github.com/yanonymousV2/finance-manager-backend/internal/config"
 	"github.com/yanonymousV2/finance-manager-backend/internal/dashboard"
 	"github.com/yanonymousV2/finance-manager-backend/internal/db"
-	"github.com/yanonymousV2/finance-manager-backend/internal/expense"
 	"github.com/yanonymousV2/finance-manager-backend/internal/group"
 	"github.com/yanonymousV2/finance-manager-backend/internal/middleware"
 	"github.com/yanonymousV2/finance-manager-backend/internal/recurring"
 	"github.com/yanonymousV2/finance-manager-backend/internal/seed"
 	"github.com/yanonymousV2/finance-manager-backend/internal/settlement"
+	"github.com/yanonymousV2/finance-manager-backend/internal/transaction"
 )
 
 func main() {
@@ -65,37 +65,21 @@ func main() {
 		log.Printf("Warning: failed to seed test data: %v", err)
 	}
 
-	log.Println("[MARKER] About to setup Gin router")
-
 	// Setup Gin
-	log.Println("Setting up Gin router...")
 	r := gin.Default()
-	log.Println("✓ Gin router created")
-
-	// Add request logging middleware
-	log.Println("  → Adding request logging middleware...")
 	r.Use(middleware.RequestLogger())
-	log.Println("  ✓ Request logging middleware added")
-
-	// Add CORS middleware
-	log.Println("  → Adding CORS middleware...")
 	r.Use(middleware.CORS())
-	log.Println("  ✓ CORS middleware added")
 
-	// Health check endpoint
-	log.Println("  → Setting up health check endpoint...")
+	// Health check
 	r.GET("/health", func(c *gin.Context) {
-		// Check database connectivity
 		if err := database.Pool.Ping(c.Request.Context()); err != nil {
 			c.JSON(503, gin.H{"status": "unhealthy", "database": "disconnected"})
 			return
 		}
 		c.JSON(200, gin.H{"status": "healthy", "database": "connected"})
 	})
-	log.Println("  ✓ Health check endpoint setup")
 
-	// Create auth service with config
-	log.Println("  → Creating auth service...")
+	// Auth service
 	authService := &auth.AuthService{
 		DB:        database,
 		JWTSecret: cfg.JWTSecret,
@@ -105,20 +89,16 @@ func main() {
 			}
 		},
 	}
-	log.Println("  ✓ Auth service created")
 
-	// Auth routes with rate limiting
-	log.Println("  → Setting up auth routes...")
+	// Auth routes (rate limited)
 	authLimited := r.Group("/auth")
 	authLimited.Use(middleware.RateLimiter())
 	{
 		authLimited.POST("/signup", func(c *gin.Context) { auth.Signup(c, authService) })
 		authLimited.POST("/login", func(c *gin.Context) { auth.Login(c, authService) })
 	}
-	log.Println("  ✓ Auth routes setup")
 
 	// Protected routes
-	log.Println("  → Setting up protected routes...")
 	protected := r.Group("/")
 	protected.Use(middleware.JWTAuth(cfg.JWTSecret))
 	{
@@ -126,19 +106,19 @@ func main() {
 		protected.GET("/me", func(c *gin.Context) { auth.GetMe(c, authService) })
 		protected.DELETE("/me", func(c *gin.Context) { auth.DeleteMe(c, authService) })
 
-		// Expenses
-		protected.POST("/expenses", func(c *gin.Context) { expense.CreateExpense(c, database) })
-		protected.GET("/expenses", func(c *gin.Context) { expense.ListExpenses(c, database) })
-		protected.GET("/expenses/:id", func(c *gin.Context) { expense.GetExpense(c, database) })
-		protected.PUT("/expenses/:id", func(c *gin.Context) { expense.UpdateExpense(c, database) })
-		protected.DELETE("/expenses/:id", func(c *gin.Context) { expense.DeleteExpense(c, database) })
+		// Transactions (personal expenses + income)
+		protected.POST("/transactions", func(c *gin.Context) { transaction.CreateTransaction(c, database) })
+		protected.GET("/transactions", func(c *gin.Context) { transaction.ListTransactions(c, database) })
+		protected.GET("/transactions/:id", func(c *gin.Context) { transaction.GetTransaction(c, database) })
+		protected.PATCH("/transactions/:id", func(c *gin.Context) { transaction.UpdateTransaction(c, database) })
+		protected.DELETE("/transactions/:id", func(c *gin.Context) { transaction.DeleteTransaction(c, database) })
 
-		// Recurring Expenses
-		protected.POST("/recurring-expenses", func(c *gin.Context) { recurring.CreateRecurringExpense(c, database) })
-		protected.GET("/recurring-expenses", func(c *gin.Context) { recurring.ListRecurringExpenses(c, database) })
-		protected.GET("/recurring-expenses/:id", func(c *gin.Context) { recurring.GetRecurringExpense(c, database) })
-		protected.PUT("/recurring-expenses/:id", func(c *gin.Context) { recurring.UpdateRecurringExpense(c, database) })
-		protected.DELETE("/recurring-expenses/:id", func(c *gin.Context) { recurring.DeleteRecurringExpense(c, database) })
+		// Recurring Transactions
+		protected.POST("/recurring-transactions", func(c *gin.Context) { recurring.CreateRecurringTransaction(c, database) })
+		protected.GET("/recurring-transactions", func(c *gin.Context) { recurring.ListRecurringTransactions(c, database) })
+		protected.GET("/recurring-transactions/:id", func(c *gin.Context) { recurring.GetRecurringTransaction(c, database) })
+		protected.PUT("/recurring-transactions/:id", func(c *gin.Context) { recurring.UpdateRecurringTransaction(c, database) })
+		protected.DELETE("/recurring-transactions/:id", func(c *gin.Context) { recurring.DeleteRecurringTransaction(c, database) })
 
 		// Budgets
 		protected.POST("/budgets", func(c *gin.Context) { budget.CreateBudget(c, database) })
@@ -162,13 +142,18 @@ func main() {
 		protected.POST("/groups/:id/add-member", func(c *gin.Context) { group.AddMember(c, database) })
 		protected.GET("/groups/:id/members", func(c *gin.Context) { group.GetMembers(c, database) })
 		protected.GET("/groups/:id/balances", func(c *gin.Context) { group.GetBalances(c, database) })
+		protected.GET("/groups/:id/settlements", func(c *gin.Context) { group.GetGroupSettlements(c, database) })
+
+		// Group Transactions
+		protected.POST("/groups/:id/transactions", func(c *gin.Context) { group.CreateGroupTransaction(c, database) })
+		protected.GET("/groups/:id/transactions", func(c *gin.Context) { group.ListGroupTransactions(c, database) })
+		protected.GET("/groups/:id/transactions/:txId", func(c *gin.Context) { group.GetGroupTransaction(c, database) })
+		protected.PATCH("/groups/:id/transactions/:txId", func(c *gin.Context) { group.UpdateGroupTransaction(c, database) })
+		protected.DELETE("/groups/:id/transactions/:txId", func(c *gin.Context) { group.DeleteGroupTransaction(c, database) })
 
 		// Settlements
 		protected.POST("/settlements", func(c *gin.Context) { settlement.CreateSettlement(c, database) })
 	}
-	log.Println("  ✓ All protected routes setup")
-
-	log.Println("✓ Router setup complete")
 
 	// Create server with timeouts
 	srv := &http.Server{
@@ -177,10 +162,9 @@ func main() {
 		ReadTimeout:    10 * time.Second,
 		WriteTimeout:   10 * time.Second,
 		IdleTimeout:    60 * time.Second,
-		MaxHeaderBytes: 1 << 20, // 1 MB
+		MaxHeaderBytes: 1 << 20,
 	}
 
-	// Start server in a goroutine
 	go func() {
 		log.Println("==============================================")
 		log.Printf("🚀 Server listening on http://localhost:%s", cfg.Port)
@@ -190,13 +174,11 @@ func main() {
 		}
 	}()
 
-	// Wait for interrupt signal to gracefully shutdown the server
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 	log.Println("Shutting down server...")
 
-	// Graceful shutdown with 5 second timeout
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 

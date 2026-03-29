@@ -32,9 +32,15 @@ var limiter = &rateLimiter{
 	window:   time.Duration(getEnvInt("RATE_WINDOW_SECONDS", 60)) * time.Second,
 }
 
-// RateLimiter middleware to prevent brute force attacks
+// RateLimiter middleware to prevent brute force attacks.
+// Skipped in non-release mode (debug/test) for easier local development.
 func RateLimiter() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		if gin.Mode() != gin.ReleaseMode {
+			c.Next()
+			return
+		}
+
 		ip := c.ClientIP()
 
 		limiter.mu.Lock()

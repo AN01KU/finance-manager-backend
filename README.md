@@ -5,12 +5,12 @@ A Go/Gin REST API for personal finance tracking and group expense splitting, bac
 ## Features
 
 - **Authentication** — JWT signup/login with rate limiting, bcrypt passwords
-- **Expenses** — Unified personal + group expense tracking, soft delete, pagination, optional client-supplied IDs
+- **Transactions** — Unified expense + income tracking, soft delete, pagination, optional client-supplied IDs
 - **Groups** — Create groups, manage members, auto-derive balances from splits + settlements
-- **Settlements** — Record payments between group members
+- **Settlements** — Record payments between group members; creates an income transaction for the recipient
 - **Categories** — 15 predefined categories seeded on signup + custom user-defined categories
 - **Budgets** — Monthly budgets with upsert semantics
-- **Recurring Expenses** — Daily/weekly/monthly/yearly recurring expense definitions
+- **Recurring Transactions** — Daily/weekly/monthly/yearly recurring expense and income definitions
 - **Dashboard** — Monthly analytics with daily averages, projections, and category breakdown
 
 ## Prerequisites
@@ -65,6 +65,7 @@ go run ./cmd/main.go
 | `PORT` | No | `8080` | |
 | `RATE_LIMIT` | No | `10` | Max requests per window |
 | `RATE_WINDOW_SECONDS` | No | `60` | Rate limit window in seconds |
+| `GIN_MODE` | No | `debug` | Set to `release` in production to enable rate limiting |
 
 ## Development
 
@@ -85,7 +86,11 @@ go test ./...
 
 All monetary amounts are returned as JSON strings (e.g. `"123.45"`) to avoid float precision loss.
 
+All dates and timestamps are **epoch milliseconds** (integers), both in requests and responses.
+
 All list endpoints return `{ "data": [...] }`. Paginated endpoints add `"pagination": { "limit", "offset", "total" }`.
+
+All protected routes require `Authorization: Bearer <token>`.
 
 ### Authentication
 
@@ -109,7 +114,7 @@ Response `201`:
     "id": "550e8400-e29b-41d4-a716-446655440000",
     "email": "user@example.com",
     "username": "johndoe",
-    "created_at": "2026-01-01T12:00:00Z"
+    "created_at": 1748736000000
   }
 }
 ```
@@ -131,8 +136,6 @@ Response `200`: Same shape as signup.
 
 ### User
 
-All protected routes require `Authorization: Bearer <token>`.
-
 #### GET /me
 
 Response `200`:
@@ -141,7 +144,7 @@ Response `200`:
   "id": "550e8400-e29b-41d4-a716-446655440000",
   "email": "user@example.com",
   "username": "johndoe",
-  "created_at": "2026-01-01T12:00:00Z"
+  "created_at": 1748736000000
 }
 ```
 
@@ -153,32 +156,33 @@ Response `200`: `{ "message": "user deleted successfully" }`
 
 ---
 
-### Expenses
+### Transactions
 
-#### POST /expenses
+#### POST /transactions
 
-Creates an expense. If `id` is provided, the request is idempotent (upsert on conflict).
+Creates a personal transaction (expense or income). If `id` is provided, the request is idempotent (upsert on conflict).
 
 ```json
 {
   "id": "optional-client-uuid",
-  "amount": "45.50",
-  "category": "foodDining",
-  "date": "2026-03-15T00:00:00Z",
-  "time": "2026-03-15T12:30:00Z",
-  "description": "Lunch at café",
-  "notes": "With colleagues",
-  "recurring_expense_id": null,
-  "group_id": null,
-  "group_name": null
+  "type": "expense",
+  "amount": "350",
+  "category": "Food & Dining",
+  "date": 1774569600000,
+  "time": 1774583400000,
+  "description": "Lunch at office",
+  "notes": "With team",
+  "recurring_transaction_id": null
 }
 ```
 
-Response `201`: Expense object.
+`type` must be `expense` or `income`.
 
-#### GET /expenses
+Response `201`: Transaction object.
 
-Query params: `limit` (default 50, max 100), `offset`, `category`, `start_date` (YYYY-MM-DD), `end_date` (YYYY-MM-DD), `group_id`, `recurring_expense_id`, `is_deleted=true`
+#### GET /transactions
+
+Query params: `type` (`expense`/`income`), `category`, `start_date` (epoch ms), `end_date` (epoch ms), `group_transaction_id`, `recurring_transaction_id`, `is_deleted=true`, `limit` (default 50, max 100), `offset`
 
 Response `200`:
 ```json
@@ -187,18 +191,19 @@ Response `200`:
     {
       "id": "...",
       "user_id": "...",
-      "amount": "45.50",
-      "category": "foodDining",
-      "date": "2026-03-15T00:00:00Z",
-      "time": "2026-03-15T12:30:00Z",
-      "description": "Lunch at café",
-      "notes": "With colleagues",
-      "is_deleted": false,
-      "recurring_expense_id": null,
+      "type": "expense",
+      "amount": "350",
+      "category": "Food & Dining",
+      "date": 1774569600000,
+      "description": "Lunch at office",
+      "group_transaction_id": null,
       "group_id": null,
       "group_name": null,
-      "created_at": "...",
-      "updated_at": "..."
+      "settlement_id": null,
+      "recurring_transaction_id": null,
+      "is_deleted": false,
+      "created_at": 1774569600000,
+      "updated_at": 1774569600000
     }
   ],
   "pagination": {
@@ -209,76 +214,89 @@ Response `200`:
 }
 ```
 
-#### GET /expenses/:id
+#### GET /transactions/:id
 
-Response `200`: Single expense object.
+Response `200`: Single transaction object.
 
-#### PUT /expenses/:id
+#### PATCH /transactions/:id
 
-All fields optional (partial update):
+All fields optional (partial update). Cannot update group transactions via this endpoint — use `/groups/:id/transactions/:txId` instead.
+
 ```json
 {
-  "amount": "50.00",
-  "category": "shopping",
-  "description": "Updated description"
+  "type": "expense",
+  "amount": "400",
+  "category": "Food & Dining",
+  "date": 1774569600000,
+  "description": "Updated description",
+  "notes": "Some note"
 }
 ```
 
-Response `200`: Updated expense object.
+Response `200`: Updated transaction object.
 
-#### DELETE /expenses/:id
+#### DELETE /transactions/:id
 
-Soft deletes the expense (sets `is_deleted = true`).
+Soft deletes the transaction (sets `is_deleted = true`). Cannot delete group transactions via this endpoint.
 
-Response `200`: `{ "message": "expense deleted successfully" }`
+Response `200`: `{ "message": "transaction deleted successfully" }`
 
 ---
 
-### Recurring Expenses
+### Recurring Transactions
 
-#### POST /recurring-expenses
+#### POST /recurring-transactions
 
-Creates a recurring expense definition. If `id` is provided, uses upsert semantics.
+Creates a recurring transaction definition. If `id` is provided, uses upsert semantics.
 
 ```json
 {
   "id": "optional-client-uuid",
-  "name": "Netflix",
-  "amount": "15.99",
-  "category": "entertainment",
+  "type": "expense",
+  "name": "House Rent",
+  "amount": "15000",
+  "category": "Housing",
   "frequency": "monthly",
   "day_of_month": 1,
-  "start_date": "2026-01-01T00:00:00Z",
+  "start_date": 1767225600000,
   "end_date": null,
-  "notes": "Streaming subscription"
+  "notes": "Monthly rent"
 }
 ```
 
-`frequency` must be one of: `daily`, `weekly`, `monthly`, `yearly`
+`type` must be `expense` or `income`.
+`frequency` must be one of: `daily`, `weekly`, `monthly`, `yearly`.
 - `weekly` requires `days_of_week` (array of 0–6, 0=Sunday)
 - `monthly` requires `day_of_month` (1–31)
 
-Response `201`: RecurringExpense object.
+Response `201`: RecurringTransaction object.
 
-#### GET /recurring-expenses
+#### GET /recurring-transactions
 
 Query params: `active=true` (filter to active only)
 
 Response `200`: `{ "data": [...] }`
 
-#### GET /recurring-expenses/:id
+#### GET /recurring-transactions/:id
 
-Response `200`: Single RecurringExpense object.
+Response `200`: Single RecurringTransaction object.
 
-#### PUT /recurring-expenses/:id
+#### PUT /recurring-transactions/:id
 
-All fields optional. Changing frequency requires relevant fields (`day_of_month` or `days_of_week`).
+All fields optional. Changing frequency requires the relevant fields (`day_of_month` or `days_of_week`).
 
-Response `200`: Updated RecurringExpense object.
+```json
+{
+  "amount": "16000",
+  "is_active": true
+}
+```
 
-#### DELETE /recurring-expenses/:id
+Response `200`: Updated RecurringTransaction object.
 
-Response `200`: `{ "message": "recurring expense deleted successfully" }`
+#### DELETE /recurring-transactions/:id
+
+Response `200`: `{ "message": "recurring transaction deleted successfully" }`
 
 ---
 
@@ -291,7 +309,7 @@ Creates or updates the budget for a given month/year. If `id` is provided, the r
 ```json
 {
   "id": "optional-client-uuid",
-  "limit": "3000.00",
+  "limit": "30000",
   "month": 3,
   "year": 2026
 }
@@ -310,11 +328,11 @@ Response `200`:
     {
       "id": "...",
       "user_id": "...",
-      "limit": "3000.00",
+      "limit": "30000",
       "month": 3,
       "year": 2026,
-      "created_at": "...",
-      "updated_at": "..."
+      "created_at": 1748736000000,
+      "updated_at": 1748736000000
     }
   ]
 }
@@ -322,10 +340,9 @@ Response `200`:
 
 #### PUT /budgets/:id
 
-All fields optional:
 ```json
 {
-  "limit": "3500.00"
+  "limit": "35000"
 }
 ```
 
@@ -348,14 +365,13 @@ Creates a custom category. If `id` is provided, uses upsert semantics.
 ```json
 {
   "id": "optional-client-uuid",
-  "name": "Groceries",
-  "icon": "cart.fill",
-  "color": "#4CAF50"
+  "name": "Investments",
+  "icon": "chart.line.uptrend.xyaxis.circle.fill",
+  "color": "#27AE60"
 }
 ```
 
-`color` must be a 7-character hex string (e.g. `#4CAF50`).
-`icon` uses SF Symbol names.
+`color` must be a 7-character hex string (e.g. `#27AE60`). `icon` uses SF Symbol names.
 
 Response `201`: Category object.
 
@@ -374,8 +390,8 @@ Response `200`:
       "is_hidden": false,
       "is_predefined": true,
       "predefined_key": "foodDining",
-      "created_at": "...",
-      "updated_at": "..."
+      "created_at": 1748736000000,
+      "updated_at": 1748736000000
     }
   ]
 }
@@ -385,7 +401,6 @@ Predefined categories are returned first, then custom categories alphabetically.
 
 #### PUT /categories/:id
 
-All fields optional:
 ```json
 {
   "name": "Food & Groceries",
@@ -450,7 +465,7 @@ Response `200`:
   "is_over_budget": false,
   "category_breakdown": [
     {
-      "category": "foodDining",
+      "category": "Food & Dining",
       "total_amount": "450.50",
       "expense_count": 12
     }
@@ -480,7 +495,7 @@ Response `201`:
   "id": "...",
   "name": "Goa Trip",
   "created_by": "...",
-  "created_at": "..."
+  "created_at": 1748736000000
 }
 ```
 
@@ -494,9 +509,9 @@ Response `200`:
       "id": "...",
       "name": "Goa Trip",
       "created_by": "...",
-      "created_at": "...",
+      "created_at": 1748736000000,
       "members": [
-        { "id": "...", "email": "user@example.com", "username": "johndoe", "createdAt": "..." }
+        { "id": "...", "email": "user@example.com", "username": "johndoe", "createdAt": 1748736000000 }
       ],
       "balances": [
         { "user_id": "...", "amount": "250.00" }
@@ -515,18 +530,11 @@ Response `200`:
     "id": "...",
     "name": "Goa Trip",
     "created_by": "...",
-    "created_at": "...",
+    "created_at": 1748736000000,
     "members": [...],
     "balances": [...],
-    "expenses": [
-      {
-        "id": "...",
-        "description": "Hotel",
-        "total_amount": "5000.00",
-        "paid_by": "...",
-        "created_at": "..."
-      }
-    ]
+    "expenses": [...],
+    "settlements": [...]
   },
   "is_member": true
 }
@@ -548,7 +556,7 @@ Response `200`:
 ```json
 {
   "members": [
-    { "id": "...", "email": "user@example.com", "username": "johndoe", "createdAt": "..." }
+    { "id": "...", "email": "user@example.com", "username": "johndoe", "createdAt": 1748736000000 }
   ]
 }
 ```
@@ -565,24 +573,102 @@ Response `200`:
 ]
 ```
 
+#### GET /groups/:id/settlements
+
+Query params: `limit` (default 20), `offset`
+
+Response `200`:
+```json
+{
+  "data": [
+    {
+      "id": "...",
+      "group_id": "...",
+      "from_user": "...",
+      "to_user": "...",
+      "amount": "500.00",
+      "notes": "Partial hotel payment",
+      "created_at": 1748736000000
+    }
+  ],
+  "pagination": {
+    "limit": 20,
+    "offset": 0,
+    "total": 5
+  }
+}
+```
+
+---
+
+### Group Transactions
+
+#### POST /groups/:id/transactions
+
+Creates a group expense with per-member splits. Splits must sum to `total_amount`.
+
+```json
+{
+  "paid_by_user_id": "...",
+  "total_amount": "1200",
+  "category": "Food & Dining",
+  "date": 1774569600000,
+  "description": "Dinner split 3 ways",
+  "splits": [
+    { "user_id": "...", "amount": "400" },
+    { "user_id": "...", "amount": "400" },
+    { "user_id": "...", "amount": "400" }
+  ]
+}
+```
+
+Response `201`: GroupTransaction object with splits.
+
+#### GET /groups/:id/transactions
+
+Response `200`: `{ "data": [...] }`
+
+#### GET /groups/:id/transactions/:txId
+
+Response `200`: Single GroupTransaction object with splits.
+
+#### PATCH /groups/:id/transactions/:txId
+
+All fields optional:
+```json
+{
+  "description": "Updated description",
+  "notes": "Some note"
+}
+```
+
+Response `200`: Updated GroupTransaction object.
+
+#### DELETE /groups/:id/transactions/:txId
+
+Soft deletes the group transaction and its associated personal transaction records.
+
+Response `200`: `{ "message": "group transaction deleted" }`
+
 ---
 
 ### Settlements
 
 #### POST /settlements
 
-Records a payment from one group member to another.
+Records a payment from one group member to another. Also creates an income transaction for `to_user` in the `Debt & Payments` category.
 
 ```json
 {
   "group_id": "...",
   "from_user": "...",
   "to_user": "...",
-  "amount": "250.00"
+  "amount": "250.00",
+  "notes": "Settling electricity + wifi"
 }
 ```
 
-All three users (requester, `from_user`, `to_user`) must be group members. `from_user` and `to_user` must differ.
+All of the requester, `from_user`, and `to_user` must be group members. `from_user` and `to_user` must differ.
 
 Response `201`:
 ```json
@@ -592,7 +678,8 @@ Response `201`:
   "from_user": "...",
   "to_user": "...",
   "amount": "250.00",
-  "created_at": "..."
+  "notes": "Settling electricity + wifi",
+  "created_at": 1748736000000
 }
 ```
 
@@ -623,11 +710,12 @@ Response `200`:
 | `password_hash` | VARCHAR(255) | bcrypt |
 | `created_at` | TIMESTAMPTZ | |
 
-### recurring_expenses
+### recurring_transactions
 | Column | Type | Notes |
 |--------|------|-------|
 | `id` | UUID | Primary key |
 | `user_id` | UUID | FK → users |
+| `type` | VARCHAR(10) | `expense` or `income` |
 | `name` | VARCHAR(255) | |
 | `amount` | DECIMAL(12,2) | > 0 |
 | `category` | VARCHAR(100) | |
@@ -637,26 +725,28 @@ Response `200`:
 | `start_date` | TIMESTAMPTZ | |
 | `end_date` | TIMESTAMPTZ | Optional |
 | `is_active` | BOOLEAN | Default true |
-| `last_added_date` | TIMESTAMPTZ | Tracks last auto-generated expense |
+| `last_added_date` | TIMESTAMPTZ | Tracks last auto-generated transaction |
 | `notes` | TEXT | Optional |
 | `created_at` | TIMESTAMPTZ | |
 | `updated_at` | TIMESTAMPTZ | |
 
-### expenses
+### transactions
 | Column | Type | Notes |
 |--------|------|-------|
 | `id` | UUID | Primary key |
 | `user_id` | UUID | FK → users |
+| `type` | VARCHAR(10) | `expense` or `income` |
 | `amount` | DECIMAL(12,2) | > 0 |
 | `category` | VARCHAR(100) | |
-| `date` | TIMESTAMPTZ | |
+| `date` | DATE | |
 | `time` | TIMESTAMPTZ | Optional |
 | `description` | VARCHAR(255) | Optional |
 | `notes` | TEXT | Optional |
+| `recurring_transaction_id` | UUID | FK → recurring_transactions, optional |
+| `group_transaction_id` | UUID | FK → group_transactions, optional |
+| `group_id` | UUID | FK → groups, optional |
+| `settlement_id` | UUID | FK → settlements, optional |
 | `is_deleted` | BOOLEAN | Soft delete |
-| `recurring_expense_id` | UUID | FK → recurring_expenses, optional |
-| `group_id` | UUID | Optional, for group expenses |
-| `group_name` | VARCHAR(255) | Optional |
 | `created_at` | TIMESTAMPTZ | |
 | `updated_at` | TIMESTAMPTZ | |
 
@@ -707,15 +797,31 @@ Unique constraints: `(user_id, name)`, `(user_id, predefined_key) WHERE predefin
 
 Primary key: `(group_id, user_id)`
 
-### expense_splits
+### group_transactions
 | Column | Type | Notes |
 |--------|------|-------|
 | `id` | UUID | Primary key |
-| `expense_id` | UUID | FK → expenses |
+| `group_id` | UUID | FK → groups |
+| `paid_by_user_id` | UUID | FK → users |
+| `total_amount` | DECIMAL(12,2) | > 0 |
+| `category` | VARCHAR(100) | |
+| `date` | DATE | |
+| `description` | VARCHAR(255) | Optional |
+| `notes` | TEXT | Optional |
+| `is_deleted` | BOOLEAN | Soft delete |
+| `created_at` | TIMESTAMPTZ | |
+| `updated_at` | TIMESTAMPTZ | |
+
+### group_transaction_splits
+| Column | Type | Notes |
+|--------|------|-------|
+| `id` | UUID | Primary key |
+| `group_transaction_id` | UUID | FK → group_transactions |
 | `user_id` | UUID | FK → users |
 | `amount` | DECIMAL(12,2) | ≥ 0 |
+| `transaction_id` | UUID | FK → transactions, optional |
 
-Unique constraint: `(expense_id, user_id)`
+Unique constraint: `(group_transaction_id, user_id)`
 
 ### settlements
 | Column | Type | Notes |
@@ -725,6 +831,7 @@ Unique constraint: `(expense_id, user_id)`
 | `from_user` | UUID | FK → users |
 | `to_user` | UUID | FK → users |
 | `amount` | DECIMAL(12,2) | > 0 |
+| `notes` | TEXT | Optional |
 | `created_at` | TIMESTAMPTZ | |
 
 Constraint: `from_user != to_user`
@@ -751,23 +858,23 @@ Import `Finance_Manager_Backend.postman_collection.json`. The collection include
 
 ```
 cmd/
-  main.go                  Entry point; wires all routes and middleware
+  main.go                    Entry point; wires all routes and middleware
 internal/
-  auth/                    Signup/login handlers, bcrypt, JWT issuance
-  budget/                  Monthly budget CRUD
-  category/                Predefined + custom categories
-  config/                  Env-based config loading
-  dashboard/               Monthly analytics aggregation
-  db/                      pgx pool setup, golang-migrate runner
-  db/migrations/           SQL migration files
-  expense/                 Unified personal + group expense CRUD
-  group/                   Group management, member ops, balances
-  helpers/                 Shared DB utilities and decimal serialization
-  middleware/              JWT auth, CORS, rate limiter, request logger
-  recurring/               Recurring expense definitions + scheduling
-  settlement/              Settlement recording between group members
-  seed/                    Test data seeding with auto-cleanup on shutdown
-  user/                    User domain model
+  auth/                      Signup/login handlers, bcrypt, JWT issuance
+  budget/                    Monthly budget CRUD
+  category/                  Predefined + custom categories
+  config/                    Env-based config loading
+  dashboard/                 Monthly analytics aggregation
+  db/                        pgx pool setup, golang-migrate runner
+  db/migrations/             SQL migration files
+  group/                     Group management, member ops, balances, group transactions
+  helpers/                   Shared DB utilities and decimal serialization
+  middleware/                JWT auth, CORS, rate limiter, request logger
+  recurring/                 Recurring transaction definitions + scheduling
+  settlement/                Settlement recording between group members
+  seed/                      Test data seeding with auto-cleanup on shutdown
+  transaction/               Personal transaction CRUD (expenses + income)
+  user/                      User domain model
 ```
 
 ## Troubleshooting

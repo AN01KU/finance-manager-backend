@@ -10,20 +10,21 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/yanonymousV2/finance-manager-backend/internal/db"
+	"github.com/yanonymousV2/finance-manager-backend/internal/helpers"
 	"github.com/yanonymousV2/finance-manager-backend/internal/middleware"
 )
 
 type CustomCategory struct {
-	ID            uuid.UUID `json:"id"`
-	UserID        uuid.UUID `json:"user_id"`
-	Name          string    `json:"name"`
-	Icon          string    `json:"icon"`
-	Color         string    `json:"color"`
-	IsHidden      bool      `json:"is_hidden"`
-	IsPredefined  bool      `json:"is_predefined"`
-	PredefinedKey *string   `json:"predefined_key,omitempty"`
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
+	ID            uuid.UUID           `json:"id"`
+	UserID        uuid.UUID           `json:"user_id"`
+	Name          string              `json:"name"`
+	Icon          string              `json:"icon"`
+	Color         string              `json:"color"`
+	IsHidden      bool                `json:"is_hidden"`
+	IsPredefined  bool                `json:"is_predefined"`
+	PredefinedKey *string             `json:"predefined_key,omitempty"`
+	CreatedAt     helpers.EpochMillis `json:"created_at"`
+	UpdatedAt     helpers.EpochMillis `json:"updated_at"`
 }
 
 type CreateCategoryRequest struct {
@@ -116,6 +117,7 @@ func CreateCategory(c *gin.Context, db *db.DB) {
 	}
 
 	var category CustomCategory
+	var rawCreatedAt, rawUpdatedAt time.Time
 	err := db.Pool.QueryRow(c.Request.Context(),
 		`INSERT INTO custom_categories (id, user_id, name, icon, color, is_hidden, is_predefined, predefined_key)
 		 VALUES ($1, $2, $3, $4, $5, false, false, NULL)
@@ -127,11 +129,13 @@ func CreateCategory(c *gin.Context, db *db.DB) {
 		 RETURNING id, user_id, name, icon, color, is_hidden, is_predefined, predefined_key, created_at, updated_at`,
 		categoryID, userID, req.Name, req.Icon, req.Color).Scan(
 		&category.ID, &category.UserID, &category.Name, &category.Icon, &category.Color,
-		&category.IsHidden, &category.IsPredefined, &category.PredefinedKey, &category.CreatedAt, &category.UpdatedAt)
+		&category.IsHidden, &category.IsPredefined, &category.PredefinedKey, &rawCreatedAt, &rawUpdatedAt)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "failed to create category"})
 		return
 	}
+	category.CreatedAt = helpers.FromTime(rawCreatedAt)
+	category.UpdatedAt = helpers.FromTime(rawUpdatedAt)
 
 	c.JSON(201, category)
 }
@@ -159,11 +163,14 @@ func ListCategories(c *gin.Context, db *db.DB) {
 	var categories []CustomCategory
 	for rows.Next() {
 		var cat CustomCategory
+		var rawCreatedAt, rawUpdatedAt time.Time
 		if err := rows.Scan(&cat.ID, &cat.UserID, &cat.Name, &cat.Icon, &cat.Color,
-			&cat.IsHidden, &cat.IsPredefined, &cat.PredefinedKey, &cat.CreatedAt, &cat.UpdatedAt); err != nil {
+			&cat.IsHidden, &cat.IsPredefined, &cat.PredefinedKey, &rawCreatedAt, &rawUpdatedAt); err != nil {
 			c.JSON(500, gin.H{"error": "failed to scan category"})
 			return
 		}
+		cat.CreatedAt = helpers.FromTime(rawCreatedAt)
+		cat.UpdatedAt = helpers.FromTime(rawUpdatedAt)
 		categories = append(categories, cat)
 	}
 
@@ -250,13 +257,16 @@ func UpdateCategory(c *gin.Context, db *db.DB) {
 	args = append(args, categoryID)
 
 	var category CustomCategory
+	var rawCreatedAt, rawUpdatedAt time.Time
 	err = db.Pool.QueryRow(c.Request.Context(), query, args...).Scan(
 		&category.ID, &category.UserID, &category.Name, &category.Icon, &category.Color,
-		&category.IsHidden, &category.IsPredefined, &category.PredefinedKey, &category.CreatedAt, &category.UpdatedAt)
+		&category.IsHidden, &category.IsPredefined, &category.PredefinedKey, &rawCreatedAt, &rawUpdatedAt)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "failed to update category"})
 		return
 	}
+	category.CreatedAt = helpers.FromTime(rawCreatedAt)
+	category.UpdatedAt = helpers.FromTime(rawUpdatedAt)
 
 	c.JSON(200, category)
 }
