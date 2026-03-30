@@ -162,7 +162,7 @@ func ListTransactions(c *gin.Context, database *db.DB) {
 		}
 	}
 
-	query := `SELECT t.id, t.user_id, t.type, t.amount, t.category, t.date, t.time, t.description, t.notes, t.recurring_transaction_id, t.group_transaction_id, t.group_id, COALESCE(g1.name, g2.name), t.settlement_id, t.is_deleted, t.created_at, t.updated_at
+	query := `SELECT t.id, t.user_id, t.type, t.amount, t.category, t.date, t.time, t.description, t.notes, t.recurring_transaction_id, t.group_transaction_id, COALESCE(t.group_id, gt.group_id), COALESCE(g1.name, g2.name), t.settlement_id, t.is_deleted, t.created_at, t.updated_at
 		      FROM transactions t
 		      LEFT JOIN group_transactions gt ON t.group_transaction_id = gt.id
 		      LEFT JOIN groups g1 ON gt.group_id = g1.id
@@ -302,7 +302,7 @@ func GetTransaction(c *gin.Context, database *db.DB) {
 	var rawTime *time.Time
 
 	err = database.Pool.QueryRow(c.Request.Context(),
-		`SELECT t.id, t.user_id, t.type, t.amount, t.category, t.date, t.time, t.description, t.notes, t.recurring_transaction_id, t.group_transaction_id, t.group_id, COALESCE(g1.name, g2.name), t.settlement_id, t.is_deleted, t.created_at, t.updated_at
+		`SELECT t.id, t.user_id, t.type, t.amount, t.category, t.date, t.time, t.description, t.notes, t.recurring_transaction_id, t.group_transaction_id, COALESCE(t.group_id, gt.group_id), COALESCE(g1.name, g2.name), t.settlement_id, t.is_deleted, t.created_at, t.updated_at
 		 FROM transactions t
 		 LEFT JOIN group_transactions gt ON t.group_transaction_id = gt.id
 		 LEFT JOIN groups g1 ON gt.group_id = g1.id
