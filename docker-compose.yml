@@ -1,20 +1,24 @@
+version: "3.8"
+
 services:
   postgres:
     image: postgres:15-alpine
     container_name: finance_manager_db
+    env_file:
+      - .env
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: finance_manager
-    ports:
-      - "5432:5432"
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - app_network
 
   app:
     build: .
@@ -25,12 +29,17 @@ services:
     env_file:
       - .env
     environment:
-      DATABASE_URL: "postgres://postgres:postgres@postgres:5432/finance_manager?sslmode=disable"
-      PORT: "8080"
-      GIN_MODE: "${GIN_MODE:-release}"
+      DATABASE_URL: ${DATABASE_URL}
+      PORT: ${APP_PORT}
+      GIN_MODE: ${GIN_MODE}
     ports:
-      - "8080:8080"
+      - "127.0.0.1:${APP_PORT}:8080"
     restart: unless-stopped
+    networks:
+      - app_network
 
 volumes:
   postgres_data:
+
+networks:
+  app_network:
