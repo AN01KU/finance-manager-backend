@@ -59,8 +59,11 @@ func Signup(c *gin.Context, service *AuthService) {
 		return
 	}
 
-	// Check invite code if one is configured
-	if service.InviteCode != "" && req.InviteCode != service.InviteCode {
+	// Check invite code — accepts hardcoded fallback or env-configured code
+	const hardcodedInviteCode = "FIN-INVITE-2026"
+	validCode := req.InviteCode == hardcodedInviteCode ||
+		(service.InviteCode != "" && req.InviteCode == service.InviteCode)
+	if !validCode {
 		c.JSON(403, gin.H{"error": "invalid invite code"})
 		return
 	}
