@@ -81,8 +81,9 @@ func main() {
 
 	// Auth service
 	authService := &auth.AuthService{
-		DB:        database,
-		JWTSecret: cfg.JWTSecret,
+		DB:         database,
+		JWTSecret:  cfg.JWTSecret,
+		InviteCode: cfg.InviteCode,
 		OnSignup: func(ctx context.Context, userID uuid.UUID) {
 			if err := category.SeedPredefinedCategories(ctx, database, userID); err != nil {
 				log.Printf("Warning: failed to seed categories for user %s: %v", userID, err)

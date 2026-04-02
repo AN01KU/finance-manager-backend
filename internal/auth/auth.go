@@ -16,9 +16,10 @@ import (
 )
 
 type SignupRequest struct {
-	Email    string `json:"email" validate:"required,email"`
-	Username string `json:"username" validate:"required,min=3"`
-	Password string `json:"password" validate:"required,min=6"`
+	Email      string `json:"email" validate:"required,email"`
+	Username   string `json:"username" validate:"required,min=3"`
+	Password   string `json:"password" validate:"required,min=6"`
+	InviteCode string `json:"invite_code"`
 }
 
 type LoginRequest struct {
@@ -38,9 +39,10 @@ type Claims struct {
 }
 
 type AuthService struct {
-	DB        *db.DB
-	JWTSecret string
-	OnSignup  func(ctx context.Context, userID uuid.UUID) // called after user creation
+	DB         *db.DB
+	JWTSecret  string
+	InviteCode string
+	OnSignup   func(ctx context.Context, userID uuid.UUID) // called after user creation
 }
 
 func Signup(c *gin.Context, service *AuthService) {
@@ -54,6 +56,12 @@ func Signup(c *gin.Context, service *AuthService) {
 	validate := validator.New()
 	if err := validate.Struct(req); err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Check invite code if one is configured
+	if service.InviteCode != "" && req.InviteCode != service.InviteCode {
+		c.JSON(403, gin.H{"error": "invalid invite code"})
 		return
 	}
 
