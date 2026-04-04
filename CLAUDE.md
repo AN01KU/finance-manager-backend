@@ -69,8 +69,9 @@ All requests pass through: `RequestLogger → CORS → (JWTAuth on protected rou
 ### Database
 
 - Driver: `pgx/v5` with connection pooling (5–25 connections)
-- All monetary amounts use `shopspring/decimal.Decimal` (never `float64`)
-- Custom `helpers.StringDecimal` serializes Decimal as a JSON string to avoid precision loss
+- All monetary amounts use `shopspring/decimal.Decimal` internally for precision
+- Request structs accept amounts as `float64` (JSON numbers from the client), converted via `decimal.NewFromFloat()`
+- Response structs use `helpers.StringDecimal` which serializes amounts as JSON numbers (unquoted)
 - Parameterized queries (`$1, $2, ...`) everywhere — no string concatenation in SQL
 - Expenses use soft delete (`is_deleted` flag); all queries must filter `is_deleted = FALSE`
 - Balance calculations are derived at query time from `ExpenseSplit` + `Settlement` records (no materialized balance column)
