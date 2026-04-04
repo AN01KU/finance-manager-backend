@@ -13,6 +13,7 @@ import (
 	"github.com/yanonymousV2/finance-manager-backend/internal/db"
 	"github.com/yanonymousV2/finance-manager-backend/internal/helpers"
 	"github.com/yanonymousV2/finance-manager-backend/internal/middleware"
+	"github.com/yanonymousV2/finance-manager-backend/internal/recurring"
 )
 
 type Transaction struct {
@@ -146,6 +147,10 @@ func ListTransactions(c *gin.Context, database *db.DB) {
 	if !ok {
 		c.JSON(401, gin.H{"error": "unauthorized"})
 		return
+	}
+
+	if err := recurring.GenerateDueTransactions(c.Request.Context(), userID, database, time.Now()); err != nil {
+		fmt.Printf("[WARN] GenerateDueTransactions: %v\n", err)
 	}
 
 	limit := 50
