@@ -19,7 +19,7 @@ type Transaction struct {
 	ID                 uuid.UUID              `json:"id"`
 	UserID             uuid.UUID              `json:"user_id"`
 	Type               string                 `json:"type"`
-	Amount             helpers.StringDecimal  `json:"amount"`
+	Amount             float64                `json:"amount"`
 	Category           string                 `json:"category"`
 	Date               helpers.EpochMillis    `json:"date"`
 	Time               *helpers.EpochMillis   `json:"time,omitempty"`
@@ -38,7 +38,7 @@ type Transaction struct {
 type CreateTransactionRequest struct {
 	ID                 *uuid.UUID `json:"id,omitempty"`
 	Type               string     `json:"type" validate:"required,oneof=expense income"`
-	Amount             string     `json:"amount" validate:"required,numeric"`
+	Amount             float64    `json:"amount" validate:"required"`
 	Category           string     `json:"category" validate:"required,max=100"`
 	Date               int64      `json:"date" validate:"required"`
 	TimeMs             *int64     `json:"time,omitempty"`
@@ -49,7 +49,7 @@ type CreateTransactionRequest struct {
 
 type UpdateTransactionRequest struct {
 	Type        *string `json:"type,omitempty" validate:"omitempty,oneof=expense income"`
-	Amount      *string `json:"amount,omitempty" validate:"omitempty,numeric"`
+	Amount      *float64 `json:"amount,omitempty"`
 	Category    *string `json:"category,omitempty" validate:"omitempty,max=100"`
 	Date        *int64  `json:"date,omitempty"`
 	TimeMs      *int64  `json:"time,omitempty"`
@@ -76,8 +76,8 @@ func CreateTransaction(c *gin.Context, database *db.DB) {
 		return
 	}
 
-	amount, err := decimal.NewFromString(req.Amount)
-	if err != nil || amount.LessThanOrEqual(decimal.Zero) {
+	amount := decimal.NewFromFloat(req.Amount)
+	if amount.LessThanOrEqual(decimal.Zero) {
 		c.JSON(400, gin.H{"error": "amount must be a positive number"})
 		return
 	}
@@ -98,7 +98,7 @@ func CreateTransaction(c *gin.Context, database *db.DB) {
 	var rawDate, rawCreatedAt, rawUpdatedAt time.Time
 	var rawTime *time.Time
 
-	err = database.Pool.QueryRow(c.Request.Context(),
+	err := database.Pool.QueryRow(c.Request.Context(),
 		`WITH ins AS (
 		   INSERT INTO transactions (id, user_id, type, amount, category, date, time, description, notes, recurring_transaction_id, updated_at)
 		   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())
@@ -373,8 +373,8 @@ func UpdateTransaction(c *gin.Context, database *db.DB) {
 
 	var parsedAmount *decimal.Decimal
 	if req.Amount != nil {
-		a, err := decimal.NewFromString(*req.Amount)
-		if err != nil || a.LessThanOrEqual(decimal.Zero) {
+		a := decimal.NewFromFloat(*req.Amount)
+		if a.LessThanOrEqual(decimal.Zero) {
 			c.JSON(400, gin.H{"error": "amount must be a positive number"})
 			return
 		}

@@ -18,7 +18,7 @@ type Settlement struct {
 	GroupID   uuid.UUID             `json:"group_id"`
 	FromUser  uuid.UUID             `json:"from_user"`
 	ToUser    uuid.UUID             `json:"to_user"`
-	Amount    helpers.StringDecimal `json:"amount"`
+	Amount    float64               `json:"amount"`
 	Notes     *string               `json:"notes,omitempty"`
 	CreatedAt helpers.EpochMillis   `json:"created_at"`
 }
@@ -27,7 +27,7 @@ type CreateSettlementRequest struct {
 	GroupID  uuid.UUID `json:"group_id" validate:"required"`
 	FromUser uuid.UUID `json:"from_user" validate:"required"`
 	ToUser   uuid.UUID `json:"to_user" validate:"required"`
-	Amount   string    `json:"amount" validate:"required,numeric"`
+	Amount   float64   `json:"amount" validate:"required"`
 	Notes    *string   `json:"notes,omitempty"`
 }
 
@@ -76,11 +76,7 @@ func CreateSettlement(c *gin.Context, db *db.DB) {
 		return
 	}
 
-	amount, err := decimal.NewFromString(req.Amount)
-	if err != nil {
-		c.JSON(400, gin.H{"error": "invalid amount format"})
-		return
-	}
+	amount := decimal.NewFromFloat(req.Amount)
 
 	if amount.LessThanOrEqual(decimal.Zero) {
 		c.JSON(400, gin.H{"error": "amount must be greater than 0"})

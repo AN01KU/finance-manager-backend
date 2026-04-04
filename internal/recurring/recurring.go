@@ -19,7 +19,7 @@ type RecurringTransaction struct {
 	UserID        uuid.UUID              `json:"user_id"`
 	Type          string                 `json:"type"`
 	Name          string                 `json:"name"`
-	Amount        helpers.StringDecimal  `json:"amount"`
+	Amount        float64                `json:"amount"`
 	Category      string                 `json:"category"`
 	Frequency     string                 `json:"frequency"`
 	DayOfMonth    *int                   `json:"day_of_month,omitempty"`
@@ -37,7 +37,7 @@ type CreateRecurringTransactionRequest struct {
 	ID         *uuid.UUID `json:"id,omitempty"`
 	Type       string     `json:"type" validate:"required,oneof=expense income"`
 	Name       string     `json:"name" validate:"required"`
-	Amount     string     `json:"amount" validate:"required,numeric"`
+	Amount     float64    `json:"amount" validate:"required"`
 	Category   string     `json:"category" validate:"required"`
 	Frequency  string     `json:"frequency" validate:"required,oneof=daily weekly monthly yearly"`
 	DayOfMonth *int       `json:"day_of_month,omitempty" validate:"omitempty,min=1,max=31"`
@@ -50,7 +50,7 @@ type CreateRecurringTransactionRequest struct {
 type UpdateRecurringTransactionRequest struct {
 	Type       *string `json:"type,omitempty" validate:"omitempty,oneof=expense income"`
 	Name       *string `json:"name,omitempty" validate:"omitempty"`
-	Amount     *string `json:"amount,omitempty" validate:"omitempty,numeric"`
+	Amount     *float64 `json:"amount,omitempty"`
 	Category   *string `json:"category,omitempty" validate:"omitempty"`
 	Frequency  *string `json:"frequency,omitempty" validate:"omitempty,oneof=daily weekly monthly yearly"`
 	DayOfMonth *int    `json:"day_of_month,omitempty" validate:"omitempty,min=1,max=31"`
@@ -107,11 +107,7 @@ func CreateRecurringTransaction(c *gin.Context, db *db.DB) {
 		endDate = &t
 	}
 
-	amount, err := decimal.NewFromString(req.Amount)
-	if err != nil {
-		c.JSON(400, gin.H{"error": "invalid amount format"})
-		return
-	}
+	amount := decimal.NewFromFloat(req.Amount)
 
 	if amount.LessThanOrEqual(decimal.Zero) {
 		c.JSON(400, gin.H{"error": "amount must be greater than 0"})
@@ -126,7 +122,7 @@ func CreateRecurringTransaction(c *gin.Context, db *db.DB) {
 	var rt RecurringTransaction
 	var rawStartDate, rawCreatedAt, rawUpdatedAt time.Time
 	var rawEndDate, rawLastAddedDate *time.Time
-	err = db.Pool.QueryRow(c.Request.Context(),
+	err := db.Pool.QueryRow(c.Request.Context(),
 		`INSERT INTO recurring_transactions (id, user_id, type, name, amount, category, frequency, day_of_month, days_of_week, start_date, end_date, is_active, notes, updated_at)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, true, $12, NOW())
 		 ON CONFLICT (id) DO UPDATE SET
@@ -292,16 +288,12 @@ func UpdateRecurringTransaction(c *gin.Context, db *db.DB) {
 
 	var parsedAmount *decimal.Decimal
 	if req.Amount != nil {
-		amount, err := decimal.NewFromString(*req.Amount)
-		if err != nil {
-			c.JSON(400, gin.H{"error": "invalid amount format"})
-			return
-		}
-		if amount.LessThanOrEqual(decimal.Zero) {
+		a := decimal.NewFromFloat(*req.Amount)
+		if a.LessThanOrEqual(decimal.Zero) {
 			c.JSON(400, gin.H{"error": "amount must be greater than 0"})
 			return
 		}
-		parsedAmount = &amount
+		parsedAmount = &a
 	}
 
 	var ownerID uuid.UUID

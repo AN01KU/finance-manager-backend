@@ -15,26 +15,26 @@ import (
 )
 
 type MonthlyBudget struct {
-	ID        uuid.UUID             `json:"id"`
-	UserID    uuid.UUID             `json:"user_id"`
-	Year      int                   `json:"year"`
-	Month     int                   `json:"month"`
-	Limit     helpers.StringDecimal `json:"limit"`
-	CreatedAt helpers.EpochMillis   `json:"created_at"`
-	UpdatedAt helpers.EpochMillis   `json:"updated_at"`
+	ID        uuid.UUID           `json:"id"`
+	UserID    uuid.UUID           `json:"user_id"`
+	Year      int                 `json:"year"`
+	Month     int                 `json:"month"`
+	Limit     float64             `json:"limit"`
+	CreatedAt helpers.EpochMillis `json:"created_at"`
+	UpdatedAt helpers.EpochMillis `json:"updated_at"`
 }
 
 type CreateBudgetRequest struct {
 	ID    *uuid.UUID `json:"id,omitempty"`
-	Limit string     `json:"limit" validate:"required,numeric"`
+	Limit float64    `json:"limit" validate:"required"`
 	Month int        `json:"month" validate:"required,min=1,max=12"`
 	Year  int        `json:"year" validate:"required,min=2000,max=2100"`
 }
 
 type UpdateBudgetRequest struct {
-	Limit *string `json:"limit" validate:"omitempty,numeric"`
-	Month *int    `json:"month" validate:"omitempty,min=1,max=12"`
-	Year  *int    `json:"year" validate:"omitempty,min=2000,max=2100"`
+	Limit *float64 `json:"limit,omitempty"`
+	Month *int     `json:"month" validate:"omitempty,min=1,max=12"`
+	Year  *int     `json:"year" validate:"omitempty,min=2000,max=2100"`
 }
 
 // CreateBudget creates or updates the budget for a specific month
@@ -57,11 +57,7 @@ func CreateBudget(c *gin.Context, db *db.DB) {
 		return
 	}
 
-	amount, err := decimal.NewFromString(req.Limit)
-	if err != nil {
-		c.JSON(400, gin.H{"error": "invalid limit format"})
-		return
-	}
+	amount := decimal.NewFromFloat(req.Limit)
 
 	if amount.LessThan(decimal.Zero) {
 		c.JSON(400, gin.H{"error": "limit cannot be negative"})
@@ -75,7 +71,7 @@ func CreateBudget(c *gin.Context, db *db.DB) {
 
 	var budget MonthlyBudget
 	var rawCreatedAt, rawUpdatedAt time.Time
-	err = db.Pool.QueryRow(c.Request.Context(),
+	err := db.Pool.QueryRow(c.Request.Context(),
 		`INSERT INTO monthly_budgets (id, user_id, budget_limit, month, year, updated_at)
 		 VALUES ($1, $2, $3, $4, $5, NOW())
 		 ON CONFLICT (user_id, month, year)
@@ -189,11 +185,7 @@ func UpdateBudget(c *gin.Context, db *db.DB) {
 	// Parse limit if provided
 	var parsedLimit *decimal.Decimal
 	if req.Limit != nil {
-		limit, err := decimal.NewFromString(*req.Limit)
-		if err != nil {
-			c.JSON(400, gin.H{"error": "invalid limit format"})
-			return
-		}
+		limit := decimal.NewFromFloat(*req.Limit)
 		if limit.LessThan(decimal.Zero) {
 			c.JSON(400, gin.H{"error": "limit cannot be negative"})
 			return

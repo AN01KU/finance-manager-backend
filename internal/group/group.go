@@ -34,8 +34,8 @@ type GroupMember struct {
 }
 
 type Balance struct {
-	UserID uuid.UUID             `json:"user_id"`
-	Amount helpers.StringDecimal `json:"amount"`
+	UserID uuid.UUID `json:"user_id"`
+	Amount float64   `json:"amount"`
 }
 
 type GroupWithDetails struct {
@@ -51,7 +51,7 @@ type GroupTransaction struct {
 	ID           uuid.UUID             `json:"id"`
 	GroupID      uuid.UUID             `json:"group_id"`
 	PaidByUserID uuid.UUID             `json:"paid_by_user_id"`
-	TotalAmount  helpers.StringDecimal `json:"total_amount"`
+	TotalAmount  float64               `json:"total_amount"`
 	Category     string                `json:"category"`
 	Date         helpers.EpochMillis   `json:"date"`
 	Description  *string               `json:"description,omitempty"`
@@ -65,19 +65,19 @@ type GroupTransaction struct {
 type SplitDetail struct {
 	ID            uuid.UUID             `json:"id"`
 	UserID        uuid.UUID             `json:"user_id"`
-	Amount        helpers.StringDecimal `json:"amount"`
-	TransactionID *uuid.UUID            `json:"transaction_id,omitempty"`
+	Amount        float64    `json:"amount"`
+	TransactionID *uuid.UUID `json:"transaction_id,omitempty"`
 }
 
 type SplitInput struct {
 	UserID uuid.UUID `json:"user_id" validate:"required"`
-	Amount string    `json:"amount" validate:"required,numeric"`
+	Amount float64   `json:"amount" validate:"required"`
 }
 
 type CreateGroupTransactionRequest struct {
 	ID           *uuid.UUID   `json:"id,omitempty"`
 	PaidByUserID uuid.UUID    `json:"paid_by_user_id" validate:"required"`
-	TotalAmount  string       `json:"total_amount" validate:"required,numeric"`
+	TotalAmount  float64      `json:"total_amount" validate:"required"`
 	Category     string       `json:"category" validate:"required,max=100"`
 	Date         int64        `json:"date" validate:"required"`
 	Description  *string      `json:"description,omitempty" validate:"omitempty,max=255"`
@@ -411,12 +411,12 @@ func GetGroup(c *gin.Context, database *db.DB) {
 	defer settRows.Close()
 
 	type settlementResponse struct {
-		ID        uuid.UUID             `json:"id"`
-		FromUser  uuid.UUID             `json:"from_user"`
-		ToUser    uuid.UUID             `json:"to_user"`
-		Amount    helpers.StringDecimal `json:"amount"`
-		Notes     *string               `json:"notes,omitempty"`
-		CreatedAt helpers.EpochMillis   `json:"created_at"`
+		ID        uuid.UUID           `json:"id"`
+		FromUser  uuid.UUID           `json:"from_user"`
+		ToUser    uuid.UUID           `json:"to_user"`
+		Amount    float64             `json:"amount"`
+		Notes     *string             `json:"notes,omitempty"`
+		CreatedAt helpers.EpochMillis `json:"created_at"`
 	}
 	var setts []settlementEntry
 	settlementsResp := []settlementResponse{}
@@ -430,7 +430,7 @@ func GetGroup(c *gin.Context, database *db.DB) {
 		}
 		sr.FromUser = s.from
 		sr.ToUser = s.to
-		sr.Amount = helpers.StringDecimal{Decimal: s.amount}
+		sr.Amount = s.amount.InexactFloat64()
 		sr.CreatedAt = helpers.FromTime(rawCreatedAt)
 		setts = append(setts, s)
 		settlementsResp = append(settlementsResp, sr)
@@ -711,12 +711,12 @@ func GetGroupSettlements(c *gin.Context, database *db.DB) {
 	defer rows.Close()
 
 	type settlementItem struct {
-		ID        uuid.UUID             `json:"id"`
-		FromUser  uuid.UUID             `json:"from_user"`
-		ToUser    uuid.UUID             `json:"to_user"`
-		Amount    helpers.StringDecimal `json:"amount"`
-		Notes     *string               `json:"notes,omitempty"`
-		CreatedAt helpers.EpochMillis   `json:"created_at"`
+		ID        uuid.UUID           `json:"id"`
+		FromUser  uuid.UUID           `json:"from_user"`
+		ToUser    uuid.UUID           `json:"to_user"`
+		Amount    float64             `json:"amount"`
+		Notes     *string             `json:"notes,omitempty"`
+		CreatedAt helpers.EpochMillis `json:"created_at"`
 	}
 	result := []settlementItem{}
 	for rows.Next() {
@@ -775,8 +775,8 @@ func CreateGroupTransaction(c *gin.Context, database *db.DB) {
 		return
 	}
 
-	totalAmount, err := decimal.NewFromString(req.TotalAmount)
-	if err != nil || totalAmount.LessThanOrEqual(decimal.Zero) {
+	totalAmount := decimal.NewFromFloat(req.TotalAmount)
+	if totalAmount.LessThanOrEqual(decimal.Zero) {
 		c.JSON(400, gin.H{"error": "invalid total_amount"})
 		return
 	}
@@ -785,8 +785,8 @@ func CreateGroupTransaction(c *gin.Context, database *db.DB) {
 	splitAmounts := make([]decimal.Decimal, len(req.Splits))
 	splitSum := decimal.Zero
 	for i, s := range req.Splits {
-		amt, err := decimal.NewFromString(s.Amount)
-		if err != nil || amt.LessThan(decimal.Zero) {
+		amt := decimal.NewFromFloat(s.Amount)
+		if amt.LessThan(decimal.Zero) {
 			c.JSON(400, gin.H{"error": fmt.Sprintf("invalid amount for split %d", i)})
 			return
 		}
@@ -1295,7 +1295,7 @@ func computeBalances(members []GroupMember, payers []payerEntry, splits []splitE
 
 	balances := []Balance{}
 	for uid, amt := range bal {
-		balances = append(balances, Balance{UserID: uid, Amount: helpers.StringDecimal{Decimal: amt}})
+		balances = append(balances, Balance{UserID: uid, Amount: amt.InexactFloat64()})
 	}
 	return balances
 }

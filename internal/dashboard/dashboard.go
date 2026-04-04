@@ -8,30 +8,29 @@ import (
 	"github.com/shopspring/decimal"
 
 	"github.com/yanonymousV2/finance-manager-backend/internal/db"
-	"github.com/yanonymousV2/finance-manager-backend/internal/helpers"
 	"github.com/yanonymousV2/finance-manager-backend/internal/middleware"
 )
 
 type CategorySpending struct {
-	Category     string                `json:"category"`
-	TotalAmount  helpers.StringDecimal `json:"total_amount"`
-	ExpenseCount int                   `json:"expense_count"`
+	Category     string  `json:"category"`
+	TotalAmount  float64 `json:"total_amount"`
+	ExpenseCount int     `json:"expense_count"`
 }
 
 type MonthlyDashboard struct {
-	Month             int                    `json:"month"`
-	Year              int                    `json:"year"`
-	TotalExpenses     helpers.StringDecimal  `json:"total_expenses"`
-	ExpenseCount      int                    `json:"expense_count"`
-	Budget            *helpers.StringDecimal `json:"budget,omitempty"`
-	RemainingBudget   *helpers.StringDecimal `json:"remaining_budget,omitempty"`
-	DaysInMonth       int                    `json:"days_in_month"`
-	DaysElapsed       int                    `json:"days_elapsed"`
-	DaysRemaining     int                    `json:"days_remaining"`
-	DailyAverageSpent helpers.StringDecimal  `json:"daily_average_spent"`
-	ProjectedSpending *helpers.StringDecimal `json:"projected_spending,omitempty"`
-	IsOverBudget      bool                   `json:"is_over_budget"`
-	CategoryBreakdown []CategorySpending     `json:"category_breakdown"`
+	Month             int     `json:"month"`
+	Year              int     `json:"year"`
+	TotalExpenses     float64 `json:"total_expenses"`
+	ExpenseCount      int     `json:"expense_count"`
+	Budget            *float64 `json:"budget,omitempty"`
+	RemainingBudget   *float64 `json:"remaining_budget,omitempty"`
+	DaysInMonth       int     `json:"days_in_month"`
+	DaysElapsed       int     `json:"days_elapsed"`
+	DaysRemaining     int     `json:"days_remaining"`
+	DailyAverageSpent float64 `json:"daily_average_spent"`
+	ProjectedSpending *float64 `json:"projected_spending,omitempty"`
+	IsOverBudget      bool    `json:"is_over_budget"`
+	CategoryBreakdown []CategorySpending `json:"category_breakdown"`
 }
 
 func GetMonthlyDashboard(c *gin.Context, db *db.DB) {
@@ -65,12 +64,13 @@ func GetMonthlyDashboard(c *gin.Context, db *db.DB) {
 	endDate := startDate.AddDate(0, 1, 0)
 
 	var budgetAmount decimal.Decimal
-	var budget *helpers.StringDecimal
+	var budget *float64
 	err := db.Pool.QueryRow(c.Request.Context(),
 		`SELECT COALESCE(budget_limit, 0) FROM monthly_budgets WHERE user_id = $1 AND month = $2 AND year = $3`,
 		userID, month, year).Scan(&budgetAmount)
 	if err == nil {
-		budget = &helpers.StringDecimal{Decimal: budgetAmount}
+		v := budgetAmount.InexactFloat64()
+		budget = &v
 	}
 
 	var totalSpent decimal.Decimal
@@ -127,35 +127,35 @@ func GetMonthlyDashboard(c *gin.Context, db *db.DB) {
 		daysRemaining = 0
 	}
 
-	dailyAverageSpent := helpers.StringDecimal{Decimal: decimal.Zero}
+	dailyAverageSpent := 0.0
 	if daysElapsed > 0 {
-		dailyAverageSpent = helpers.StringDecimal{Decimal: totalSpent.Div(decimal.NewFromInt(int64(daysElapsed)))}
+		dailyAverageSpent = totalSpent.Div(decimal.NewFromInt(int64(daysElapsed))).InexactFloat64()
 	}
 
-	var remainingBudget *helpers.StringDecimal
-	var projectedSpending *helpers.StringDecimal
+	var remainingBudget *float64
+	var projectedSpending *float64
 	var isOverBudget bool
 
 	if budget != nil {
-		remaining := helpers.StringDecimal{Decimal: budgetAmount.Sub(totalSpent)}
+		remaining := budgetAmount.Sub(totalSpent).InexactFloat64()
 		remainingBudget = &remaining
 		isOverBudget = budgetAmount.LessThan(totalSpent)
 
 		if daysElapsed > 0 {
-			projected := helpers.StringDecimal{Decimal: dailyAverageSpent.Decimal.Mul(decimal.NewFromInt(int64(daysInMonth)))}
+			projected := decimal.NewFromFloat(dailyAverageSpent).Mul(decimal.NewFromInt(int64(daysInMonth))).InexactFloat64()
 			projectedSpending = &projected
 		}
 	}
 
 	if projectedSpending == nil {
-		zero := helpers.StringDecimal{Decimal: decimal.Zero}
+		zero := 0.0
 		projectedSpending = &zero
 	}
 
 	dashboard := MonthlyDashboard{
 		Month:             month,
 		Year:              year,
-		TotalExpenses:     helpers.StringDecimal{Decimal: totalSpent},
+		TotalExpenses:     totalSpent.InexactFloat64(),
 		ExpenseCount:      expenseCount,
 		Budget:            budget,
 		RemainingBudget:   remainingBudget,
