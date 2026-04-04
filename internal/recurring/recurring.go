@@ -15,22 +15,23 @@ import (
 )
 
 type RecurringTransaction struct {
-	ID            uuid.UUID              `json:"id"`
-	UserID        uuid.UUID              `json:"user_id"`
-	Type          string                 `json:"type"`
-	Name          string                 `json:"name"`
-	Amount        float64                `json:"amount"`
-	Category      string                 `json:"category"`
-	Frequency     string                 `json:"frequency"`
-	DayOfMonth    *int                   `json:"day_of_month,omitempty"`
-	DaysOfWeek    []int                  `json:"days_of_week,omitempty"`
-	StartDate     helpers.EpochMillis    `json:"start_date"`
-	EndDate       *helpers.EpochMillis   `json:"end_date,omitempty"`
-	IsActive      bool                   `json:"is_active"`
-	LastAddedDate *helpers.EpochMillis   `json:"last_added_date,omitempty"`
-	Notes         *string                `json:"notes,omitempty"`
-	CreatedAt     helpers.EpochMillis    `json:"created_at"`
-	UpdatedAt     helpers.EpochMillis    `json:"updated_at"`
+	ID             uuid.UUID            `json:"id"`
+	UserID         uuid.UUID            `json:"user_id"`
+	Type           string               `json:"type"`
+	Name           string               `json:"name"`
+	Amount         float64              `json:"amount"`
+	Category       string               `json:"category"`
+	Frequency      string               `json:"frequency"`
+	DayOfMonth     *int                 `json:"day_of_month,omitempty"`
+	DaysOfWeek     []int                `json:"days_of_week,omitempty"`
+	StartDate      helpers.EpochMillis  `json:"start_date"`
+	EndDate        *helpers.EpochMillis `json:"end_date,omitempty"`
+	IsActive       bool                 `json:"is_active"`
+	LastAddedDate  *helpers.EpochMillis `json:"last_added_date,omitempty"`
+	Notes          *string              `json:"notes,omitempty"`
+	NextOccurrence *helpers.EpochMillis `json:"next_occurrence"`
+	CreatedAt      helpers.EpochMillis  `json:"created_at"`
+	UpdatedAt      helpers.EpochMillis  `json:"updated_at"`
 }
 
 type CreateRecurringTransactionRequest struct {
@@ -151,6 +152,7 @@ func CreateRecurringTransaction(c *gin.Context, db *db.DB) {
 	rt.LastAddedDate = helpers.FromTimePtr(rawLastAddedDate)
 	rt.CreatedAt = helpers.FromTime(rawCreatedAt)
 	rt.UpdatedAt = helpers.FromTime(rawUpdatedAt)
+	rt.NextOccurrence = computeNextOccurrence(&rt)
 
 	c.JSON(201, rt)
 }
@@ -239,6 +241,7 @@ func GetRecurringTransaction(c *gin.Context, db *db.DB) {
 	rt.LastAddedDate = helpers.FromTimePtr(rawLastAddedDate)
 	rt.CreatedAt = helpers.FromTime(rawCreatedAt)
 	rt.UpdatedAt = helpers.FromTime(rawUpdatedAt)
+	rt.NextOccurrence = computeNextOccurrence(&rt)
 
 	c.JSON(200, rt)
 }
@@ -392,6 +395,7 @@ func UpdateRecurringTransaction(c *gin.Context, db *db.DB) {
 	rt.LastAddedDate = helpers.FromTimePtr(rawLastAddedDate)
 	rt.CreatedAt = helpers.FromTime(rawCreatedAt)
 	rt.UpdatedAt = helpers.FromTime(rawUpdatedAt)
+	rt.NextOccurrence = computeNextOccurrence(&rt)
 
 	c.JSON(200, rt)
 }
@@ -430,4 +434,31 @@ func DeleteRecurringTransaction(c *gin.Context, db *db.DB) {
 	}
 
 	c.JSON(200, gin.H{"message": "recurring transaction deleted successfully"})
+}
+
+// computeNextOccurrence populates the NextOccurrence field on a RecurringTransaction
+// after its date fields have been assigned from a DB scan.
+func computeNextOccurrence(rt *RecurringTransaction) *helpers.EpochMillis {
+	if !rt.IsActive {
+		return nil
+	}
+	var endDate *time.Time
+	if rt.EndDate != nil {
+		t := rt.EndDate.Time
+		endDate = &t
+	}
+	// Use lastAddedDate as the baseline if set, otherwise startDate
+	baseline := rt.StartDate.Time
+	if rt.LastAddedDate != nil {
+		baseline = rt.LastAddedDate.Time
+	}
+	next := nextOccurrence(baseline, rt.Frequency, rt.DayOfMonth, rt.DaysOfWeek, startOfDay(time.Now()))
+	if next == nil {
+		return nil
+	}
+	if endDate != nil && next.After(*endDate) {
+		return nil
+	}
+	e := helpers.FromTime(*next)
+	return &e
 }

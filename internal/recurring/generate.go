@@ -57,7 +57,11 @@ func GenerateDueTransactions(ctx context.Context, userID uuid.UUID, database *db
 	rows.Close()
 
 	for _, r := range recs {
-		next := nextOccurrence(r.startDate, r.frequency, r.dayOfMonth, r.daysOfWeek, today)
+		dow := make([]int, len(r.daysOfWeek))
+		for i, v := range r.daysOfWeek {
+			dow[i] = int(v)
+		}
+		next := nextOccurrence(r.startDate, r.frequency, r.dayOfMonth, dow, today)
 		if next == nil {
 			continue
 		}
@@ -100,7 +104,7 @@ func GenerateDueTransactions(ctx context.Context, userID uuid.UUID, database *db
 
 // nextOccurrence mirrors the iOS RecurringDateHelper.nextOccurrence logic.
 // It returns the next date strictly after today that this recurring rule fires.
-func nextOccurrence(startDate time.Time, frequency string, dayOfMonth *int, daysOfWeek []int32, today time.Time) *time.Time {
+func nextOccurrence(startDate time.Time, frequency string, dayOfMonth *int, daysOfWeek []int, today time.Time) *time.Time {
 	next := startOfDay(startDate)
 
 	switch frequency {
@@ -118,7 +122,7 @@ func nextOccurrence(startDate time.Time, frequency string, dayOfMonth *int, days
 			for !next.After(today) {
 				// iOS: adjustedWeekday = weekday - 1, where Sunday=1 → 0, Monday=2 → 1
 				weekday := int(next.Weekday()) // Go: Sunday=0, Monday=1
-				if containsInt32(daysOfWeek, int32(weekday)) && next.After(today) {
+				if containsInt(daysOfWeek, weekday) && next.After(today) {
 					break
 				}
 				next = next.AddDate(0, 0, 1)
@@ -164,7 +168,7 @@ func startOfDay(t time.Time) time.Time {
 	return time.Date(y, m, d, 0, 0, 0, 0, time.UTC)
 }
 
-func containsInt32(slice []int32, val int32) bool {
+func containsInt(slice []int, val int) bool {
 	for _, v := range slice {
 		if v == val {
 			return true
