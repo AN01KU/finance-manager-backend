@@ -1,0 +1,46 @@
+{{define "content"}}
+<h1>
+    <a href="/admin/tables" style="color:var(--text2);">Tables</a> / <span class="mono">{{.TableName}}</span>
+    <span class="badge badge-info" style="margin-left:8px;">{{.TotalRows}} rows</span>
+</h1>
+
+{{if .Error}}
+<div class="alert alert-error">{{.Error}}</div>
+{{end}}
+
+<div class="card" style="overflow-x:auto;">
+    <table>
+        <thead>
+            <tr>
+                {{range .Columns}}<th>{{.}}</th>{{end}}
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {{range .Rows}}
+            <tr>
+                {{range .}}<td title="{{.}}">{{.}}</td>{{end}}
+                <td>
+                    <form method="POST" action="/admin/rows/delete" style="display:inline;" onsubmit="return confirm('Delete this row?');">
+                        <input type="hidden" name="table" value="{{$.TableName}}">
+                        <input type="hidden" name="pk_column" value="{{$.PKColumn}}">
+                        <input type="hidden" name="pk_value" value="{{index . 0}}">
+                        <button type="submit" class="btn btn-danger btn-sm">Delete</button>
+                    </form>
+                </td>
+            </tr>
+            {{end}}
+        </tbody>
+    </table>
+</div>
+
+<div class="pagination">
+    {{if gt .Page 1}}
+    <a href="/admin/tables/{{.TableName}}?page={{.PrevPage}}" class="btn btn-sm">← Prev</a>
+    {{end}}
+    {{if .HasNext}}
+    <a href="/admin/tables/{{.TableName}}?page={{.NextPage}}" class="btn btn-sm">Next →</a>
+    {{end}}
+    <span class="info">Page {{.Page}} · Showing {{len .Rows}} of {{.TotalRows}} rows</span>
+</div>
+{{end}}

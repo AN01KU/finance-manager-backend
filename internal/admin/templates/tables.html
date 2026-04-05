@@ -1,0 +1,17 @@
+{{define "content"}}
+<h1>Tables</h1>
+<div class="card">
+    <table>
+        <thead><tr><th>Table Name</th><th>Row Count</th><th>Actions</th></tr></thead>
+        <tbody>
+            {{range .Tables}}
+            <tr>
+                <td class="mono">{{.Name}}</td>
+                <td>{{.RowCount}}</td>
+                <td><a href="/admin/tables/{{.Name}}" class="btn btn-sm">Browse</a></td>
+            </tr>
+            {{end}}
+        </tbody>
+    </table>
+</div>
+{{end}}

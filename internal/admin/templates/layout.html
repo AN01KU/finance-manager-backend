@@ -1,0 +1,117 @@
+{{define "layout"}}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{.Title}} — Admin</title>
+    <style>
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+        :root {
+            --bg: #0f1117; --surface: #1a1d27; --surface2: #242835;
+            --border: #2e3241; --text: #e1e4ed; --text2: #8b8fa3;
+            --accent: #6c5ce7; --accent2: #a29bfe; --danger: #e74c3c;
+            --success: #2ecc71; --warn: #f39c12;
+        }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--text); line-height: 1.6; }
+        a { color: var(--accent2); text-decoration: none; }
+        a:hover { text-decoration: underline; }
+
+        .app { display: flex; min-height: 100vh; }
+        .sidebar { width: 240px; background: var(--surface); border-right: 1px solid var(--border); padding: 20px 0; flex-shrink: 0; display: flex; flex-direction: column; }
+        .sidebar-brand { padding: 0 20px 20px; border-bottom: 1px solid var(--border); margin-bottom: 10px; }
+        .sidebar-brand h2 { font-size: 16px; color: var(--accent2); letter-spacing: 1px; text-transform: uppercase; }
+        .sidebar-brand small { color: var(--text2); font-size: 11px; }
+        .sidebar nav { flex: 1; }
+        .sidebar nav a { display: flex; align-items: center; gap: 10px; padding: 10px 20px; color: var(--text2); font-size: 14px; transition: all 0.15s; }
+        .sidebar nav a:hover, .sidebar nav a.active { background: var(--surface2); color: var(--text); text-decoration: none; }
+        .sidebar nav a.active { border-left: 3px solid var(--accent); }
+        .sidebar-footer { padding: 15px 20px; border-top: 1px solid var(--border); }
+        .sidebar-footer a { color: var(--danger); font-size: 13px; }
+
+        .main { flex: 1; padding: 30px; overflow-x: auto; }
+        .main h1 { font-size: 22px; margin-bottom: 20px; font-weight: 600; }
+
+        .card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 20px; margin-bottom: 20px; }
+        .card h3 { font-size: 14px; color: var(--text2); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 12px; }
+
+        table { width: 100%; border-collapse: collapse; font-size: 13px; }
+        th { text-align: left; padding: 10px 12px; background: var(--surface2); color: var(--text2); font-weight: 600; text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px; border-bottom: 1px solid var(--border); }
+        td { padding: 10px 12px; border-bottom: 1px solid var(--border); max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        tr:hover td { background: var(--surface2); }
+
+        .btn { display: inline-block; padding: 7px 16px; border-radius: 6px; font-size: 13px; font-weight: 500; cursor: pointer; border: 1px solid var(--border); background: var(--surface2); color: var(--text); transition: all 0.15s; }
+        .btn:hover { background: var(--border); text-decoration: none; }
+        .btn-primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+        .btn-primary:hover { background: var(--accent2); }
+        .btn-danger { background: var(--danger); border-color: var(--danger); color: #fff; }
+        .btn-sm { padding: 4px 10px; font-size: 12px; }
+
+        .form-group { margin-bottom: 15px; }
+        .form-group label { display: block; font-size: 13px; color: var(--text2); margin-bottom: 5px; }
+        .form-group input, .form-group textarea, .form-group select { width: 100%; padding: 9px 12px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-size: 14px; font-family: inherit; }
+        .form-group input:focus, .form-group textarea:focus { outline: none; border-color: var(--accent); }
+        textarea { resize: vertical; min-height: 120px; font-family: 'SF Mono', 'Fira Code', monospace; font-size: 13px; }
+
+        .alert { padding: 12px 16px; border-radius: 6px; margin-bottom: 16px; font-size: 13px; }
+        .alert-error { background: rgba(231,76,60,0.15); border: 1px solid var(--danger); color: #e74c3c; }
+        .alert-success { background: rgba(46,204,113,0.15); border: 1px solid var(--success); color: #2ecc71; }
+
+        .pagination { display: flex; gap: 8px; margin-top: 16px; align-items: center; }
+        .pagination .info { color: var(--text2); font-size: 13px; margin-left: auto; }
+
+        .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+        .badge-info { background: rgba(108,92,231,0.2); color: var(--accent2); }
+
+        .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; margin-bottom: 24px; }
+        .stat-card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
+        .stat-card .value { font-size: 28px; font-weight: 700; color: var(--accent2); }
+        .stat-card .label { font-size: 12px; color: var(--text2); text-transform: uppercase; letter-spacing: 0.5px; margin-top: 4px; }
+
+        .log-entry { padding: 6px 12px; font-family: 'SF Mono', 'Fira Code', monospace; font-size: 12px; border-bottom: 1px solid var(--border); }
+        .log-entry:hover { background: var(--surface2); }
+        .log-time { color: var(--text2); margin-right: 8px; }
+        .log-method { font-weight: 600; margin-right: 6px; }
+        .log-method.GET { color: var(--success); }
+        .log-method.POST { color: var(--warn); }
+        .log-method.PUT, .log-method.PATCH { color: var(--accent2); }
+        .log-method.DELETE { color: var(--danger); }
+        .log-status { margin-left: 8px; }
+        .log-status.s2xx { color: var(--success); }
+        .log-status.s4xx { color: var(--warn); }
+        .log-status.s5xx { color: var(--danger); }
+        .log-path { color: var(--text); }
+        .log-duration { color: var(--text2); margin-left: 8px; }
+        .log-controls { display: flex; gap: 10px; align-items: center; margin-bottom: 12px; }
+        .log-controls select { padding: 5px 10px; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; color: var(--text); font-size: 12px; }
+
+        .mono { font-family: 'SF Mono', 'Fira Code', monospace; }
+        .text-muted { color: var(--text2); }
+        .mt-2 { margin-top: 8px; }
+        .mb-2 { margin-bottom: 8px; }
+    </style>
+</head>
+<body>
+    <div class="app">
+        <div class="sidebar">
+            <div class="sidebar-brand">
+                <h2>Finance Admin</h2>
+                <small>Database Manager</small>
+            </div>
+            <nav>
+                <a href="/admin/" {{if eq .Active "dashboard"}}class="active"{{end}}>📊 Dashboard</a>
+                <a href="/admin/tables" {{if eq .Active "tables"}}class="active"{{end}}>🗄️ Tables</a>
+                <a href="/admin/sql" {{if eq .Active "sql"}}class="active"{{end}}>⚡ SQL Runner</a>
+                <a href="/admin/logs" {{if eq .Active "logs"}}class="active"{{end}}>📋 Logs</a>
+            </nav>
+            <div class="sidebar-footer">
+                <a href="/admin/logout">← Logout</a>
+            </div>
+        </div>
+        <div class="main">
+            {{template "content" .}}
+        </div>
+    </div>
+</body>
+</html>
+{{end}}

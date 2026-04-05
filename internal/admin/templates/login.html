@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Login</title>
+    <style>
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0f1117; color: #e1e4ed; min-height: 100vh;
+            display: flex; align-items: center; justify-content: center;
+        }
+        .login-card {
+            background: #1a1d27; border: 1px solid #2e3241; border-radius: 12px;
+            padding: 40px; width: 100%; max-width: 380px;
+        }
+        .login-card h1 { font-size: 20px; margin-bottom: 6px; text-align: center; }
+        .login-card p { color: #8b8fa3; font-size: 13px; text-align: center; margin-bottom: 28px; }
+        .form-group { margin-bottom: 16px; }
+        .form-group label { display: block; font-size: 13px; color: #8b8fa3; margin-bottom: 6px; }
+        .form-group input {
+            width: 100%; padding: 10px 14px; background: #0f1117; border: 1px solid #2e3241;
+            border-radius: 8px; color: #e1e4ed; font-size: 14px;
+        }
+        .form-group input:focus { outline: none; border-color: #6c5ce7; }
+        .btn {
+            width: 100%; padding: 11px; background: #6c5ce7; border: none; border-radius: 8px;
+            color: #fff; font-size: 14px; font-weight: 600; cursor: pointer; margin-top: 8px;
+        }
+        .btn:hover { background: #a29bfe; }
+        .error { background: rgba(231,76,60,0.15); border: 1px solid #e74c3c; color: #e74c3c; padding: 10px 14px; border-radius: 6px; font-size: 13px; margin-bottom: 16px; }
+        .brand { color: #a29bfe; font-size: 11px; text-transform: uppercase; letter-spacing: 2px; text-align: center; margin-bottom: 16px; }
+    </style>
+</head>
+<body>
+    <div class="login-card">
+        <div class="brand">Finance Manager</div>
+        <h1>Admin Login</h1>
+        <p>Enter your credentials to continue</p>
+        {{if .Error}}
+        <div class="error">{{.Error}}</div>
+        {{end}}
+        <form method="POST" action="/admin/login">
+            <div class="form-group">
+                <label>Username</label>
+                <input type="text" name="username" autocomplete="username" required autofocus>
+            </div>
+            <div class="form-group">
+                <label>Password</label>
+                <input type="password" name="password" autocomplete="current-password" required>
+            </div>
+            <button type="submit" class="btn">Sign In</button>
+        </form>
+    </div>
+</body>
+</html>

@@ -6,10 +6,12 @@ import (
 )
 
 type Config struct {
-	DBURL      string
-	JWTSecret  string
-	Port       string
-	InviteCode string
+	DBURL         string
+	JWTSecret     string
+	Port          string
+	InviteCode    string
+	AdminUsername  string
+	AdminPassword string
 }
 
 func Load() *Config {
@@ -17,7 +19,9 @@ func Load() *Config {
 		DBURL:      getEnv("DATABASE_URL", "postgres://user:password@localhost:5432/finance_manager?sslmode=disable"),
 		JWTSecret:  getEnvRequired("JWT_SECRET"),
 		Port:       getEnv("PORT", "8080"),
-		InviteCode: getEnv("INVITE_CODE", ""),
+		InviteCode:    getEnv("INVITE_CODE", ""),
+		AdminUsername:  getEnv("ADMIN_USERNAME", "admin"),
+		AdminPassword:  getEnv("ADMIN_PASSWORD", ""),
 	}
 
 	// Validate JWT secret strength

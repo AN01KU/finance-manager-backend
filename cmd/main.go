@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/joho/godotenv"
 
+	"github.com/yanonymousV2/finance-manager-backend/internal/admin"
 	"github.com/yanonymousV2/finance-manager-backend/internal/auth"
 	"github.com/yanonymousV2/finance-manager-backend/internal/budget"
 	"github.com/yanonymousV2/finance-manager-backend/internal/category"
@@ -69,6 +70,12 @@ func main() {
 	r := gin.Default()
 	r.Use(middleware.RequestLogger())
 	r.Use(middleware.CORS())
+
+	// Admin dashboard with request logging
+	logStore := admin.NewLogStore()
+	r.Use(admin.LoggerMiddleware(logStore))
+	adminPanel := admin.New(database.Pool, cfg.AdminUsername, cfg.AdminPassword, logStore)
+	adminPanel.RegisterRoutes(r)
 
 	// Health check
 	r.GET("/health", func(c *gin.Context) {

@@ -1,0 +1,36 @@
+{{define "content"}}
+<h1>Dashboard</h1>
+<div class="stats-grid">
+    <div class="stat-card">
+        <div class="value">{{.Stats.Tables}}</div>
+        <div class="label">Tables</div>
+    </div>
+    <div class="stat-card">
+        <div class="value">{{.Stats.TotalRows}}</div>
+        <div class="label">Total Rows</div>
+    </div>
+    <div class="stat-card">
+        <div class="value">{{.Stats.Users}}</div>
+        <div class="label">Users</div>
+    </div>
+    <div class="stat-card">
+        <div class="value">{{.Stats.DBSize}}</div>
+        <div class="label">DB Size</div>
+    </div>
+</div>
+<div class="card">
+    <h3>Tables Overview</h3>
+    <table>
+        <thead><tr><th>Table</th><th>Rows</th><th>Actions</th></tr></thead>
+        <tbody>
+            {{range .Tables}}
+            <tr>
+                <td class="mono">{{.Name}}</td>
+                <td>{{.RowCount}}</td>
+                <td><a href="/admin/tables/{{.Name}}" class="btn btn-sm">Browse</a></td>
+            </tr>
+            {{end}}
+        </tbody>
+    </table>
+</div>
+{{end}}

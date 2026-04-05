@@ -1,0 +1,37 @@
+{{define "content"}}
+<h1>SQL Runner</h1>
+
+<div class="card">
+    <form method="POST" action="/admin/sql">
+        <div class="form-group">
+            <label>Query</label>
+            <textarea name="query" placeholder="SELECT * FROM users LIMIT 10;">{{.Query}}</textarea>
+        </div>
+        <button type="submit" class="btn btn-primary">Run Query</button>
+    </form>
+</div>
+
+{{if .Error}}
+<div class="alert alert-error">{{.Error}}</div>
+{{end}}
+
+{{if .Success}}
+<div class="alert alert-success">{{.Success}}</div>
+{{end}}
+
+{{if .Columns}}
+<div class="card" style="overflow-x:auto;">
+    <h3>Results <span class="badge badge-info">{{len .Rows}} rows</span></h3>
+    <table>
+        <thead>
+            <tr>{{range .Columns}}<th>{{.}}</th>{{end}}</tr>
+        </thead>
+        <tbody>
+            {{range .Rows}}
+            <tr>{{range .}}<td title="{{.}}">{{.}}</td>{{end}}</tr>
+            {{end}}
+        </tbody>
+    </table>
+</div>
+{{end}}
+{{end}}

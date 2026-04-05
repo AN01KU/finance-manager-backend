@@ -1,0 +1,39 @@
+{{define "content"}}
+<h1>Request Logs</h1>
+
+<div class="card">
+    <div class="log-controls">
+        <form method="GET" action="/admin/logs" style="display:flex;gap:10px;align-items:center;">
+            <select name="method" onchange="this.form.submit()">
+                <option value="">All Methods</option>
+                <option value="GET" {{if eq .Filter "GET"}}selected{{end}}>GET</option>
+                <option value="POST" {{if eq .Filter "POST"}}selected{{end}}>POST</option>
+                <option value="PUT" {{if eq .Filter "PUT"}}selected{{end}}>PUT</option>
+                <option value="PATCH" {{if eq .Filter "PATCH"}}selected{{end}}>PATCH</option>
+                <option value="DELETE" {{if eq .Filter "DELETE"}}selected{{end}}>DELETE</option>
+            </select>
+            <select name="status" onchange="this.form.submit()">
+                <option value="">All Status</option>
+                <option value="2xx" {{if eq .StatusFilter "2xx"}}selected{{end}}>2xx Success</option>
+                <option value="4xx" {{if eq .StatusFilter "4xx"}}selected{{end}}>4xx Client Error</option>
+                <option value="5xx" {{if eq .StatusFilter "5xx"}}selected{{end}}>5xx Server Error</option>
+            </select>
+            <span class="text-muted" style="font-size:12px;">{{len .Logs}} entries (last 200)</span>
+            <a href="/admin/logs/clear" class="btn btn-danger btn-sm" style="margin-left:auto;" onclick="return confirm('Clear all logs?')">Clear Logs</a>
+        </form>
+    </div>
+    {{if .Logs}}
+    {{range .Logs}}
+    <div class="log-entry">
+        <span class="log-time">{{.Time}}</span>
+        <span class="log-method {{.Method}}">{{.Method}}</span>
+        <span class="log-path">{{.Path}}</span>
+        <span class="log-status s{{.StatusClass}}">{{.Status}}</span>
+        <span class="log-duration">{{.Duration}}</span>
+    </div>
+    {{end}}
+    {{else}}
+    <p class="text-muted" style="padding:20px;text-align:center;">No log entries yet.</p>
+    {{end}}
+</div>
+{{end}}
