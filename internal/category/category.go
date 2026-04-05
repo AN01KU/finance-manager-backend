@@ -1,7 +1,6 @@
 package category
 
 import (
-	"context"
 	"fmt"
 	"time"
 
@@ -66,32 +65,21 @@ var predefinedCategories = []predefinedCategory{
 	{"other", "Other", "ellipsis.circle.fill", "#95A5A6"},
 }
 
-// SeedPredefinedCategories inserts the predefined categories for a user.
-func SeedPredefinedCategories(ctx context.Context, database *db.DB, userID uuid.UUID) error {
-	query := `INSERT INTO custom_categories (user_id, name, icon, color, is_hidden, is_predefined, predefined_key) VALUES `
-	args := []interface{}{}
-	argCount := 1
-
-	for i, cat := range predefinedCategories {
-		if i > 0 {
-			query += ", "
-		}
-		query += fmt.Sprintf("($%d, $%d, $%d, $%d, $%d, $%d, $%d)",
-			argCount, argCount+1, argCount+2, argCount+3, argCount+4, argCount+5, argCount+6)
-		args = append(args, userID, cat.Name, cat.Icon, cat.Color, false, true, cat.Key)
-		argCount += 7
+// predefinedByKey builds a lookup map for quick access.
+var predefinedByKey = func() map[string]predefinedCategory {
+	m := make(map[string]predefinedCategory, len(predefinedCategories))
+	for _, c := range predefinedCategories {
+		m[c.Key] = c
 	}
+	return m
+}()
 
-	query += ` ON CONFLICT (user_id, predefined_key) WHERE predefined_key IS NOT NULL DO NOTHING`
-
-	_, err := database.Pool.Exec(ctx, query, args...)
-	if err != nil {
-		return fmt.Errorf("failed to seed predefined categories: %w", err)
-	}
-	return nil
+// GetPredefinedCategories returns the static predefined list (used by API endpoints like /predefined-categories).
+func GetPredefinedCategories() []predefinedCategory {
+	return predefinedCategories
 }
 
-// CreateCategory creates a new custom category
+// CreateCategory creates a new custom category (user-created, never predefined).
 func CreateCategory(c *gin.Context, db *db.DB) {
 	userID, ok := middleware.GetUserID(c)
 	if !ok {
@@ -140,7 +128,8 @@ func CreateCategory(c *gin.Context, db *db.DB) {
 	c.JSON(201, category)
 }
 
-// ListCategories retrieves all categories for a user
+// ListCategories returns a merged list: predefined defaults (with user overrides applied) + user's custom categories.
+// DB rows only exist for overrides and custom categories — untouched predefined categories are generated in-memory.
 func ListCategories(c *gin.Context, db *db.DB) {
 	userID, ok := middleware.GetUserID(c)
 	if !ok {
@@ -148,11 +137,11 @@ func ListCategories(c *gin.Context, db *db.DB) {
 		return
 	}
 
+	// Fetch only the user's rows (overrides + custom).
 	rows, err := db.Pool.Query(c.Request.Context(),
 		`SELECT id, user_id, name, icon, color, is_hidden, is_predefined, predefined_key, created_at, updated_at
 		 FROM custom_categories
-		 WHERE user_id = $1
-		 ORDER BY is_predefined DESC, name ASC`,
+		 WHERE user_id = $1`,
 		userID)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "failed to retrieve categories"})
@@ -160,7 +149,9 @@ func ListCategories(c *gin.Context, db *db.DB) {
 	}
 	defer rows.Close()
 
-	var categories []CustomCategory
+	// Build a map of predefined_key → override row.
+	overrides := make(map[string]CustomCategory)
+	var customCats []CustomCategory
 	for rows.Next() {
 		var cat CustomCategory
 		var rawCreatedAt, rawUpdatedAt time.Time
@@ -171,17 +162,47 @@ func ListCategories(c *gin.Context, db *db.DB) {
 		}
 		cat.CreatedAt = helpers.FromTime(rawCreatedAt)
 		cat.UpdatedAt = helpers.FromTime(rawUpdatedAt)
-		categories = append(categories, cat)
+
+		if cat.IsPredefined && cat.PredefinedKey != nil {
+			overrides[*cat.PredefinedKey] = cat
+		} else {
+			customCats = append(customCats, cat)
+		}
 	}
 
-	if categories == nil {
-		categories = []CustomCategory{}
+	// Build the merged list: predefined first (with overrides applied), then custom.
+	now := helpers.FromTime(time.Now())
+	categories := make([]CustomCategory, 0, len(predefinedCategories)+len(customCats))
+
+	for _, p := range predefinedCategories {
+		if override, ok := overrides[p.Key]; ok {
+			// User has an override row for this predefined category.
+			categories = append(categories, override)
+		} else {
+			// No override — return the static default (no DB row exists).
+			key := p.Key
+			categories = append(categories, CustomCategory{
+				ID:            uuid.NewSHA1(uuid.NameSpaceDNS, []byte(userID.String()+p.Key)),
+				UserID:        userID,
+				Name:          p.Name,
+				Icon:          p.Icon,
+				Color:         p.Color,
+				IsHidden:      false,
+				IsPredefined:  true,
+				PredefinedKey: &key,
+				CreatedAt:     now,
+				UpdatedAt:     now,
+			})
+		}
 	}
+
+	categories = append(categories, customCats...)
 
 	c.JSON(200, gin.H{"data": categories})
 }
 
-// UpdateCategory updates an existing category
+// UpdateCategory updates an existing category.
+// If the category ID matches a virtual predefined (no DB row yet), it creates an override row.
 func UpdateCategory(c *gin.Context, db *db.DB) {
 	userID, ok := middleware.GetUserID(c)
 	if !ok {
@@ -208,20 +229,75 @@ func UpdateCategory(c *gin.Context, db *db.DB) {
 		return
 	}
 
-	// Check if category belongs to user
+	if req.Name == nil && req.Icon == nil && req.Color == nil && req.IsHidden == nil {
+		c.JSON(400, gin.H{"error": "no fields to update"})
+		return
+	}
+
+	// Check if this is an existing DB row.
 	var ownerID uuid.UUID
 	err = db.Pool.QueryRow(c.Request.Context(),
 		`SELECT user_id FROM custom_categories WHERE id = $1`, categoryID).Scan(&ownerID)
+
 	if err != nil {
-		c.JSON(404, gin.H{"error": "category not found"})
+		// No DB row — check if this is a virtual predefined category ID.
+		var matchedKey string
+		for _, p := range predefinedCategories {
+			virtualID := uuid.NewSHA1(uuid.NameSpaceDNS, []byte(userID.String()+p.Key))
+			if virtualID == categoryID {
+				matchedKey = p.Key
+				break
+			}
+		}
+		if matchedKey == "" {
+			c.JSON(404, gin.H{"error": "category not found"})
+			return
+		}
+
+		// Create an override row from the predefined default + the requested changes.
+		p := predefinedByKey[matchedKey]
+		name := p.Name
+		icon := p.Icon
+		color := p.Color
+		isHidden := false
+		if req.Name != nil {
+			name = *req.Name
+		}
+		if req.Icon != nil {
+			icon = *req.Icon
+		}
+		if req.Color != nil {
+			color = *req.Color
+		}
+		if req.IsHidden != nil {
+			isHidden = *req.IsHidden
+		}
+
+		var category CustomCategory
+		var rawCreatedAt, rawUpdatedAt time.Time
+		err = db.Pool.QueryRow(c.Request.Context(),
+			`INSERT INTO custom_categories (id, user_id, name, icon, color, is_hidden, is_predefined, predefined_key)
+			 VALUES ($1, $2, $3, $4, $5, $6, true, $7)
+			 RETURNING id, user_id, name, icon, color, is_hidden, is_predefined, predefined_key, created_at, updated_at`,
+			categoryID, userID, name, icon, color, isHidden, matchedKey).Scan(
+			&category.ID, &category.UserID, &category.Name, &category.Icon, &category.Color,
+			&category.IsHidden, &category.IsPredefined, &category.PredefinedKey, &rawCreatedAt, &rawUpdatedAt)
+		if err != nil {
+			c.JSON(500, gin.H{"error": "failed to create category override"})
+			return
+		}
+		category.CreatedAt = helpers.FromTime(rawCreatedAt)
+		category.UpdatedAt = helpers.FromTime(rawUpdatedAt)
+		c.JSON(200, category)
 		return
 	}
+
 	if ownerID != userID {
 		c.JSON(403, gin.H{"error": "not authorized to update this category"})
 		return
 	}
 
-	// Build update query dynamically
+	// Existing DB row — build dynamic update.
 	query := `UPDATE custom_categories SET `
 	args := []interface{}{}
 	argCount := 1
@@ -247,11 +323,6 @@ func UpdateCategory(c *gin.Context, db *db.DB) {
 		argCount++
 	}
 
-	if argCount == 1 {
-		c.JSON(400, gin.H{"error": "no fields to update"})
-		return
-	}
-
 	query += fmt.Sprintf("updated_at = NOW() ")
 	query += fmt.Sprintf("WHERE id = $%d RETURNING id, user_id, name, icon, color, is_hidden, is_predefined, predefined_key, created_at, updated_at", argCount)
 	args = append(args, categoryID)
@@ -271,7 +342,10 @@ func UpdateCategory(c *gin.Context, db *db.DB) {
 	c.JSON(200, category)
 }
 
-// DeleteCategory deletes a category
+// DeleteCategory deletes a category.
+// For predefined overrides: deletes the override row (user gets back the default).
+// For custom categories: permanent delete.
+// The "Other" predefined can never be deleted.
 func DeleteCategory(c *gin.Context, db *db.DB) {
 	userID, ok := middleware.GetUserID(c)
 	if !ok {
@@ -286,7 +360,7 @@ func DeleteCategory(c *gin.Context, db *db.DB) {
 		return
 	}
 
-	// Check if category belongs to user and get predefined_key
+	// Check if category belongs to user and get predefined_key.
 	var ownerID uuid.UUID
 	var predefinedKey *string
 	err = db.Pool.QueryRow(c.Request.Context(),
@@ -312,5 +386,9 @@ func DeleteCategory(c *gin.Context, db *db.DB) {
 		return
 	}
 
-	c.JSON(200, gin.H{"message": "category deleted successfully"})
+	if predefinedKey != nil {
+		c.JSON(200, gin.H{"message": "category reset to default"})
+	} else {
+		c.JSON(200, gin.H{"message": "category deleted successfully"})
+	}
 }

@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
 	"github.com/joho/godotenv"
 
 	"github.com/yanonymousV2/finance-manager-backend/internal/admin"
@@ -91,11 +90,6 @@ func main() {
 		DB:         database,
 		JWTSecret:  cfg.JWTSecret,
 		InviteCode: cfg.InviteCode,
-		OnSignup: func(ctx context.Context, userID uuid.UUID) {
-			if err := category.SeedPredefinedCategories(ctx, database, userID); err != nil {
-				log.Printf("Warning: failed to seed categories for user %s: %v", userID, err)
-			}
-		},
 	}
 
 	// Auth routes (rate limited)
