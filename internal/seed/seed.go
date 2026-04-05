@@ -77,62 +77,44 @@ func Seed(ctx context.Context, database *db.DB) error {
 	}
 	log.Println("[seed] ✓ Users")
 
-	// ── Predefined categories for all users ───────────────────────────────────
-	type predefinedCat struct {
-		Key   string
-		Name  string
-		Icon  string
-		Color string
+	// ── Category overrides & custom categories ────────────────────────────────
+	// Predefined categories are served from code — DB rows only for overrides and custom.
+	type catRow struct {
+		userID       uuid.UUID
+		name         string
+		icon         string
+		color        string
+		isHidden     bool
+		isPredefined bool
+		predefinedKey *string
 	}
-	predefined := []predefinedCat{
-		{"foodDining", "Food & Dining", "fork.knife.circle.fill", "#FF6B6B"},
-		{"transport", "Transport", "car.circle.fill", "#4ECDC4"},
-		{"housing", "Housing", "house.circle.fill", "#45B7D1"},
-		{"healthMedical", "Health & Medical", "cross.case.circle.fill", "#96CEB4"},
-		{"shopping", "Shopping", "bag.circle.fill", "#FFEAA7"},
-		{"utilities", "Utilities", "bolt.square.fill", "#DDA15E"},
-		{"entertainment", "Entertainment", "gamecontroller.circle.fill", "#BC6C25"},
-		{"travel", "Travel", "airplane.circle.fill", "#8E44AD"},
-		{"workProfessional", "Work & Professional", "briefcase.circle.fill", "#34495E"},
-		{"education", "Education", "book.circle.fill", "#3498DB"},
-		{"debtPayments", "Debt & Payments", "creditcard.circle.fill", "#2C3E50"},
-		{"booksMedia", "Books & Media", "book.closed.circle.fill", "#E74C3C"},
-		{"familyKids", "Family & Kids", "figure.2.and.child.holdinghands", "#F39C12"},
-		{"gifts", "Gifts", "gift.circle.fill", "#E91E63"},
-		{"other", "Other", "ellipsis.circle.fill", "#95A5A6"},
+	strPtr := func(s string) *string { return &s }
+
+	categoryRows := []catRow{
+		// Ankush: override — hide Shopping
+		{UserAnkushID, "Shopping", "bag.circle.fill", "#FFEAA7", true, true, strPtr("shopping")},
+		// Ankush: override — recolor Food & Dining
+		{UserAnkushID, "Food & Dining", "fork.knife.circle.fill", "#FF4757", false, true, strPtr("foodDining")},
+		// Ankush: custom categories
+		{UserAnkushID, "Subscriptions", "antenna.radiowaves.left.and.right.circle.fill", "#6C5CE7", false, false, nil},
+		{UserAnkushID, "Gym & Fitness", "figure.run.circle.fill", "#00B894", false, false, nil},
+
+		// Priya: override — rename & recolor Transport
+		{UserPriyaID, "Commute", "bus.fill", "#1ABC9C", false, true, strPtr("transport")},
+		// Priya: custom category
+		{UserPriyaID, "Skincare", "sparkles", "#FF69B4", false, false, nil},
+
+		// Rahul: override — hide Entertainment
+		{UserRahulID, "Entertainment", "gamecontroller.circle.fill", "#BC6C25", true, true, strPtr("entertainment")},
 	}
 
-	for _, uid := range seededUserIDs {
-		for _, cat := range predefined {
-			_, err := database.Pool.Exec(ctx,
-				`INSERT INTO custom_categories (user_id, name, icon, color, is_hidden, is_predefined, predefined_key)
-				 VALUES ($1, $2, $3, $4, false, true, $5)
-				 ON CONFLICT DO NOTHING`,
-				uid, cat.Name, cat.Icon, cat.Color, cat.Key)
-			if err != nil {
-				return fmt.Errorf("seed predefined category %s for user %s: %w", cat.Key, uid, err)
-			}
-		}
-	}
-
-	// Ankush: hide Shopping category
-	if _, err := database.Pool.Exec(ctx,
-		`UPDATE custom_categories SET is_hidden = true WHERE user_id = $1 AND predefined_key = 'shopping'`,
-		UserAnkushID); err != nil {
-		return fmt.Errorf("hide shopping category: %w", err)
-	}
-
-	// Ankush: two custom categories
-	for _, cc := range []struct{ name, icon, color string }{
-		{"Subscriptions", "antenna.radiowaves.left.and.right.circle.fill", "#6C5CE7"},
-		{"Gym & Fitness", "figure.run.circle.fill", "#00B894"},
-	} {
+	for _, cc := range categoryRows {
 		if _, err := database.Pool.Exec(ctx,
 			`INSERT INTO custom_categories (user_id, name, icon, color, is_hidden, is_predefined, predefined_key)
-			 VALUES ($1, $2, $3, $4, false, false, NULL)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7)
 			 ON CONFLICT (user_id, name) DO NOTHING`,
-			UserAnkushID, cc.name, cc.icon, cc.color); err != nil {
-			return fmt.Errorf("insert custom category %s: %w", cc.name, err)
+			cc.userID, cc.name, cc.icon, cc.color, cc.isHidden, cc.isPredefined, cc.predefinedKey); err != nil {
+			return fmt.Errorf("insert category %s: %w", cc.name, err)
 		}
 	}
 	log.Println("[seed] ✓ Categories")
