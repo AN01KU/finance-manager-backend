@@ -19,7 +19,8 @@
                 <option value="5xx" {{if eq .StatusFilter "5xx"}}selected{{end}}>5xx Server Error</option>
             </select>
             <span class="text-muted" style="font-size:12px;">{{len .Logs}} entries (last 200)</span>
-            <a href="/admin/logs/clear" class="btn btn-danger btn-sm" style="margin-left:auto;" onclick="return confirm('Clear all logs?')">Clear Logs</a>
+            <a href="/admin/logs" class="btn btn-sm" style="margin-left:auto;">↻ Reload</a>
+            <a href="/admin/logs/clear" class="btn btn-danger btn-sm" onclick="return confirm('Clear all logs?')">Clear Logs</a>
         </form>
     </div>
     {{if .Logs}}
