@@ -106,7 +106,7 @@ func LoggerMiddleware(ls *LogStore) gin.HandlerFunc {
 // Admin holds all dependencies for the admin dashboard.
 type Admin struct {
 	pool      *pgxpool.Pool
-	tmpl      *template.Template
+	tmpls     map[string]*template.Template
 	username  string
 	password  string
 	sessions  map[string]time.Time
@@ -116,11 +116,21 @@ type Admin struct {
 
 // New creates a new Admin instance.
 func New(pool *pgxpool.Pool, username, password string, logStore *LogStore) *Admin {
-	tmplPath := filepath.Join("internal", "admin", "templates", "*.html")
-	tmpl := template.Must(template.ParseGlob(tmplPath))
+	dir := filepath.Join("internal", "admin", "templates")
+	layoutFile := filepath.Join(dir, "layout.html")
+
+	pages := []string{"dashboard", "tables", "table_browse", "sql", "logs"}
+	tmpls := make(map[string]*template.Template, len(pages))
+	for _, page := range pages {
+		pageFile := filepath.Join(dir, page+".html")
+		tmpls[page] = template.Must(template.ParseFiles(layoutFile, pageFile))
+	}
+	// Login is standalone (no layout)
+	tmpls["login"] = template.Must(template.ParseFiles(filepath.Join(dir, "login.html")))
+
 	return &Admin{
 		pool:     pool,
-		tmpl:     tmpl,
+		tmpls:    tmpls,
 		username: username,
 		password: password,
 		sessions: make(map[string]time.Time),
@@ -198,7 +208,7 @@ func (a *Admin) authMiddleware() gin.HandlerFunc {
 }
 
 func (a *Admin) loginPage(c *gin.Context) {
-	a.tmpl.ExecuteTemplate(c.Writer, "login.html", gin.H{"Error": ""})
+	a.tmpls["login"].ExecuteTemplate(c.Writer, "login.html", gin.H{"Error": ""})
 }
 
 func (a *Admin) loginSubmit(c *gin.Context) {
@@ -210,7 +220,7 @@ func (a *Admin) loginSubmit(c *gin.Context) {
 		c.Redirect(http.StatusFound, "/admin/")
 		return
 	}
-	a.tmpl.ExecuteTemplate(c.Writer, "login.html", gin.H{"Error": "Invalid credentials"})
+	a.tmpls["login"].ExecuteTemplate(c.Writer, "login.html", gin.H{"Error": "Invalid credentials"})
 }
 
 func (a *Admin) logout(c *gin.Context) {
@@ -508,7 +518,15 @@ func (a *Admin) logsClear(c *gin.Context) {
 
 func (a *Admin) render(c *gin.Context, name string, data gin.H) {
 	c.Writer.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := a.tmpl.ExecuteTemplate(c.Writer, "layout", data); err != nil {
+	// name is e.g. "dashboard.html" — strip .html to get template key
+	key := strings.TrimSuffix(name, ".html")
+	tmpl, ok := a.tmpls[key]
+	if !ok {
+		log.Printf("admin: unknown template %q", key)
+		c.String(500, "Unknown template: %s", key)
+		return
+	}
+	if err := tmpl.ExecuteTemplate(c.Writer, "layout", data); err != nil {
 		log.Printf("admin: template error (%s): %v", name, err)
 		c.String(500, "Template error: %v", err)
 	}
