@@ -17,6 +17,7 @@ WORKDIR /root/
 
 COPY --from=builder /app/finance-manager .
 COPY --from=builder /app/internal/db/migrations ./internal/db/migrations
+COPY --from=builder /app/internal/admin/templates ./internal/admin/templates
 
 EXPOSE 8080
 
