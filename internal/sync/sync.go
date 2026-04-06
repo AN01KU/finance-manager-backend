@@ -1,12 +1,27 @@
 package sync
 
 import (
+	"log"
+
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
 	"github.com/yanonymousV2/finance-manager-backend/internal/db"
 )
+
+const currentSyncVersion = "1"
+
+func checkSyncVersion(c *gin.Context) {
+	version := c.GetHeader("X-Sync-Version")
+	if version == "" {
+		log.Printf("[WARN] X-Sync-Version header missing, path=%s", c.Request.URL.Path)
+		return
+	}
+	if version != currentSyncVersion {
+		log.Printf("[WARN] X-Sync-Version unrecognised, version=%s path=%s", version, c.Request.URL.Path)
+	}
+}
 
 type PreflightRequest struct {
 	SyncSessionID uuid.UUID `json:"sync_session_id" validate:"required"`
@@ -55,6 +70,8 @@ func SyncSessionGuard(database *db.DB) gin.HandlerFunc {
 			return
 		}
 
+		checkSyncVersion(c)
+
 		syncSessionID, err := uuid.Parse(sessionHeader)
 		if err != nil {
 			c.JSON(400, gin.H{"error": "invalid X-Sync-Session-ID header"})
@@ -97,6 +114,8 @@ func Preflight(c *gin.Context, database *db.DB) {
 		c.JSON(401, gin.H{"error": "unauthorized"})
 		return
 	}
+
+	checkSyncVersion(c)
 
 	var req PreflightRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
