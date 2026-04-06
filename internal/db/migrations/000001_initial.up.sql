@@ -163,3 +163,15 @@ CREATE INDEX idx_settlements_group ON settlements(group_id);
 ALTER TABLE transactions
     ADD CONSTRAINT fk_transactions_settlement
     FOREIGN KEY (settlement_id) REFERENCES settlements(id) ON DELETE SET NULL;
+
+-- Sync sessions (offline-first sync support)
+CREATE TABLE sync_sessions (
+    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id             UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    last_seen_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+    invalidated_at      TIMESTAMPTZ,
+    invalidation_reason TEXT
+);
+
+CREATE INDEX idx_sync_sessions_user_id ON sync_sessions(user_id);
