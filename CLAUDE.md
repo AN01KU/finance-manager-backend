@@ -36,6 +36,7 @@ docker-compose up --build
 | `ADMIN_USERNAME` | No | `admin` | Admin dashboard login username |
 | `ADMIN_PASSWORD` | Yes (for admin) | — | Admin dashboard login password; login disabled if empty |
 | `GIN_MODE` | No | `debug` | Set to `release` in production to enable rate limiting (rate limiter is skipped in non-release mode) |
+| `SYNC_SESSION_TTL_DAYS` | No | `90` | Days before inactive sync sessions are expired by background cleanup |
 
 Migrations run automatically on startup via `golang-migrate`. No manual migration step needed.
 
