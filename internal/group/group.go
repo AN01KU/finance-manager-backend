@@ -1,6 +1,7 @@
 package group
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 	"time"
@@ -8,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/go-playground/validator/v10"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/shopspring/decimal"
 
 	"github.com/yanonymousV2/finance-manager-backend/internal/db"
@@ -843,6 +845,7 @@ func CreateGroupTransaction(c *gin.Context, database *db.DB) {
 		   description = EXCLUDED.description,
 		   notes = EXCLUDED.notes,
 		   updated_at = NOW()
+		 WHERE group_transactions.group_id = EXCLUDED.group_id
 		 RETURNING id, group_id, paid_by_user_id, total_amount, category, date, description, notes, is_deleted, created_at, updated_at`,
 		gtID, groupID, req.PaidByUserID, totalAmount, req.Category, gtDate, req.Description, req.Notes,
 	).Scan(
@@ -850,6 +853,10 @@ func CreateGroupTransaction(c *gin.Context, database *db.DB) {
 		&gt.Description, &gt.Notes, &gt.IsDeleted, &rawGTCreatedAt, &rawGTUpdatedAt,
 	)
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			c.JSON(409, gin.H{"error": "group transaction ID conflict with another group"})
+			return
+		}
 		c.JSON(500, gin.H{"error": "failed to create group transaction"})
 		return
 	}

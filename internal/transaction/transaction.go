@@ -1,6 +1,7 @@
 package transaction
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 	"time"
@@ -8,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/go-playground/validator/v10"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/shopspring/decimal"
 
 	"github.com/yanonymousV2/finance-manager-backend/internal/db"
@@ -113,6 +115,7 @@ func CreateTransaction(c *gin.Context, database *db.DB) {
 		     notes = EXCLUDED.notes,
 		     recurring_transaction_id = EXCLUDED.recurring_transaction_id,
 		     updated_at = NOW()
+		   WHERE transactions.user_id = EXCLUDED.user_id
 		   RETURNING id, user_id, type, amount, category, date, time, description, notes, recurring_transaction_id, group_transaction_id, settlement_id, is_deleted, created_at, updated_at
 		 )
 		 SELECT ins.*, g.name AS group_name
@@ -129,6 +132,10 @@ func CreateTransaction(c *gin.Context, database *db.DB) {
 		&tx.GroupName,
 	)
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			c.JSON(409, gin.H{"error": "transaction ID conflict with another user"})
+			return
+		}
 		fmt.Printf("[ERROR] CreateTransaction: %v\n", err)
 		c.JSON(500, gin.H{"error": "failed to create transaction"})
 		return
