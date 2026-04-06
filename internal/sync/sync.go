@@ -2,6 +2,7 @@ package sync
 
 import (
 	"log"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -36,26 +37,33 @@ type PreflightResponse struct {
 // Returns a reason string if invalid, or empty string if valid.
 func ValidateSession(c *gin.Context, database *db.DB, syncSessionID uuid.UUID, jwtUserID uuid.UUID) (valid bool, reason string) {
 	var sessionUserID uuid.UUID
-	var invalidatedAt *string
+	var invalidatedAt *time.Time
+	var createdAt time.Time
 
 	err := database.Pool.QueryRow(c.Request.Context(),
-		`SELECT user_id, invalidated_at FROM sync_sessions WHERE id = $1`,
+		`SELECT user_id, invalidated_at, created_at FROM sync_sessions WHERE id = $1`,
 		syncSessionID,
-	).Scan(&sessionUserID, &invalidatedAt)
+	).Scan(&sessionUserID, &invalidatedAt, &createdAt)
 
 	if err == pgx.ErrNoRows {
+		log.Printf("[SYNC] sync_session_not_found session_id=%s", syncSessionID)
 		return false, "SYNC_SESSION_NOT_FOUND"
 	}
 	if err != nil {
+		log.Printf("[SYNC] sync_session_not_found session_id=%s", syncSessionID)
 		return false, "SYNC_SESSION_NOT_FOUND"
 	}
 	if invalidatedAt != nil {
+		ageDays := int(time.Since(createdAt).Hours() / 24)
+		log.Printf("[SYNC] sync_session_expired session_id=%s session_age_days=%d", syncSessionID, ageDays)
 		return false, "SYNC_SESSION_EXPIRED"
 	}
 	if sessionUserID != jwtUserID {
+		log.Printf("[SYNC] sync_session_mismatch jwt_user_id=%s session_user_id=%s session_id=%s", jwtUserID, sessionUserID, syncSessionID)
 		return false, "SYNC_SESSION_MISMATCH"
 	}
 
+	log.Printf("[SYNC] sync_preflight_ok session_id=%s user_id=%s", syncSessionID, jwtUserID)
 	return true, ""
 }
 
