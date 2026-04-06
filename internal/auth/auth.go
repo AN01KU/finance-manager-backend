@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -28,8 +29,9 @@ type LoginRequest struct {
 }
 
 type AuthResponse struct {
-	Token string    `json:"token"`
-	User  user.User `json:"user"`
+	Token         string    `json:"token"`
+	SyncSessionID uuid.UUID `json:"sync_session_id"`
+	User          user.User `json:"user"`
 }
 
 type Claims struct {
@@ -111,7 +113,14 @@ func Signup(c *gin.Context, service *AuthService) {
 		return
 	}
 
-	c.JSON(201, AuthResponse{Token: token, User: u})
+	// Create sync session
+	syncSessionID, err := createSyncSession(c.Request.Context(), db, u.ID)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "failed to create sync session"})
+		return
+	}
+
+	c.JSON(201, AuthResponse{Token: token, SyncSessionID: syncSessionID, User: u})
 }
 
 func GetMe(c *gin.Context, service *AuthService) {
@@ -179,7 +188,14 @@ func Login(c *gin.Context, service *AuthService) {
 		return
 	}
 
-	c.JSON(200, AuthResponse{Token: token, User: u})
+	// Create sync session
+	syncSessionID, err := createSyncSession(c.Request.Context(), db, u.ID)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "failed to create sync session"})
+		return
+	}
+
+	c.JSON(200, AuthResponse{Token: token, SyncSessionID: syncSessionID, User: u})
 }
 
 func DeleteMe(c *gin.Context, service *AuthService) {
@@ -201,6 +217,18 @@ func DeleteMe(c *gin.Context, service *AuthService) {
 	}
 
 	c.JSON(200, gin.H{"message": "user deleted successfully"})
+}
+
+func createSyncSession(ctx context.Context, database *db.DB, userID uuid.UUID) (uuid.UUID, error) {
+	var sessionID uuid.UUID
+	err := database.Pool.QueryRow(ctx,
+		`INSERT INTO sync_sessions (user_id) VALUES ($1) RETURNING id`,
+		userID,
+	).Scan(&sessionID)
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("create sync session: %w", err)
+	}
+	return sessionID, nil
 }
 
 func generateToken(userID uuid.UUID, email string, jwtSecret string) (string, error) {
