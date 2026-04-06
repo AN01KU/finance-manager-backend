@@ -44,6 +44,48 @@ func ValidateSession(c *gin.Context, database *db.DB, syncSessionID uuid.UUID, j
 	return true, ""
 }
 
+// SyncSessionGuard returns a middleware that validates the optional X-Sync-Session-ID header.
+// If the header is present, the session is validated against the JWT user.
+// If the header is absent, the request proceeds as normal (backwards compatible).
+func SyncSessionGuard(database *db.DB) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		sessionHeader := c.GetHeader("X-Sync-Session-ID")
+		if sessionHeader == "" {
+			c.Next()
+			return
+		}
+
+		syncSessionID, err := uuid.Parse(sessionHeader)
+		if err != nil {
+			c.JSON(400, gin.H{"error": "invalid X-Sync-Session-ID header"})
+			c.Abort()
+			return
+		}
+
+		val, exists := c.Get("user_id")
+		if !exists {
+			c.JSON(401, gin.H{"error": "unauthorized"})
+			c.Abort()
+			return
+		}
+		jwtUserID, ok := val.(uuid.UUID)
+		if !ok {
+			c.JSON(401, gin.H{"error": "unauthorized"})
+			c.Abort()
+			return
+		}
+
+		valid, reason := ValidateSession(c, database, syncSessionID, jwtUserID)
+		if !valid {
+			c.JSON(409, PreflightResponse{Valid: false, Reason: reason})
+			c.Abort()
+			return
+		}
+
+		c.Next()
+	}
+}
+
 func Preflight(c *gin.Context, database *db.DB) {
 	val, exists := c.Get("user_id")
 	if !exists {
