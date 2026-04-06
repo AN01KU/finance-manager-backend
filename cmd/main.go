@@ -25,6 +25,7 @@ import (
 	"github.com/yanonymousV2/finance-manager-backend/internal/recurring"
 	"github.com/yanonymousV2/finance-manager-backend/internal/seed"
 	"github.com/yanonymousV2/finance-manager-backend/internal/settlement"
+	"github.com/yanonymousV2/finance-manager-backend/internal/sync"
 	"github.com/yanonymousV2/finance-manager-backend/internal/transaction"
 )
 
@@ -158,6 +159,9 @@ func main() {
 
 		// Settlements
 		protected.POST("/settlements", func(c *gin.Context) { settlement.CreateSettlement(c, database) })
+
+		// Sync
+		protected.POST("/sync/preflight", func(c *gin.Context) { sync.Preflight(c, database) })
 	}
 
 	// Create server with timeouts
