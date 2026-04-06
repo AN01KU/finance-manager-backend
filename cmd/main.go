@@ -41,7 +41,8 @@ func main() {
 	log.Println("Finance Manager Backend starting...")
 	log.Println("==============================================")
 
-	ctx := context.Background()
+	ctx, ctxCancel := context.WithCancel(context.Background())
+	defer ctxCancel()
 
 	// Connect to DB
 	log.Println("Connecting to database...")
@@ -65,6 +66,9 @@ func main() {
 	if err := seed.Seed(ctx, database); err != nil {
 		log.Printf("Warning: failed to seed test data: %v", err)
 	}
+
+	// Start sync session cleanup
+	sync.StartSessionCleanup(ctx, database, cfg.SyncSessionTTLDays)
 
 	// Setup Gin
 	r := gin.Default()

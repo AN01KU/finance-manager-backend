@@ -3,15 +3,17 @@ package config
 import (
 	"log"
 	"os"
+	"strconv"
 )
 
 type Config struct {
-	DBURL         string
-	JWTSecret     string
-	Port          string
-	InviteCode    string
-	AdminUsername  string
-	AdminPassword string
+	DBURL              string
+	JWTSecret          string
+	Port               string
+	InviteCode         string
+	AdminUsername       string
+	AdminPassword      string
+	SyncSessionTTLDays int
 }
 
 func Load() *Config {
@@ -20,8 +22,9 @@ func Load() *Config {
 		JWTSecret:  getEnvRequired("JWT_SECRET"),
 		Port:       getEnv("PORT", "8080"),
 		InviteCode:    getEnv("INVITE_CODE", ""),
-		AdminUsername:  getEnv("ADMIN_USERNAME", "admin"),
-		AdminPassword:  getEnv("ADMIN_PASSWORD", ""),
+		AdminUsername:       getEnv("ADMIN_USERNAME", "admin"),
+		AdminPassword:       getEnv("ADMIN_PASSWORD", ""),
+		SyncSessionTTLDays: getEnvInt("SYNC_SESSION_TTL_DAYS", 90),
 	}
 
 	// Validate JWT secret strength
@@ -35,6 +38,16 @@ func Load() *Config {
 func getEnv(key, defaultValue string) string {
 	if value := os.Getenv(key); value != "" {
 		return value
+	}
+	return defaultValue
+}
+
+func getEnvInt(key string, defaultValue int) int {
+	if value := os.Getenv(key); value != "" {
+		if n, err := strconv.Atoi(value); err == nil {
+			return n
+		}
+		log.Printf("Warning: invalid integer for %s, using default %d", key, defaultValue)
 	}
 	return defaultValue
 }
