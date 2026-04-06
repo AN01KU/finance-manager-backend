@@ -198,6 +198,43 @@ func Login(c *gin.Context, service *AuthService) {
 	c.JSON(200, AuthResponse{Token: token, SyncSessionID: syncSessionID, User: u})
 }
 
+type LogoutRequest struct {
+	SyncSessionID *uuid.UUID `json:"sync_session_id"`
+}
+
+func Logout(c *gin.Context, service *AuthService) {
+	val, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(401, gin.H{"error": "unauthorized"})
+		return
+	}
+	userID, ok := val.(uuid.UUID)
+	if !ok {
+		c.JSON(401, gin.H{"error": "unauthorized"})
+		return
+	}
+
+	var req LogoutRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+
+	if req.SyncSessionID != nil {
+		_, err := service.DB.Pool.Exec(c.Request.Context(),
+			`UPDATE sync_sessions SET invalidated_at = now(), invalidation_reason = 'logout'
+			 WHERE id = $1 AND user_id = $2`,
+			*req.SyncSessionID, userID,
+		)
+		if err != nil {
+			c.JSON(500, gin.H{"error": "failed to invalidate sync session"})
+			return
+		}
+	}
+
+	c.JSON(200, gin.H{"message": "logged out successfully"})
+}
+
 func DeleteMe(c *gin.Context, service *AuthService) {
 	val, exists := c.Get("user_id")
 	if !exists {

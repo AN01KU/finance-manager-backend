@@ -104,6 +104,9 @@ func main() {
 	protected := r.Group("/")
 	protected.Use(middleware.JWTAuth(cfg.JWTSecret))
 	{
+		// Auth (protected)
+		protected.POST("/auth/logout", func(c *gin.Context) { auth.Logout(c, authService) })
+
 		// User profile
 		protected.GET("/me", func(c *gin.Context) { auth.GetMe(c, authService) })
 		protected.DELETE("/me", func(c *gin.Context) { auth.DeleteMe(c, authService) })
