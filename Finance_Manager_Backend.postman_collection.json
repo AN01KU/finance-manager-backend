@@ -6,7 +6,8 @@
   },
   "variable": [
     { "key": "base_url", "value": "http://localhost:8080", "type": "string" },
-    { "key": "token", "value": "", "type": "string" }
+    { "key": "token", "value": "", "type": "string" },
+    { "key": "sync_session_id", "value": "", "type": "string" }
   ],
   "item": [
     {
@@ -34,7 +35,9 @@
                   "if (pm.response.code === 201) {",
                   "    const response = pm.response.json();",
                   "    pm.collectionVariables.set('token', response.token);",
+                  "    pm.collectionVariables.set('sync_session_id', response.sync_session_id);",
                   "    console.log('Token saved:', response.token);",
+                  "    console.log('Sync session ID saved:', response.sync_session_id);",
                   "}"
                 ],
                 "type": "text/javascript"
@@ -61,7 +64,9 @@
                   "if (pm.response.code === 200) {",
                   "    const response = pm.response.json();",
                   "    pm.collectionVariables.set('token', response.token);",
+                  "    pm.collectionVariables.set('sync_session_id', response.sync_session_id);",
                   "    console.log('Token saved:', response.token);",
+                  "    console.log('Sync session ID saved:', response.sync_session_id);",
                   "}"
                 ],
                 "type": "text/javascript"
@@ -76,6 +81,21 @@
               "raw": "{\n  \"email\": \"ankush@gmail.com\",\n  \"password\": \"12345678\"\n}"
             },
             "url": { "raw": "{{base_url}}/auth/login", "host": ["{{base_url}}"], "path": ["auth", "login"] }
+          }
+        },
+        {
+          "name": "Logout",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sync_session_id\": \"{{sync_session_id}}\"\n}"
+            },
+            "url": { "raw": "{{base_url}}/auth/logout", "host": ["{{base_url}}"], "path": ["auth", "logout"] }
           }
         }
       ]
@@ -110,7 +130,9 @@
             "method": "POST",
             "header": [
               { "key": "Authorization", "value": "Bearer {{token}}" },
-              { "key": "Content-Type", "value": "application/json" }
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Sync-Session-ID", "value": "{{sync_session_id}}", "disabled": true },
+              { "key": "X-Sync-Version", "value": "1", "disabled": true }
             ],
             "body": {
               "mode": "raw",
@@ -125,7 +147,9 @@
             "method": "POST",
             "header": [
               { "key": "Authorization", "value": "Bearer {{token}}" },
-              { "key": "Content-Type", "value": "application/json" }
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Sync-Session-ID", "value": "{{sync_session_id}}", "disabled": true },
+              { "key": "X-Sync-Version", "value": "1", "disabled": true }
             ],
             "body": {
               "mode": "raw",
@@ -140,7 +164,9 @@
             "method": "POST",
             "header": [
               { "key": "Authorization", "value": "Bearer {{token}}" },
-              { "key": "Content-Type", "value": "application/json" }
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Sync-Session-ID", "value": "{{sync_session_id}}", "disabled": true },
+              { "key": "X-Sync-Version", "value": "1", "disabled": true }
             ],
             "body": {
               "mode": "raw",
@@ -237,7 +263,9 @@
             "method": "POST",
             "header": [
               { "key": "Authorization", "value": "Bearer {{token}}" },
-              { "key": "Content-Type", "value": "application/json" }
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Sync-Session-ID", "value": "{{sync_session_id}}", "disabled": true },
+              { "key": "X-Sync-Version", "value": "1", "disabled": true }
             ],
             "body": {
               "mode": "raw",
@@ -252,7 +280,9 @@
             "method": "POST",
             "header": [
               { "key": "Authorization", "value": "Bearer {{token}}" },
-              { "key": "Content-Type", "value": "application/json" }
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Sync-Session-ID", "value": "{{sync_session_id}}", "disabled": true },
+              { "key": "X-Sync-Version", "value": "1", "disabled": true }
             ],
             "body": {
               "mode": "raw",
@@ -331,7 +361,9 @@
             "method": "POST",
             "header": [
               { "key": "Authorization", "value": "Bearer {{token}}" },
-              { "key": "Content-Type", "value": "application/json" }
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Sync-Session-ID", "value": "{{sync_session_id}}", "disabled": true },
+              { "key": "X-Sync-Version", "value": "1", "disabled": true }
             ],
             "body": {
               "mode": "raw",
@@ -346,7 +378,9 @@
             "method": "POST",
             "header": [
               { "key": "Authorization", "value": "Bearer {{token}}" },
-              { "key": "Content-Type", "value": "application/json" }
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Sync-Session-ID", "value": "{{sync_session_id}}", "disabled": true },
+              { "key": "X-Sync-Version", "value": "1", "disabled": true }
             ],
             "body": {
               "mode": "raw",
@@ -410,7 +444,9 @@
             "method": "POST",
             "header": [
               { "key": "Authorization", "value": "Bearer {{token}}" },
-              { "key": "Content-Type", "value": "application/json" }
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Sync-Session-ID", "value": "{{sync_session_id}}", "disabled": true },
+              { "key": "X-Sync-Version", "value": "1", "disabled": true }
             ],
             "body": {
               "mode": "raw",
@@ -425,7 +461,9 @@
             "method": "POST",
             "header": [
               { "key": "Authorization", "value": "Bearer {{token}}" },
-              { "key": "Content-Type", "value": "application/json" }
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Sync-Session-ID", "value": "{{sync_session_id}}", "disabled": true },
+              { "key": "X-Sync-Version", "value": "1", "disabled": true }
             ],
             "body": {
               "mode": "raw",
@@ -571,7 +609,9 @@
             "method": "POST",
             "header": [
               { "key": "Authorization", "value": "Bearer {{token}}" },
-              { "key": "Content-Type", "value": "application/json" }
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Sync-Session-ID", "value": "{{sync_session_id}}", "disabled": true },
+              { "key": "X-Sync-Version", "value": "1", "disabled": true }
             ],
             "body": {
               "mode": "raw",
@@ -586,7 +626,9 @@
             "method": "POST",
             "header": [
               { "key": "Authorization", "value": "Bearer {{token}}" },
-              { "key": "Content-Type", "value": "application/json" }
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Sync-Session-ID", "value": "{{sync_session_id}}", "disabled": true },
+              { "key": "X-Sync-Version", "value": "1", "disabled": true }
             ],
             "body": {
               "mode": "raw",
@@ -667,6 +709,27 @@
               "raw": "{\n  \"group_id\": \"ffffffff-0002-0002-0002-ffffffffffff\",\n  \"from_user\": \"dddddddd-0004-0004-0004-dddddddddddd\",\n  \"to_user\": \"aaaaaaaa-0001-0001-0001-aaaaaaaaaaaa\",\n  \"amount\": \"500\",\n  \"notes\": \"Partial hotel payment\"\n}"
             },
             "url": { "raw": "{{base_url}}/settlements", "host": ["{{base_url}}"], "path": ["settlements"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Sync",
+      "item": [
+        {
+          "name": "Preflight",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Sync-Version", "value": "1" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sync_session_id\": \"{{sync_session_id}}\"\n}"
+            },
+            "url": { "raw": "{{base_url}}/sync/preflight", "host": ["{{base_url}}"], "path": ["sync", "preflight"] }
           }
         }
       ]

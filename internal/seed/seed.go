@@ -25,6 +25,12 @@ var (
 	GroupTripGoaID   = uuid.MustParse("ffffffff-0002-0002-0002-ffffffffffff")
 	GroupOldTripID   = uuid.MustParse("11111111-0003-0003-0003-111111111111") // group Ankush is NOT a member of
 
+	// Sync sessions
+	SyncSessionAnkushID = uuid.MustParse("99999999-0001-0001-0001-999999999999")
+	SyncSessionPriyaID  = uuid.MustParse("99999999-0002-0002-0002-999999999999")
+	SyncSessionRahulID  = uuid.MustParse("99999999-0003-0003-0003-999999999999")
+	SyncSessionSaraID   = uuid.MustParse("99999999-0004-0004-0004-999999999999")
+
 	// Recurring transactions (Ankush)
 	RecurringRentID     = uuid.MustParse("22222222-0001-0001-0001-222222222222")
 	RecurringNetflixID  = uuid.MustParse("33333333-0002-0002-0002-333333333333")
@@ -76,6 +82,26 @@ func Seed(ctx context.Context, database *db.DB) error {
 		}
 	}
 	log.Println("[seed] ✓ Users")
+
+	// ── Sync sessions ─────────────────────────────────────────────────────────
+	syncSessions := []struct {
+		id     uuid.UUID
+		userID uuid.UUID
+	}{
+		{SyncSessionAnkushID, UserAnkushID},
+		{SyncSessionPriyaID, UserPriyaID},
+		{SyncSessionRahulID, UserRahulID},
+		{SyncSessionSaraID, UserSaraID},
+	}
+
+	for _, ss := range syncSessions {
+		if _, err := database.Pool.Exec(ctx,
+			`INSERT INTO sync_sessions (id, user_id) VALUES ($1, $2) ON CONFLICT (id) DO NOTHING`,
+			ss.id, ss.userID); err != nil {
+			return fmt.Errorf("insert sync session for user %s: %w", ss.userID, err)
+		}
+	}
+	log.Println("[seed] ✓ Sync sessions")
 
 	// ── Category overrides & custom categories ────────────────────────────────
 	// Predefined categories are served from code — DB rows only for overrides and custom.
@@ -483,6 +509,7 @@ func Cleanup(ctx context.Context, database *db.DB) {
 		fmt.Sprintf(`DELETE FROM recurring_transactions WHERE user_id IN (%s)`, joinStrings(userIDStrs)),
 		fmt.Sprintf(`DELETE FROM monthly_budgets WHERE user_id IN (%s)`, joinStrings(userIDStrs)),
 		fmt.Sprintf(`DELETE FROM custom_categories WHERE user_id IN (%s)`, joinStrings(userIDStrs)),
+		fmt.Sprintf(`DELETE FROM sync_sessions WHERE user_id IN (%s)`, joinStrings(userIDStrs)),
 		fmt.Sprintf(`DELETE FROM users WHERE id IN (%s)`, joinStrings(userIDStrs)),
 	}
 
