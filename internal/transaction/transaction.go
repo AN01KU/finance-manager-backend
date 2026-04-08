@@ -25,7 +25,6 @@ type Transaction struct {
 	Amount             float64                `json:"amount"`
 	Category           string                 `json:"category"`
 	Date               helpers.EpochMillis    `json:"date"`
-	Time               *helpers.EpochMillis   `json:"time,omitempty"`
 	Description        *string                `json:"description,omitempty"`
 	Notes              *string                `json:"notes,omitempty"`
 	RecurringTransactionID *uuid.UUID             `json:"recurring_transaction_id,omitempty"`
@@ -44,7 +43,6 @@ type CreateTransactionRequest struct {
 	Amount             float64    `json:"amount" validate:"required"`
 	Category           string     `json:"category" validate:"required,max=100"`
 	Date               int64      `json:"date" validate:"required"`
-	TimeMs             *int64     `json:"time,omitempty"`
 	Description        *string    `json:"description,omitempty" validate:"omitempty,max=255"`
 	Notes              *string    `json:"notes,omitempty"`
 	RecurringTransactionID *uuid.UUID `json:"recurring_transaction_id,omitempty"`
@@ -55,7 +53,6 @@ type UpdateTransactionRequest struct {
 	Amount      *float64 `json:"amount,omitempty"`
 	Category    *string `json:"category,omitempty" validate:"omitempty,max=100"`
 	Date        *int64  `json:"date,omitempty"`
-	TimeMs      *int64  `json:"time,omitempty"`
 	Description *string `json:"description,omitempty" validate:"omitempty,max=255"`
 	Notes       *string `json:"notes,omitempty"`
 }
@@ -86,11 +83,6 @@ func CreateTransaction(c *gin.Context, database *db.DB) {
 	}
 
 	date := time.UnixMilli(req.Date).UTC()
-	var txTime *time.Time
-	if req.TimeMs != nil {
-		t := time.UnixMilli(*req.TimeMs).UTC()
-		txTime = &t
-	}
 
 	id := uuid.New()
 	if req.ID != nil {
@@ -99,34 +91,32 @@ func CreateTransaction(c *gin.Context, database *db.DB) {
 
 	var tx Transaction
 	var rawDate, rawCreatedAt, rawUpdatedAt time.Time
-	var rawTime *time.Time
 
 	err := database.Pool.QueryRow(c.Request.Context(),
 		`WITH ins AS (
-		   INSERT INTO transactions (id, user_id, type, amount, category, date, time, description, notes, recurring_transaction_id, updated_at)
-		   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())
+		   INSERT INTO transactions (id, user_id, type, amount, category, date, description, notes, recurring_transaction_id, updated_at)
+		   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
 		   ON CONFLICT (id) DO UPDATE SET
 		     type = EXCLUDED.type,
 		     amount = EXCLUDED.amount,
 		     category = EXCLUDED.category,
 		     date = EXCLUDED.date,
-		     time = EXCLUDED.time,
 		     description = EXCLUDED.description,
 		     notes = EXCLUDED.notes,
 		     recurring_transaction_id = EXCLUDED.recurring_transaction_id,
 		     updated_at = NOW()
 		   WHERE transactions.user_id = EXCLUDED.user_id
-		   RETURNING id, user_id, type, amount, category, date, time, description, notes, recurring_transaction_id, group_transaction_id, settlement_id, is_deleted, created_at, updated_at
+		   RETURNING id, user_id, type, amount, category, date, description, notes, recurring_transaction_id, group_transaction_id, settlement_id, is_deleted, created_at, updated_at
 		 )
 		 SELECT ins.*, g.name AS group_name
 		 FROM ins
 		 LEFT JOIN group_transactions gt ON ins.group_transaction_id = gt.id
 		 LEFT JOIN groups g ON gt.group_id = g.id`,
-		id, userID, req.Type, amount, req.Category, date, txTime,
+		id, userID, req.Type, amount, req.Category, date,
 		req.Description, req.Notes, req.RecurringTransactionID,
 	).Scan(
 		&tx.ID, &tx.UserID, &tx.Type, &tx.Amount, &tx.Category,
-		&rawDate, &rawTime, &tx.Description, &tx.Notes,
+		&rawDate, &tx.Description, &tx.Notes,
 		&tx.RecurringTransactionID, &tx.GroupTransactionID, &tx.SettlementID,
 		&tx.IsDeleted, &rawCreatedAt, &rawUpdatedAt,
 		&tx.GroupName,
@@ -142,7 +132,6 @@ func CreateTransaction(c *gin.Context, database *db.DB) {
 	}
 
 	tx.Date = helpers.FromTime(rawDate)
-	tx.Time = helpers.FromTimePtr(rawTime)
 	tx.CreatedAt = helpers.FromTime(rawCreatedAt)
 	tx.UpdatedAt = helpers.FromTime(rawUpdatedAt)
 
@@ -174,7 +163,7 @@ func ListTransactions(c *gin.Context, database *db.DB) {
 		}
 	}
 
-	query := `SELECT t.id, t.user_id, t.type, t.amount, t.category, t.date, t.time, t.description, t.notes, t.recurring_transaction_id, t.group_transaction_id, COALESCE(t.group_id, gt.group_id), COALESCE(g1.name, g2.name), t.settlement_id, t.is_deleted, t.created_at, t.updated_at
+	query := `SELECT t.id, t.user_id, t.type, t.amount, t.category, t.date, t.description, t.notes, t.recurring_transaction_id, t.group_transaction_id, COALESCE(t.group_id, gt.group_id), COALESCE(g1.name, g2.name), t.settlement_id, t.is_deleted, t.created_at, t.updated_at
 		      FROM transactions t
 		      LEFT JOIN group_transactions gt ON t.group_transaction_id = gt.id
 		      LEFT JOIN groups g1 ON gt.group_id = g1.id
@@ -268,10 +257,9 @@ func ListTransactions(c *gin.Context, database *db.DB) {
 	for rows.Next() {
 		var tx Transaction
 		var rawDate, rawCreatedAt, rawUpdatedAt time.Time
-		var rawTime *time.Time
 		if err := rows.Scan(
 			&tx.ID, &tx.UserID, &tx.Type, &tx.Amount, &tx.Category,
-			&rawDate, &rawTime, &tx.Description, &tx.Notes,
+			&rawDate, &tx.Description, &tx.Notes,
 			&tx.RecurringTransactionID, &tx.GroupTransactionID, &tx.GroupID, &tx.GroupName, &tx.SettlementID,
 			&tx.IsDeleted, &rawCreatedAt, &rawUpdatedAt,
 		); err != nil {
@@ -280,7 +268,6 @@ func ListTransactions(c *gin.Context, database *db.DB) {
 			return
 		}
 		tx.Date = helpers.FromTime(rawDate)
-		tx.Time = helpers.FromTimePtr(rawTime)
 		tx.CreatedAt = helpers.FromTime(rawCreatedAt)
 		tx.UpdatedAt = helpers.FromTime(rawUpdatedAt)
 		txs = append(txs, tx)
@@ -311,10 +298,9 @@ func GetTransaction(c *gin.Context, database *db.DB) {
 
 	var tx Transaction
 	var rawDate, rawCreatedAt, rawUpdatedAt time.Time
-	var rawTime *time.Time
 
 	err = database.Pool.QueryRow(c.Request.Context(),
-		`SELECT t.id, t.user_id, t.type, t.amount, t.category, t.date, t.time, t.description, t.notes, t.recurring_transaction_id, t.group_transaction_id, COALESCE(t.group_id, gt.group_id), COALESCE(g1.name, g2.name), t.settlement_id, t.is_deleted, t.created_at, t.updated_at
+		`SELECT t.id, t.user_id, t.type, t.amount, t.category, t.date, t.description, t.notes, t.recurring_transaction_id, t.group_transaction_id, COALESCE(t.group_id, gt.group_id), COALESCE(g1.name, g2.name), t.settlement_id, t.is_deleted, t.created_at, t.updated_at
 		 FROM transactions t
 		 LEFT JOIN group_transactions gt ON t.group_transaction_id = gt.id
 		 LEFT JOIN groups g1 ON gt.group_id = g1.id
@@ -323,7 +309,7 @@ func GetTransaction(c *gin.Context, database *db.DB) {
 		id, userID,
 	).Scan(
 		&tx.ID, &tx.UserID, &tx.Type, &tx.Amount, &tx.Category,
-		&rawDate, &rawTime, &tx.Description, &tx.Notes,
+		&rawDate, &tx.Description, &tx.Notes,
 		&tx.RecurringTransactionID, &tx.GroupTransactionID, &tx.GroupID, &tx.GroupName, &tx.SettlementID,
 		&tx.IsDeleted, &rawCreatedAt, &rawUpdatedAt,
 	)
@@ -333,7 +319,6 @@ func GetTransaction(c *gin.Context, database *db.DB) {
 	}
 
 	tx.Date = helpers.FromTime(rawDate)
-	tx.Time = helpers.FromTimePtr(rawTime)
 	tx.CreatedAt = helpers.FromTime(rawCreatedAt)
 	tx.UpdatedAt = helpers.FromTime(rawUpdatedAt)
 
@@ -417,11 +402,6 @@ func UpdateTransaction(c *gin.Context, database *db.DB) {
 		args = append(args, time.UnixMilli(*req.Date).UTC())
 		n++
 	}
-	if req.TimeMs != nil {
-		query += fmt.Sprintf(", time = $%d", n)
-		args = append(args, time.UnixMilli(*req.TimeMs).UTC())
-		n++
-	}
 	if req.Description != nil {
 		query += fmt.Sprintf(", description = $%d", n)
 		args = append(args, *req.Description)
@@ -439,12 +419,11 @@ func UpdateTransaction(c *gin.Context, database *db.DB) {
 	}
 
 	query += fmt.Sprintf(` WHERE id = $%d
-		RETURNING id, user_id, type, amount, category, date, time, description, notes, recurring_transaction_id, group_transaction_id, settlement_id, is_deleted, created_at, updated_at`, n)
+		RETURNING id, user_id, type, amount, category, date, description, notes, recurring_transaction_id, group_transaction_id, settlement_id, is_deleted, created_at, updated_at`, n)
 	args = append(args, id)
 
 	var tx Transaction
 	var rawDate, rawCreatedAt, rawUpdatedAt time.Time
-	var rawTime *time.Time
 
 	// Wrap in CTE to join group name
 	wrappedQuery := fmt.Sprintf(
@@ -456,7 +435,7 @@ func UpdateTransaction(c *gin.Context, database *db.DB) {
 
 	err = database.Pool.QueryRow(c.Request.Context(), wrappedQuery, args...).Scan(
 		&tx.ID, &tx.UserID, &tx.Type, &tx.Amount, &tx.Category,
-		&rawDate, &rawTime, &tx.Description, &tx.Notes,
+		&rawDate, &tx.Description, &tx.Notes,
 		&tx.RecurringTransactionID, &tx.GroupTransactionID, &tx.SettlementID,
 		&tx.IsDeleted, &rawCreatedAt, &rawUpdatedAt,
 		&tx.GroupName,
@@ -467,7 +446,6 @@ func UpdateTransaction(c *gin.Context, database *db.DB) {
 	}
 
 	tx.Date = helpers.FromTime(rawDate)
-	tx.Time = helpers.FromTimePtr(rawTime)
 	tx.CreatedAt = helpers.FromTime(rawCreatedAt)
 	tx.UpdatedAt = helpers.FromTime(rawUpdatedAt)
 

@@ -75,6 +75,7 @@ All requests pass through: `RequestLogger → CORS → (JWTAuth on protected rou
 - All monetary amounts use `shopspring/decimal.Decimal` internally for precision
 - Request structs accept amounts as `float64` (JSON numbers from the client), converted via `decimal.NewFromFloat()`
 - Response structs use `helpers.StringDecimal` which serializes amounts as JSON numbers (unquoted)
+- **All date/time fields use epoch milliseconds (int64) for client communication.** Request structs accept `int64` epoch ms; response structs use `helpers.EpochMillis` which serializes `time.Time` as unquoted int64 ms. The `date` column in `transactions` and `group_transactions` is `TIMESTAMPTZ` — full timestamps, not date-only. There is no separate `time` column.
 - Parameterized queries (`$1, $2, ...`) everywhere — no string concatenation in SQL
 - Expenses use soft delete (`is_deleted` flag); all queries must filter `is_deleted = FALSE`
 - Balance calculations are derived at query time from `ExpenseSplit` + `Settlement` records (no materialized balance column)
