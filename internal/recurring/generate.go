@@ -90,8 +90,14 @@ func GenerateDueTransactions(ctx context.Context, userID uuid.UUID, database *db
 			return fmt.Errorf("insert transaction for recurring %s: %w", r.id, err)
 		}
 
+		// Always update last_added_date regardless of whether the INSERT
+		// actually created a row (ON CONFLICT DO NOTHING may have fired).
+		// This prevents infinite retry on each GET /transactions.
 		_, err = database.Pool.Exec(ctx,
-			`UPDATE recurring_transactions SET last_added_date = $1, updated_at = NOW() WHERE id = $2`,
+			`UPDATE recurring_transactions
+			 SET last_added_date = GREATEST(COALESCE(last_added_date, '-infinity'::timestamptz), $1),
+			     updated_at = NOW()
+			 WHERE id = $2`,
 			*next, r.id,
 		)
 		if err != nil {

@@ -135,6 +135,19 @@ func CreateTransaction(c *gin.Context, database *db.DB) {
 	tx.CreatedAt = helpers.FromTime(rawCreatedAt)
 	tx.UpdatedAt = helpers.FromTime(rawUpdatedAt)
 
+	// Keep recurring rule's last_added_date in sync so GenerateDueTransactions
+	// doesn't create duplicates. GREATEST ensures out-of-order inserts never
+	// roll the date backwards.
+	if req.RecurringTransactionID != nil {
+		_, _ = database.Pool.Exec(c.Request.Context(),
+			`UPDATE recurring_transactions
+			 SET last_added_date = GREATEST(COALESCE(last_added_date, '-infinity'::timestamptz), $1),
+			     updated_at = NOW()
+			 WHERE id = $2 AND user_id = $3`,
+			date, *req.RecurringTransactionID, userID,
+		)
+	}
+
 	c.JSON(201, tx)
 }
 
