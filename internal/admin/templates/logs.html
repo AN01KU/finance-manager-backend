@@ -3,7 +3,7 @@
 
 <div class="card">
     <div class="log-controls">
-        <form method="GET" action="/admin/logs" style="display:flex;gap:10px;align-items:center;">
+        <form method="GET" action="/admin/logs" style="display:flex;gap:10px;align-items:center;flex:1;">
             <select name="method" onchange="this.form.submit()">
                 <option value="">All Methods</option>
                 <option value="GET" {{if eq .Filter "GET"}}selected{{end}}>GET</option>
@@ -20,7 +20,9 @@
             </select>
             <span class="text-muted" style="font-size:12px;">{{len .Logs}} entries (last 200)</span>
             <a href="/admin/logs" class="btn btn-sm" style="margin-left:auto;">↻ Reload</a>
-            <form method="POST" action="/admin/logs/clear" style="display:inline;" onsubmit="return confirm('Clear all logs?')"><button type="submit" class="btn btn-danger btn-sm">Clear Logs</button></form>
+        </form>
+        <form method="POST" action="/admin/logs/clear" onsubmit="return confirm('Clear all logs?')">
+            <button type="submit" class="btn btn-danger btn-sm">Clear Logs</button>
         </form>
     </div>
     {{if .Logs}}

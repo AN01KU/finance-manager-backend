@@ -7,6 +7,7 @@ import (
 	"html/template"
 	"log"
 	"net/http"
+	"net/url"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -119,7 +120,7 @@ func New(pool *pgxpool.Pool, username, password string, logStore *LogStore) *Adm
 	dir := filepath.Join("internal", "admin", "templates")
 	layoutFile := filepath.Join(dir, "layout.html")
 
-	pages := []string{"dashboard", "tables", "table_browse", "sql", "logs"}
+	pages := []string{"dashboard", "tables", "table_browse", "row_form", "sql", "logs"}
 	tmpls := make(map[string]*template.Template, len(pages))
 	for _, page := range pages {
 		pageFile := filepath.Join(dir, page+".html")
@@ -153,6 +154,10 @@ func (a *Admin) RegisterRoutes(r *gin.Engine) {
 		protected.GET("/", a.dashboard)
 		protected.GET("/tables", a.tables)
 		protected.GET("/tables/:name", a.tableBrowse)
+		protected.GET("/tables/:name/new", a.rowCreateForm)
+		protected.POST("/tables/:name/new", a.rowCreateSubmit)
+		protected.GET("/tables/:name/edit", a.rowEditForm)
+		protected.POST("/tables/:name/edit", a.rowEditSubmit)
 		protected.GET("/sql", a.sqlPage)
 		protected.POST("/sql", a.sqlExec)
 		protected.POST("/rows/delete", a.rowDelete)
@@ -415,6 +420,8 @@ func (a *Admin) tableBrowse(c *gin.Context) {
 		"PrevPage":  page - 1,
 		"NextPage":  page + 1,
 		"HasNext":   int64(offset+pageSize) < totalRows,
+		"Error":     c.Query("error"),
+		"Success":   c.Query("success"),
 	})
 }
 
@@ -426,6 +433,15 @@ func (a *Admin) rowDelete(c *gin.Context) {
 	pkVals := c.PostFormArray("pk_value")
 
 	if len(pkCols) == 0 || len(pkCols) != len(pkVals) {
+		c.Redirect(http.StatusFound, "/admin/tables")
+		return
+	}
+
+	// Validate table exists
+	var tableExists bool
+	a.pool.QueryRow(c.Request.Context(),
+		`SELECT EXISTS(SELECT 1 FROM pg_tables WHERE schemaname='public' AND tablename=$1)`, table).Scan(&tableExists)
+	if !tableExists {
 		c.Redirect(http.StatusFound, "/admin/tables")
 		return
 	}
@@ -444,20 +460,288 @@ func (a *Admin) rowDelete(c *gin.Context) {
 		}
 	}
 
-	// Build WHERE clause with all PK columns
+	// Build WHERE clause with all PK columns using identifier quoting
 	whereParts := make([]string, len(pkCols))
 	args := make([]interface{}, len(pkCols))
 	for i, col := range pkCols {
 		colType := pgCastType(c, a.pool, table, col)
-		whereParts[i] = fmt.Sprintf(`%q = $%d::%s`, col, i+1, colType)
+		whereParts[i] = fmt.Sprintf("%s = $%d::%s", quoteIdent(col), i+1, colType)
 		args[i] = pkVals[i]
 	}
-	query := fmt.Sprintf(`DELETE FROM %q WHERE %s`, table, strings.Join(whereParts, " AND "))
+	query := fmt.Sprintf("DELETE FROM %s WHERE %s", quoteIdent(table), strings.Join(whereParts, " AND "))
 	_, err := a.pool.Exec(c.Request.Context(), query, args...)
 	if err != nil {
 		log.Printf("admin: delete error: %v", err)
+		c.Redirect(http.StatusFound, "/admin/tables/"+table+"?error="+url.QueryEscape(err.Error()))
+		return
 	}
-	c.Redirect(http.StatusFound, "/admin/tables/"+table)
+	c.Redirect(http.StatusFound, "/admin/tables/"+table+"?success=Row+deleted")
+}
+
+// --- Row Create / Edit ---
+
+func (a *Admin) rowCreateForm(c *gin.Context) {
+	table := c.Param("name")
+	cols, err := a.getTableColumns(c, table)
+	if err != nil {
+		c.Redirect(http.StatusFound, "/admin/tables")
+		return
+	}
+	a.render(c, "row_form.html", gin.H{
+		"Title":     "Add Row — " + table,
+		"Active":    "tables",
+		"TableName": table,
+		"Columns":   cols,
+		"IsEdit":    false,
+		"Error":     c.Query("error"),
+	})
+}
+
+func (a *Admin) rowCreateSubmit(c *gin.Context) {
+	table := c.PostForm("table")
+
+	var tableExists bool
+	a.pool.QueryRow(c.Request.Context(),
+		`SELECT EXISTS(SELECT 1 FROM pg_tables WHERE schemaname='public' AND tablename=$1)`, table).Scan(&tableExists)
+	if !tableExists {
+		c.Redirect(http.StatusFound, "/admin/tables")
+		return
+	}
+
+	cols, err := a.getTableColumns(c, table)
+	if err != nil {
+		c.Redirect(http.StatusFound, "/admin/tables/"+table+"?error="+url.QueryEscape(err.Error()))
+		return
+	}
+
+	// Collect non-empty values from the form
+	var insertCols []string
+	var placeholders []string
+	var args []interface{}
+	idx := 1
+	for _, col := range cols {
+		val := c.PostForm("col_" + col.Name)
+		if val == "" && col.HasDefault {
+			continue // let the DB use its default
+		}
+		if val == "" && col.Nullable {
+			insertCols = append(insertCols, quoteIdent(col.Name))
+			placeholders = append(placeholders, fmt.Sprintf("NULL"))
+			continue
+		}
+		if val == "" {
+			continue // skip — DB will use default or error
+		}
+		insertCols = append(insertCols, quoteIdent(col.Name))
+		placeholders = append(placeholders, fmt.Sprintf("$%d::%s", idx, col.CastType))
+		args = append(args, val)
+		idx++
+	}
+
+	if len(insertCols) == 0 {
+		c.Redirect(http.StatusFound, "/admin/tables/"+table+"/new?error="+url.QueryEscape("No values provided"))
+		return
+	}
+
+	query := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)",
+		quoteIdent(table),
+		strings.Join(insertCols, ", "),
+		strings.Join(placeholders, ", "))
+	_, err = a.pool.Exec(c.Request.Context(), query, args...)
+	if err != nil {
+		c.Redirect(http.StatusFound, "/admin/tables/"+table+"/new?error="+url.QueryEscape(err.Error()))
+		return
+	}
+	c.Redirect(http.StatusFound, "/admin/tables/"+table+"?success=Row+created")
+}
+
+func (a *Admin) rowEditForm(c *gin.Context) {
+	table := c.Param("name")
+
+	// Validate table exists
+	var exists bool
+	a.pool.QueryRow(c.Request.Context(),
+		`SELECT EXISTS(SELECT 1 FROM pg_tables WHERE schemaname='public' AND tablename=$1)`, table).Scan(&exists)
+	if !exists {
+		c.Redirect(http.StatusFound, "/admin/tables")
+		return
+	}
+
+	// Retrieve PK columns & values from query params
+	pkCols := c.QueryArray("pk_column")
+	pkVals := c.QueryArray("pk_value")
+	if len(pkCols) == 0 || len(pkCols) != len(pkVals) {
+		c.Redirect(http.StatusFound, "/admin/tables/"+table)
+		return
+	}
+
+	// Build WHERE clause to fetch the row
+	whereParts := make([]string, len(pkCols))
+	args := make([]interface{}, len(pkCols))
+	for i, col := range pkCols {
+		colType := pgCastType(c, a.pool, table, col)
+		whereParts[i] = fmt.Sprintf("%s = $%d::%s", quoteIdent(col), i+1, colType)
+		args[i] = pkVals[i]
+	}
+
+	query := fmt.Sprintf("SELECT * FROM %s WHERE %s LIMIT 1", quoteIdent(table), strings.Join(whereParts, " AND "))
+	rows, err := a.pool.Query(c.Request.Context(), query, args...)
+	if err != nil {
+		c.Redirect(http.StatusFound, "/admin/tables/"+table+"?error="+url.QueryEscape(err.Error()))
+		return
+	}
+	defer rows.Close()
+
+	if !rows.Next() {
+		c.Redirect(http.StatusFound, "/admin/tables/"+table+"?error=Row+not+found")
+		return
+	}
+	values, _ := rows.Values()
+
+	// Build column-value pairs for the form
+	type colVal struct {
+		Name     string
+		Value    string
+		CastType string
+	}
+	var colValues []colVal
+	fieldDescs := rows.FieldDescriptions()
+	for i, fd := range fieldDescs {
+		val := ""
+		if values[i] != nil {
+			val = fmt.Sprintf("%v", values[i])
+		}
+		colValues = append(colValues, colVal{Name: string(fd.Name), Value: val})
+	}
+
+	a.render(c, "row_form.html", gin.H{
+		"Title":     "Edit Row — " + table,
+		"Active":    "tables",
+		"TableName": table,
+		"ColValues": colValues,
+		"PKColumns": pkCols,
+		"PKValues":  pkVals,
+		"IsEdit":    true,
+		"Error":     c.Query("error"),
+	})
+}
+
+func (a *Admin) rowEditSubmit(c *gin.Context) {
+	table := c.PostForm("table")
+	pkCols := c.PostFormArray("pk_column")
+	pkVals := c.PostFormArray("pk_value")
+
+	if len(pkCols) == 0 || len(pkCols) != len(pkVals) {
+		c.Redirect(http.StatusFound, "/admin/tables")
+		return
+	}
+
+	var tableExists bool
+	a.pool.QueryRow(c.Request.Context(),
+		`SELECT EXISTS(SELECT 1 FROM pg_tables WHERE schemaname='public' AND tablename=$1)`, table).Scan(&tableExists)
+	if !tableExists {
+		c.Redirect(http.StatusFound, "/admin/tables")
+		return
+	}
+
+	cols, err := a.getTableColumns(c, table)
+	if err != nil {
+		c.Redirect(http.StatusFound, "/admin/tables/"+table+"?error="+url.QueryEscape(err.Error()))
+		return
+	}
+
+	// Build SET clause from submitted form values
+	var setParts []string
+	var args []interface{}
+	idx := 1
+	for _, col := range cols {
+		val := c.PostForm("col_" + col.Name)
+		if val == "" && col.Nullable {
+			setParts = append(setParts, fmt.Sprintf("%s = NULL", quoteIdent(col.Name)))
+			continue
+		}
+		if val == "" {
+			continue
+		}
+		setParts = append(setParts, fmt.Sprintf("%s = $%d::%s", quoteIdent(col.Name), idx, col.CastType))
+		args = append(args, val)
+		idx++
+	}
+
+	// Build WHERE clause from PKs
+	whereParts := make([]string, len(pkCols))
+	for i, col := range pkCols {
+		colType := pgCastType(c, a.pool, table, col)
+		whereParts[i] = fmt.Sprintf("%s = $%d::%s", quoteIdent(col), idx, colType)
+		args = append(args, pkVals[i])
+		idx++
+	}
+
+	query := fmt.Sprintf("UPDATE %s SET %s WHERE %s",
+		quoteIdent(table),
+		strings.Join(setParts, ", "),
+		strings.Join(whereParts, " AND "))
+	_, err = a.pool.Exec(c.Request.Context(), query, args...)
+	if err != nil {
+		// Rebuild edit URL with PK params
+		editURL := "/admin/tables/" + table + "/edit?"
+		for i := range pkCols {
+			if i > 0 {
+				editURL += "&"
+			}
+			editURL += "pk_column=" + url.QueryEscape(pkCols[i]) + "&pk_value=" + url.QueryEscape(pkVals[i])
+		}
+		editURL += "&error=" + url.QueryEscape(err.Error())
+		c.Redirect(http.StatusFound, editURL)
+		return
+	}
+	c.Redirect(http.StatusFound, "/admin/tables/"+table+"?success=Row+updated")
+}
+
+// columnInfo holds metadata about a table column for form rendering.
+type columnInfo struct {
+	Name       string
+	DataType   string
+	CastType   string
+	Nullable   bool
+	HasDefault bool
+}
+
+func (a *Admin) getTableColumns(c *gin.Context, table string) ([]columnInfo, error) {
+	// Validate table exists
+	var exists bool
+	err := a.pool.QueryRow(c.Request.Context(),
+		`SELECT EXISTS(SELECT 1 FROM pg_tables WHERE schemaname='public' AND tablename=$1)`, table).Scan(&exists)
+	if err != nil || !exists {
+		return nil, fmt.Errorf("table not found")
+	}
+
+	rows, err := a.pool.Query(c.Request.Context(),
+		`SELECT column_name, data_type, is_nullable, column_default
+		 FROM information_schema.columns
+		 WHERE table_schema='public' AND table_name=$1
+		 ORDER BY ordinal_position`, table)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var cols []columnInfo
+	for rows.Next() {
+		var name, dataType, nullable string
+		var colDefault *string
+		if err := rows.Scan(&name, &dataType, &nullable, &colDefault); err != nil {
+			return nil, err
+		}
+		cols = append(cols, columnInfo{
+			Name:       name,
+			DataType:   dataType,
+			CastType:   pgCastType(c, a.pool, table, name),
+			Nullable:   nullable == "YES",
+			HasDefault: colDefault != nil,
+		})
+	}
+	return cols, nil
 }
 
 // --- SQL Runner ---
@@ -555,6 +839,11 @@ func (a *Admin) logsClear(c *gin.Context) {
 }
 
 // --- Helpers ---
+
+// quoteIdent wraps a SQL identifier in double quotes, escaping any embedded quotes.
+func quoteIdent(name string) string {
+	return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
+}
 
 // pgCastType returns a valid PostgreSQL cast type for a column.
 // information_schema.data_type returns verbose names (e.g. "character varying",

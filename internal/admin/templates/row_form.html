@@ -1,0 +1,49 @@
+{{define "content"}}
+<h1>
+    <a href="/admin/tables" style="color:var(--text2);">Tables</a> /
+    <a href="/admin/tables/{{.TableName}}" style="color:var(--text2);">{{.TableName}}</a> /
+    {{if .IsEdit}}Edit Row{{else}}Add Row{{end}}
+</h1>
+
+{{if .Error}}
+<div class="alert alert-error">{{.Error}}</div>
+{{end}}
+
+<div class="card">
+    {{if .IsEdit}}
+    <form method="POST" action="/admin/tables/{{.TableName}}/edit">
+        <input type="hidden" name="table" value="{{.TableName}}">
+        {{range $i, $col := .PKColumns}}
+        <input type="hidden" name="pk_column" value="{{$col}}">
+        <input type="hidden" name="pk_value" value="{{index $.PKValues $i}}">
+        {{end}}
+        {{range .ColValues}}
+        <div class="form-group">
+            <label>{{.Name}} <span class="text-muted" style="font-size:11px;">({{.CastType}})</span></label>
+            <input type="text" name="col_{{.Name}}" value="{{.Value}}">
+        </div>
+        {{end}}
+        <button type="submit" class="btn btn-primary">Update Row</button>
+        <a href="/admin/tables/{{.TableName}}" class="btn" style="margin-left:8px;">Cancel</a>
+    </form>
+    {{else}}
+    <form method="POST" action="/admin/tables/{{.TableName}}/new">
+        <input type="hidden" name="table" value="{{.TableName}}">
+        <p class="text-muted mb-2" style="font-size:13px;">Leave fields blank to use their default value.</p>
+        {{range .Columns}}
+        <div class="form-group">
+            <label>
+                {{.Name}}
+                <span class="text-muted" style="font-size:11px;">
+                    {{.DataType}}{{if .HasDefault}} · has default{{end}}{{if .Nullable}} · nullable{{end}}
+                </span>
+            </label>
+            <input type="text" name="col_{{.Name}}" placeholder="{{if .HasDefault}}(default){{end}}">
+        </div>
+        {{end}}
+        <button type="submit" class="btn btn-primary">Create Row</button>
+        <a href="/admin/tables/{{.TableName}}" class="btn" style="margin-left:8px;">Cancel</a>
+    </form>
+    {{end}}
+</div>
+{{end}}

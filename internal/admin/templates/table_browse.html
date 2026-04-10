@@ -2,10 +2,15 @@
 <h1>
     <a href="/admin/tables" style="color:var(--text2);">Tables</a> / <span class="mono">{{.TableName}}</span>
     <span class="badge badge-info" style="margin-left:8px;">{{.TotalRows}} rows</span>
+    <a href="/admin/tables/{{.TableName}}/new" class="btn btn-primary btn-sm" style="margin-left:12px;">+ Add Row</a>
 </h1>
 
 {{if .Error}}
 <div class="alert alert-error">{{.Error}}</div>
+{{end}}
+
+{{if .Success}}
+<div class="alert alert-success">{{.Success}}</div>
 {{end}}
 
 <div class="card" style="overflow-x:auto;">
@@ -20,10 +25,11 @@
             {{range .Rows}}
             <tr>
                 {{range .}}<td title="{{.}}">{{.}}</td>{{end}}
-                <td>
+                <td style="white-space:nowrap;">
+                    {{$row := .}}
+                    <a class="btn btn-sm" href="/admin/tables/{{$.TableName}}/edit?{{range $i, $idx := $.PKIndices}}{{if $i}}&amp;{{end}}pk_column={{index $.PKColumns $i}}&amp;pk_value={{index $row $idx}}{{end}}">Edit</a>
                     <form method="POST" action="/admin/rows/delete" style="display:inline;" onsubmit="return confirm('Delete this row?');">
                         <input type="hidden" name="table" value="{{$.TableName}}">
-                        {{$row := .}}
                         {{range $i, $idx := $.PKIndices}}
                         <input type="hidden" name="pk_column" value="{{index $.PKColumns $i}}">
                         <input type="hidden" name="pk_value" value="{{index $row $idx}}">
