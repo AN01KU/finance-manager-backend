@@ -452,7 +452,7 @@ func computeNextOccurrence(rt *RecurringTransaction) *helpers.EpochMillis {
 	if rt.LastAddedDate != nil {
 		baseline = rt.LastAddedDate.Time
 	}
-	next := nextOccurrence(baseline, rt.Frequency, rt.DayOfMonth, rt.DaysOfWeek, startOfDay(time.Now()))
+	next := nextFutureOccurrence(baseline, rt.Frequency, rt.DayOfMonth, rt.DaysOfWeek, startOfDay(time.Now()))
 	if next == nil {
 		return nil
 	}

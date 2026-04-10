@@ -108,9 +108,86 @@ func GenerateDueTransactions(ctx context.Context, userID uuid.UUID, database *db
 	return nil
 }
 
-// nextOccurrence mirrors the iOS RecurringDateHelper.nextOccurrence logic.
-// It returns the next date strictly after today that this recurring rule fires.
+// nextOccurrence returns the latest occurrence of the recurring rule that falls
+// on or before today. GenerateDueTransactions uses this to create transactions
+// only for dates that are already due — never for future dates.
 func nextOccurrence(startDate time.Time, frequency string, dayOfMonth *int, daysOfWeek []int, today time.Time) *time.Time {
+	next := startOfDay(startDate)
+
+	// If the start date is in the future, nothing is due yet.
+	if next.After(today) {
+		return nil
+	}
+
+	switch frequency {
+	case "daily":
+		// The latest daily occurrence on or before today is simply today.
+		next = today
+
+	case "weekly":
+		if len(daysOfWeek) == 0 {
+			for next.AddDate(0, 0, 7).Before(today) || next.AddDate(0, 0, 7).Equal(today) {
+				next = next.AddDate(0, 0, 7)
+			}
+		} else {
+			// Walk forward to find the latest matching weekday on or before today.
+			var latest *time.Time
+			candidate := next
+			for !candidate.After(today) {
+				weekday := int(candidate.Weekday())
+				if containsInt(daysOfWeek, weekday) {
+					t := candidate
+					latest = &t
+				}
+				candidate = candidate.AddDate(0, 0, 1)
+			}
+			if latest == nil {
+				return nil
+			}
+			next = *latest
+		}
+
+	case "monthly":
+		if dayOfMonth == nil {
+			for next.AddDate(0, 1, 0).Before(today) || next.AddDate(0, 1, 0).Equal(today) {
+				next = next.AddDate(0, 1, 0)
+			}
+		} else {
+			day := *dayOfMonth
+			if day > 28 {
+				day = 28
+			}
+			// Find the latest month where day_of_month falls on or before today.
+			for {
+				y, m, _ := next.Date()
+				m++
+				if m > 12 {
+					m = 1
+					y++
+				}
+				candidate := time.Date(y, m, day, 0, 0, 0, 0, time.UTC)
+				if candidate.After(today) {
+					break
+				}
+				next = candidate
+			}
+		}
+
+	case "yearly":
+		for next.AddDate(1, 0, 0).Before(today) || next.AddDate(1, 0, 0).Equal(today) {
+			next = next.AddDate(1, 0, 0)
+		}
+
+	default:
+		return nil
+	}
+
+	return &next
+}
+
+// nextFutureOccurrence returns the next occurrence strictly after today.
+// Used for the API response's next_occurrence field.
+func nextFutureOccurrence(startDate time.Time, frequency string, dayOfMonth *int, daysOfWeek []int, today time.Time) *time.Time {
 	next := startOfDay(startDate)
 
 	switch frequency {
@@ -126,8 +203,7 @@ func nextOccurrence(startDate time.Time, frequency string, dayOfMonth *int, days
 			}
 		} else {
 			for !next.After(today) {
-				// iOS: adjustedWeekday = weekday - 1, where Sunday=1 → 0, Monday=2 → 1
-				weekday := int(next.Weekday()) // Go: Sunday=0, Monday=1
+				weekday := int(next.Weekday())
 				if containsInt(daysOfWeek, weekday) && next.After(today) {
 					break
 				}
@@ -147,7 +223,6 @@ func nextOccurrence(startDate time.Time, frequency string, dayOfMonth *int, days
 			}
 			for !next.After(today) {
 				y, m, _ := next.Date()
-				// Advance to next month, then set the day
 				m++
 				if m > 12 {
 					m = 1
