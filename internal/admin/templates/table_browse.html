@@ -23,8 +23,11 @@
                 <td>
                     <form method="POST" action="/admin/rows/delete" style="display:inline;" onsubmit="return confirm('Delete this row?');">
                         <input type="hidden" name="table" value="{{$.TableName}}">
-                        <input type="hidden" name="pk_column" value="{{$.PKColumn}}">
-                        <input type="hidden" name="pk_value" value="{{index . 0}}">
+                        {{$row := .}}
+                        {{range $i, $idx := $.PKIndices}}
+                        <input type="hidden" name="pk_column" value="{{index $.PKColumns $i}}">
+                        <input type="hidden" name="pk_value" value="{{index $row $idx}}">
+                        {{end}}
                         <button type="submit" class="btn btn-danger btn-sm">Delete</button>
                     </form>
                 </td>

@@ -157,7 +157,7 @@ func (a *Admin) RegisterRoutes(r *gin.Engine) {
 		protected.POST("/sql", a.sqlExec)
 		protected.POST("/rows/delete", a.rowDelete)
 		protected.GET("/logs", a.logsPage)
-		protected.GET("/logs/clear", a.logsClear)
+		protected.POST("/logs/clear", a.logsClear)
 		protected.GET("/logout", a.logout)
 	}
 }
@@ -337,15 +337,24 @@ func (a *Admin) tableBrowse(c *gin.Context) {
 	var totalRows int64
 	a.pool.QueryRow(c.Request.Context(), fmt.Sprintf(`SELECT COUNT(*) FROM %q`, tableName)).Scan(&totalRows)
 
-	// Get primary key column (use first PK column; for composite PKs like group_members this picks one)
-	var pkColumn string
-	a.pool.QueryRow(c.Request.Context(),
+	// Get all primary key columns (supports composite PKs like group_members)
+	var pkColumns []string
+	pkRows, err := a.pool.Query(c.Request.Context(),
 		`SELECT a.attname FROM pg_index i
 		 JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
 		 WHERE i.indrelid = $1::regclass AND i.indisprimary
-		 ORDER BY array_position(i.indkey, a.attnum) LIMIT 1`, tableName).Scan(&pkColumn)
-	if pkColumn == "" {
-		pkColumn = "id"
+		 ORDER BY array_position(i.indkey, a.attnum)`, tableName)
+	if err == nil {
+		defer pkRows.Close()
+		for pkRows.Next() {
+			var col string
+			if pkRows.Scan(&col) == nil {
+				pkColumns = append(pkColumns, col)
+			}
+		}
+	}
+	if len(pkColumns) == 0 {
+		pkColumns = []string{"id"}
 	}
 
 	// Get rows
@@ -363,6 +372,17 @@ func (a *Admin) tableBrowse(c *gin.Context) {
 	columns := make([]string, 0)
 	for _, fd := range rows.FieldDescriptions() {
 		columns = append(columns, string(fd.Name))
+	}
+
+	// Find the index of each PK column in the result set
+	pkIndices := make([]int, 0, len(pkColumns))
+	for _, pk := range pkColumns {
+		for i, col := range columns {
+			if col == pk {
+				pkIndices = append(pkIndices, i)
+				break
+			}
+		}
 	}
 
 	var resultRows [][]string
@@ -388,7 +408,8 @@ func (a *Admin) tableBrowse(c *gin.Context) {
 		"TableName": tableName,
 		"Columns":   columns,
 		"Rows":      resultRows,
-		"PKColumn":  pkColumn,
+		"PKColumns": pkColumns,
+		"PKIndices": pkIndices,
 		"TotalRows": totalRows,
 		"Page":      page,
 		"PrevPage":  page - 1,
@@ -401,24 +422,38 @@ func (a *Admin) tableBrowse(c *gin.Context) {
 
 func (a *Admin) rowDelete(c *gin.Context) {
 	table := c.PostForm("table")
-	pkCol := c.PostForm("pk_column")
-	pkVal := c.PostForm("pk_value")
+	pkCols := c.PostFormArray("pk_column")
+	pkVals := c.PostFormArray("pk_value")
 
-	// Validate table and column exist in the catalog (prevents SQL injection)
-	var colExists bool
-	a.pool.QueryRow(c.Request.Context(),
-		`SELECT EXISTS(
-			SELECT 1 FROM information_schema.columns
-			WHERE table_schema='public' AND table_name=$1 AND column_name=$2
-		)`, table, pkCol).Scan(&colExists)
-	if !colExists {
+	if len(pkCols) == 0 || len(pkCols) != len(pkVals) {
 		c.Redirect(http.StatusFound, "/admin/tables")
 		return
 	}
 
-	colType := pgTypeForColumn(c, a.pool, table, pkCol)
-	query := fmt.Sprintf(`DELETE FROM %q WHERE %q = $1::text::%s`, table, pkCol, colType)
-	_, err := a.pool.Exec(c.Request.Context(), query, pkVal)
+	// Validate all columns exist in the catalog (prevents SQL injection)
+	for _, col := range pkCols {
+		var colExists bool
+		a.pool.QueryRow(c.Request.Context(),
+			`SELECT EXISTS(
+				SELECT 1 FROM information_schema.columns
+				WHERE table_schema='public' AND table_name=$1 AND column_name=$2
+			)`, table, col).Scan(&colExists)
+		if !colExists {
+			c.Redirect(http.StatusFound, "/admin/tables")
+			return
+		}
+	}
+
+	// Build WHERE clause with all PK columns
+	whereParts := make([]string, len(pkCols))
+	args := make([]interface{}, len(pkCols))
+	for i, col := range pkCols {
+		colType := pgCastType(c, a.pool, table, col)
+		whereParts[i] = fmt.Sprintf(`%q = $%d::%s`, col, i+1, colType)
+		args[i] = pkVals[i]
+	}
+	query := fmt.Sprintf(`DELETE FROM %q WHERE %s`, table, strings.Join(whereParts, " AND "))
+	_, err := a.pool.Exec(c.Request.Context(), query, args...)
 	if err != nil {
 		log.Printf("admin: delete error: %v", err)
 	}
@@ -521,9 +556,11 @@ func (a *Admin) logsClear(c *gin.Context) {
 
 // --- Helpers ---
 
-// pgTypeForColumn returns the PostgreSQL data type for a column so we can cast
-// the text parameter correctly (e.g. uuid, integer, timestamptz). Falls back to "text".
-func pgTypeForColumn(c *gin.Context, pool *pgxpool.Pool, table, column string) string {
+// pgCastType returns a valid PostgreSQL cast type for a column.
+// information_schema.data_type returns verbose names (e.g. "character varying",
+// "timestamp with time zone") that are not valid in a ::cast expression, so we
+// map them to their short aliases.
+func pgCastType(c *gin.Context, pool *pgxpool.Pool, table, column string) string {
 	var dataType string
 	err := pool.QueryRow(c.Request.Context(),
 		`SELECT data_type FROM information_schema.columns
@@ -532,7 +569,41 @@ func pgTypeForColumn(c *gin.Context, pool *pgxpool.Pool, table, column string) s
 	if err != nil || dataType == "" {
 		return "text"
 	}
-	return dataType
+	switch strings.ToLower(dataType) {
+	case "character varying":
+		return "varchar"
+	case "character":
+		return "char"
+	case "timestamp with time zone":
+		return "timestamptz"
+	case "timestamp without time zone":
+		return "timestamp"
+	case "double precision":
+		return "float8"
+	case "real":
+		return "float4"
+	case "smallint":
+		return "int2"
+	case "bigint":
+		return "int8"
+	case "boolean":
+		return "bool"
+	case "user-defined":
+		// For custom/enum types, query the actual udt_name
+		var udtName string
+		pool.QueryRow(c.Request.Context(),
+			`SELECT udt_name FROM information_schema.columns
+			 WHERE table_schema = 'public' AND table_name = $1 AND column_name = $2`,
+			table, column).Scan(&udtName)
+		if udtName != "" {
+			return udtName
+		}
+		return "text"
+	case "array":
+		return "text"
+	default:
+		return dataType
+	}
 }
 
 func (a *Admin) render(c *gin.Context, name string, data gin.H) {
