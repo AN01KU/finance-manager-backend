@@ -337,12 +337,13 @@ func (a *Admin) tableBrowse(c *gin.Context) {
 	var totalRows int64
 	a.pool.QueryRow(c.Request.Context(), fmt.Sprintf(`SELECT COUNT(*) FROM %q`, tableName)).Scan(&totalRows)
 
-	// Get primary key column
+	// Get primary key column (use first PK column; for composite PKs like group_members this picks one)
 	var pkColumn string
 	a.pool.QueryRow(c.Request.Context(),
 		`SELECT a.attname FROM pg_index i
 		 JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
-		 WHERE i.indrelid = $1::regclass AND i.indisprimary LIMIT 1`, tableName).Scan(&pkColumn)
+		 WHERE i.indrelid = $1::regclass AND i.indisprimary
+		 ORDER BY array_position(i.indkey, a.attnum) LIMIT 1`, tableName).Scan(&pkColumn)
 	if pkColumn == "" {
 		pkColumn = "id"
 	}
@@ -403,16 +404,20 @@ func (a *Admin) rowDelete(c *gin.Context) {
 	pkCol := c.PostForm("pk_column")
 	pkVal := c.PostForm("pk_value")
 
-	// Validate table exists
-	var exists bool
+	// Validate table and column exist in the catalog (prevents SQL injection)
+	var colExists bool
 	a.pool.QueryRow(c.Request.Context(),
-		`SELECT EXISTS(SELECT 1 FROM pg_tables WHERE schemaname='public' AND tablename=$1)`, table).Scan(&exists)
-	if !exists {
+		`SELECT EXISTS(
+			SELECT 1 FROM information_schema.columns
+			WHERE table_schema='public' AND table_name=$1 AND column_name=$2
+		)`, table, pkCol).Scan(&colExists)
+	if !colExists {
 		c.Redirect(http.StatusFound, "/admin/tables")
 		return
 	}
 
-	query := fmt.Sprintf(`DELETE FROM %q WHERE %q = $1`, table, pkCol)
+	colType := pgTypeForColumn(c, a.pool, table, pkCol)
+	query := fmt.Sprintf(`DELETE FROM %q WHERE %q = $1::text::%s`, table, pkCol, colType)
 	_, err := a.pool.Exec(c.Request.Context(), query, pkVal)
 	if err != nil {
 		log.Printf("admin: delete error: %v", err)
@@ -515,6 +520,20 @@ func (a *Admin) logsClear(c *gin.Context) {
 }
 
 // --- Helpers ---
+
+// pgTypeForColumn returns the PostgreSQL data type for a column so we can cast
+// the text parameter correctly (e.g. uuid, integer, timestamptz). Falls back to "text".
+func pgTypeForColumn(c *gin.Context, pool *pgxpool.Pool, table, column string) string {
+	var dataType string
+	err := pool.QueryRow(c.Request.Context(),
+		`SELECT data_type FROM information_schema.columns
+		 WHERE table_schema = 'public' AND table_name = $1 AND column_name = $2`,
+		table, column).Scan(&dataType)
+	if err != nil || dataType == "" {
+		return "text"
+	}
+	return dataType
+}
 
 func (a *Admin) render(c *gin.Context, name string, data gin.H) {
 	c.Writer.Header().Set("Content-Type", "text/html; charset=utf-8")
