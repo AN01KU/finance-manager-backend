@@ -401,7 +401,7 @@ func (a *Admin) tableBrowse(c *gin.Context) {
 			if v == nil {
 				row[i] = "NULL"
 			} else {
-				row[i] = fmt.Sprintf("%v", v)
+				row[i] = formatValue(v)
 			}
 		}
 		resultRows = append(resultRows, row)
@@ -609,7 +609,7 @@ func (a *Admin) rowEditForm(c *gin.Context) {
 	for i, fd := range fieldDescs {
 		val := ""
 		if values[i] != nil {
-			val = fmt.Sprintf("%v", values[i])
+			val = formatValue(values[i])
 		}
 		colValues = append(colValues, colVal{Name: string(fd.Name), Value: val})
 	}
@@ -798,7 +798,7 @@ func (a *Admin) sqlExec(c *gin.Context) {
 				if v == nil {
 					row[i] = "NULL"
 				} else {
-					row[i] = fmt.Sprintf("%v", v)
+					row[i] = formatValue(v)
 				}
 			}
 			resultRows = append(resultRows, row)
@@ -839,6 +839,18 @@ func (a *Admin) logsClear(c *gin.Context) {
 }
 
 // --- Helpers ---
+
+// formatValue converts a pgx row value to a display string, handling types
+// like [16]byte (UUID) that fmt.Sprintf("%v") renders as byte arrays.
+func formatValue(v interface{}) string {
+	switch val := v.(type) {
+	case [16]byte:
+		return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x",
+			val[0:4], val[4:6], val[6:8], val[8:10], val[10:16])
+	default:
+		return fmt.Sprintf("%v", v)
+	}
+}
 
 // quoteIdent wraps a SQL identifier in double quotes, escaping any embedded quotes.
 func quoteIdent(name string) string {
