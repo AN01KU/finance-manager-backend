@@ -2,8 +2,10 @@ package helpers
 
 import (
 	"context"
+	"errors"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/yanonymousV2/finance-manager-backend/internal/db"
 )
 
@@ -32,7 +34,10 @@ func GetUserByEmail(ctx context.Context, db *db.DB, email string) (uuid.UUID, bo
 		"SELECT id FROM users WHERE email = $1",
 		email).Scan(&userID)
 	if err != nil {
-		return uuid.Nil, false, nil
+		if errors.Is(err, pgx.ErrNoRows) {
+			return uuid.Nil, false, nil
+		}
+		return uuid.Nil, false, err
 	}
 	return userID, true, nil
 }

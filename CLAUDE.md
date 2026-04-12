@@ -31,11 +31,13 @@ docker-compose up --build
 | `DATABASE_URL` | Yes | `postgres://user:password@localhost:5432/finance_manager?sslmode=disable` | Must start with `postgres://` |
 | `JWT_SECRET` | Yes | — | Must be ≥ 32 characters; app refuses to start otherwise |
 | `PORT` | No | `8080` | |
+| `INVITE_CODE` | No | `""` | If set, signup requires this code; if empty, signup is open |
+| `CORS_ORIGIN` | No | `*` | Allowed CORS origin; set to your frontend URL in production |
 | `RATE_LIMIT` | No | `10` | Max requests per window |
 | `RATE_WINDOW_SECONDS` | No | `60` | Rate limit window in seconds |
 | `ADMIN_USERNAME` | No | `admin` | Admin dashboard login username |
 | `ADMIN_PASSWORD` | Yes (for admin) | — | Admin dashboard login password; login disabled if empty |
-| `GIN_MODE` | No | `debug` | Set to `release` in production to enable rate limiting (rate limiter is skipped in non-release mode) |
+| `GIN_MODE` | No | `debug` | Set to `release` in production to enable rate limiting, secure cookies, disable SQL runner, and skip seed data |
 | `SYNC_SESSION_TTL_DAYS` | No | `90` | Days before inactive sync sessions are expired by background cleanup |
 
 Migrations run automatically on startup via `golang-migrate`. No manual migration step needed.

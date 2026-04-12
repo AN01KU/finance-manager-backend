@@ -11,6 +11,7 @@ type Config struct {
 	JWTSecret          string
 	Port               string
 	InviteCode         string
+	CORSOrigin         string
 	AdminUsername       string
 	AdminPassword      string
 	SyncSessionTTLDays int
@@ -22,6 +23,7 @@ func Load() *Config {
 		JWTSecret:  getEnvRequired("JWT_SECRET"),
 		Port:       getEnv("PORT", "8080"),
 		InviteCode:    getEnv("INVITE_CODE", ""),
+		CORSOrigin:    getEnv("CORS_ORIGIN", "*"),
 		AdminUsername:       getEnv("ADMIN_USERNAME", "admin"),
 		AdminPassword:       getEnv("ADMIN_PASSWORD", ""),
 		SyncSessionTTLDays: getEnvInt("SYNC_SESSION_TTL_DAYS", 90),

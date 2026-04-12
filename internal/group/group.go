@@ -17,6 +17,8 @@ import (
 	"github.com/yanonymousV2/finance-manager-backend/internal/middleware"
 )
 
+var validate = validator.New()
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -119,7 +121,6 @@ func CreateGroup(c *gin.Context, database *db.DB) {
 		return
 	}
 
-	validate := validator.New()
 	if err := validate.Struct(req); err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
@@ -137,11 +138,11 @@ func CreateGroup(c *gin.Context, database *db.DB) {
 	err = tx.QueryRow(c.Request.Context(),
 		"INSERT INTO groups (name, created_by) VALUES ($1, $2) RETURNING id, name, created_by, created_at",
 		req.Name, userID).Scan(&g.ID, &g.Name, &g.CreatedBy, &rawGroupCreatedAt)
-	g.CreatedAt = helpers.FromTime(rawGroupCreatedAt)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "failed to create group"})
 		return
 	}
+	g.CreatedAt = helpers.FromTime(rawGroupCreatedAt)
 
 	_, err = tx.Exec(c.Request.Context(),
 		"INSERT INTO group_members (group_id, user_id) VALUES ($1, $2)", g.ID, userID)
@@ -328,11 +329,11 @@ func GetGroup(c *gin.Context, database *db.DB) {
 	err = database.Pool.QueryRow(c.Request.Context(),
 		"SELECT id, name, created_by, created_at FROM groups WHERE id = $1", groupID,
 	).Scan(&g.ID, &g.Name, &g.CreatedBy, &rawGroupCreatedAt2)
-	g.CreatedAt = helpers.FromTime(rawGroupCreatedAt2)
 	if err != nil {
 		c.JSON(404, gin.H{"error": "group not found"})
 		return
 	}
+	g.CreatedAt = helpers.FromTime(rawGroupCreatedAt2)
 
 	memberRows, err := database.Pool.Query(c.Request.Context(),
 		`SELECT u.id, u.email, u.username, gm.joined_at
@@ -479,7 +480,6 @@ func AddMember(c *gin.Context, database *db.DB) {
 		return
 	}
 
-	validate := validator.New()
 	if err := validate.Struct(req); err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
@@ -771,7 +771,6 @@ func CreateGroupTransaction(c *gin.Context, database *db.DB) {
 		return
 	}
 
-	validate := validator.New()
 	if err := validate.Struct(req); err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
@@ -1104,7 +1103,6 @@ func UpdateGroupTransaction(c *gin.Context, database *db.DB) {
 		return
 	}
 
-	validate := validator.New()
 	if err := validate.Struct(req); err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return

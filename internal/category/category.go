@@ -13,6 +13,8 @@ import (
 	"github.com/yanonymousV2/finance-manager-backend/internal/middleware"
 )
 
+var validate = validator.New()
+
 type CustomCategory struct {
 	ID            uuid.UUID           `json:"id"`
 	UserID        uuid.UUID           `json:"user_id"`
@@ -95,7 +97,6 @@ func CreateCategory(c *gin.Context, db *db.DB) {
 		return
 	}
 
-	validate := validator.New()
 	if err := validate.Struct(req); err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
@@ -228,7 +229,6 @@ func UpdateCategory(c *gin.Context, db *db.DB) {
 		return
 	}
 
-	validate := validator.New()
 	if err := validate.Struct(req); err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return

@@ -2,6 +2,7 @@ package admin
 
 import (
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/hex"
 	"fmt"
 	"html/template"
@@ -219,9 +220,12 @@ func (a *Admin) loginPage(c *gin.Context) {
 func (a *Admin) loginSubmit(c *gin.Context) {
 	user := c.PostForm("username")
 	pass := c.PostForm("password")
-	if user == a.username && pass == a.password && a.password != "" {
+	usernameMatch := subtle.ConstantTimeCompare([]byte(user), []byte(a.username)) == 1
+	passwordMatch := subtle.ConstantTimeCompare([]byte(pass), []byte(a.password)) == 1
+	if usernameMatch && passwordMatch && a.password != "" {
 		token := a.createSession()
-		c.SetCookie(sessionCookieName, token, sessionMaxAge, "/admin", "", false, true)
+		secure := gin.Mode() == gin.ReleaseMode
+		c.SetCookie(sessionCookieName, token, sessionMaxAge, "/admin", "", secure, true)
 		c.Redirect(http.StatusFound, "/admin/")
 		return
 	}
@@ -754,6 +758,15 @@ func (a *Admin) sqlPage(c *gin.Context) {
 }
 
 func (a *Admin) sqlExec(c *gin.Context) {
+	// Disable SQL execution in production for security
+	if gin.Mode() == gin.ReleaseMode {
+		a.render(c, "sql.html", gin.H{
+			"Title": "SQL Runner", "Active": "sql",
+			"Error": "SQL runner is disabled in production mode",
+		})
+		return
+	}
+
 	query := strings.TrimSpace(c.PostForm("query"))
 	if query == "" {
 		a.render(c, "sql.html", gin.H{

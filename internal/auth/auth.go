@@ -16,6 +16,8 @@ import (
 	"github.com/yanonymousV2/finance-manager-backend/internal/user"
 )
 
+var validate = validator.New()
+
 type SignupRequest struct {
 	Email      string `json:"email" validate:"required,email"`
 	Username   string `json:"username" validate:"required,min=3"`
@@ -55,19 +57,17 @@ func Signup(c *gin.Context, service *AuthService) {
 		return
 	}
 
-	validate := validator.New()
 	if err := validate.Struct(req); err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
 
-	// Check invite code — accepts hardcoded fallback or env-configured code
-	const hardcodedInviteCode = "FIN-INVITE-2026"
-	validCode := req.InviteCode == hardcodedInviteCode ||
-		(service.InviteCode != "" && req.InviteCode == service.InviteCode)
-	if !validCode {
-		c.JSON(403, gin.H{"error": "invalid invite code"})
-		return
+	// Check invite code (configured via INVITE_CODE env var)
+	if service.InviteCode != "" {
+		if req.InviteCode != service.InviteCode {
+			c.JSON(403, gin.H{"error": "invalid invite code"})
+			return
+		}
 	}
 
 	// Check if user exists
@@ -95,11 +95,11 @@ func Signup(c *gin.Context, service *AuthService) {
 	err = db.Pool.QueryRow(c.Request.Context(),
 		"INSERT INTO users (email, username, password_hash) VALUES ($1, $2, $3) RETURNING id, email, username, created_at",
 		req.Email, req.Username, string(hash)).Scan(&u.ID, &u.Email, &u.Username, &rawCreatedAt)
-	u.CreatedAt = helpers.FromTime(rawCreatedAt)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "failed to create user"})
 		return
 	}
+	u.CreatedAt = helpers.FromTime(rawCreatedAt)
 
 	// Run post-signup hook (e.g., seed predefined categories)
 	if service.OnSignup != nil {
@@ -140,11 +140,11 @@ func GetMe(c *gin.Context, service *AuthService) {
 	err := service.DB.Pool.QueryRow(c.Request.Context(),
 		"SELECT id, email, username, created_at FROM users WHERE id = $1", userID).Scan(
 		&u.ID, &u.Email, &u.Username, &rawCreatedAt)
-	u.CreatedAt = helpers.FromTime(rawCreatedAt)
 	if err != nil {
 		c.JSON(404, gin.H{"error": "user not found"})
 		return
 	}
+	u.CreatedAt = helpers.FromTime(rawCreatedAt)
 
 	c.JSON(200, u)
 }
@@ -157,7 +157,6 @@ func Login(c *gin.Context, service *AuthService) {
 		return
 	}
 
-	validate := validator.New()
 	if err := validate.Struct(req); err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
@@ -169,11 +168,11 @@ func Login(c *gin.Context, service *AuthService) {
 	err := db.Pool.QueryRow(c.Request.Context(),
 		"SELECT id, email, username, password_hash, created_at FROM users WHERE email = $1", req.Email).Scan(
 		&u.ID, &u.Email, &u.Username, &u.PasswordHash, &rawCreatedAt)
-	u.CreatedAt = helpers.FromTime(rawCreatedAt)
 	if err != nil {
 		c.JSON(401, gin.H{"error": "invalid credentials"})
 		return
 	}
+	u.CreatedAt = helpers.FromTime(rawCreatedAt)
 
 	// Check password
 	if err := bcrypt.CompareHashAndPassword([]byte(u.PasswordHash), []byte(req.Password)); err != nil {

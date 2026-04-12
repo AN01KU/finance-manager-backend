@@ -14,6 +14,8 @@ import (
 	"github.com/yanonymousV2/finance-manager-backend/internal/middleware"
 )
 
+var validate = validator.New()
+
 type RecurringTransaction struct {
 	ID             uuid.UUID            `json:"id"`
 	UserID         uuid.UUID            `json:"user_id"`
@@ -75,7 +77,6 @@ func CreateRecurringTransaction(c *gin.Context, db *db.DB) {
 		return
 	}
 
-	validate := validator.New()
 	if err := validate.Struct(req); err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
@@ -266,7 +267,6 @@ func UpdateRecurringTransaction(c *gin.Context, db *db.DB) {
 		return
 	}
 
-	validate := validator.New()
 	if err := validate.Struct(req); err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return

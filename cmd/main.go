@@ -61,10 +61,12 @@ func main() {
 	}
 	log.Println("✓ Migrations completed successfully")
 
-	// Seed test data
-	log.Println("Seeding test data...")
-	if err := seed.Seed(ctx, database); err != nil {
-		log.Printf("Warning: failed to seed test data: %v", err)
+	// Seed test data (development only)
+	if gin.Mode() != gin.ReleaseMode {
+		log.Println("Seeding test data...")
+		if err := seed.Seed(ctx, database); err != nil {
+			log.Printf("Warning: failed to seed test data: %v", err)
+		}
 	}
 
 	// Start sync session cleanup
@@ -73,7 +75,7 @@ func main() {
 	// Setup Gin
 	r := gin.Default()
 	r.Use(middleware.RequestLogger())
-	r.Use(middleware.CORS())
+	r.Use(middleware.CORS(cfg.CORSOrigin))
 
 	// Admin dashboard with request logging
 	logStore := admin.NewLogStore()
@@ -200,8 +202,10 @@ func main() {
 		log.Fatal("Server forced to shutdown:", err)
 	}
 
-	// Cleanup test data
-	seed.Cleanup(context.Background(), database)
+	// Cleanup test data (development only)
+	if gin.Mode() != gin.ReleaseMode {
+		seed.Cleanup(context.Background(), database)
+	}
 
 	log.Println("Server exited gracefully")
 }
