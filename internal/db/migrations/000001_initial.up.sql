@@ -54,6 +54,7 @@ CREATE INDEX idx_transactions_date ON transactions(user_id, date DESC);
 CREATE INDEX idx_transactions_type ON transactions(user_id, type);
 CREATE INDEX idx_transactions_not_deleted ON transactions(user_id, is_deleted) WHERE is_deleted = FALSE;
 CREATE INDEX idx_transactions_settlement ON transactions(settlement_id) WHERE settlement_id IS NOT NULL;
+CREATE INDEX idx_transactions_group_tx_id ON transactions(group_transaction_id) WHERE group_transaction_id IS NOT NULL;
 
 -- Monthly budgets
 CREATE TABLE monthly_budgets (
@@ -66,8 +67,6 @@ CREATE TABLE monthly_budgets (
     updated_at TIMESTAMPTZ DEFAULT NOW(),
     UNIQUE(user_id, year, month)
 );
-
-CREATE INDEX idx_monthly_budgets_user ON monthly_budgets(user_id, year, month);
 
 -- Custom categories
 CREATE TABLE custom_categories (
