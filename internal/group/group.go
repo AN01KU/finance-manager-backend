@@ -926,11 +926,32 @@ func ListGroupTransactions(c *gin.Context, database *db.DB) {
 		return
 	}
 
+	limit := 50
+	if s := c.Query("limit"); s != "" {
+		if l, err := strconv.Atoi(s); err == nil && l > 0 && l <= 100 {
+			limit = l
+		}
+	}
+	offset := 0
+	if s := c.Query("offset"); s != "" {
+		if o, err := strconv.Atoi(s); err == nil && o >= 0 {
+			offset = o
+		}
+	}
+
+	var total int
+	if err := database.Pool.QueryRow(c.Request.Context(),
+		`SELECT COUNT(*) FROM group_transactions WHERE group_id = $1 AND is_deleted = FALSE`, groupID).Scan(&total); err != nil {
+		c.JSON(500, gin.H{"error": "failed to get transaction count"})
+		return
+	}
+
 	rows, err := database.Pool.Query(c.Request.Context(),
 		`SELECT id, group_id, paid_by_user_id, total_amount, category, date, description, notes, is_deleted, created_at, updated_at
 		 FROM group_transactions
 		 WHERE group_id = $1 AND is_deleted = FALSE
-		 ORDER BY date DESC, created_at DESC`, groupID)
+		 ORDER BY date DESC, created_at DESC
+		 LIMIT $2 OFFSET $3`, groupID, limit, offset)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "failed to retrieve group transactions"})
 		return
@@ -958,7 +979,10 @@ func ListGroupTransactions(c *gin.Context, database *db.DB) {
 	}
 
 	if len(gtIDs) == 0 {
-		c.JSON(200, gin.H{"data": []GroupTransaction{}})
+		c.JSON(200, gin.H{
+			"data": []GroupTransaction{},
+			"pagination": gin.H{"limit": limit, "offset": offset, "total": total},
+		})
 		return
 	}
 
@@ -989,7 +1013,10 @@ func ListGroupTransactions(c *gin.Context, database *db.DB) {
 		}
 	}
 
-	c.JSON(200, gin.H{"data": gts})
+	c.JSON(200, gin.H{
+		"data": gts,
+		"pagination": gin.H{"limit": limit, "offset": offset, "total": total},
+	})
 }
 
 func GetGroupTransaction(c *gin.Context, database *db.DB) {

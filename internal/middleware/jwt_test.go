@@ -10,12 +10,12 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 
-	"github.com/yanonymousV2/finance-manager-backend/internal/auth"
+	"github.com/yanonymousV2/finance-manager-backend/internal/user"
 )
 
 func makeToken(t *testing.T, secret string, userID uuid.UUID, email string, expiresAt time.Time) string {
 	t.Helper()
-	claims := auth.Claims{
+	claims := user.Claims{
 		UserID: userID,
 		Email:  email,
 		RegisteredClaims: jwt.RegisteredClaims{

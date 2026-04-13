@@ -8,7 +8,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 
-	"github.com/yanonymousV2/finance-manager-backend/internal/auth"
+	"github.com/yanonymousV2/finance-manager-backend/internal/user"
 )
 
 func JWTAuth(jwtSecret string) gin.HandlerFunc {
@@ -27,7 +27,7 @@ func JWTAuth(jwtSecret string) gin.HandlerFunc {
 			return
 		}
 
-		token, err := jwt.ParseWithClaims(tokenString, &auth.Claims{}, func(token *jwt.Token) (interface{}, error) {
+		token, err := jwt.ParseWithClaims(tokenString, &user.Claims{}, func(token *jwt.Token) (interface{}, error) {
 			return []byte(jwtSecret), nil
 		})
 		if err != nil || !token.Valid {
@@ -36,7 +36,7 @@ func JWTAuth(jwtSecret string) gin.HandlerFunc {
 			return
 		}
 
-		claims, ok := token.Claims.(*auth.Claims)
+		claims, ok := token.Claims.(*user.Claims)
 		if !ok {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid token claims"})
 			c.Abort()

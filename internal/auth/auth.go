@@ -36,12 +36,6 @@ type AuthResponse struct {
 	User          user.User `json:"user"`
 }
 
-type Claims struct {
-	UserID uuid.UUID `json:"user_id"`
-	Email  string    `json:"email"`
-	jwt.RegisteredClaims
-}
-
 type AuthService struct {
 	DB         *db.DB
 	JWTSecret  string
@@ -50,7 +44,7 @@ type AuthService struct {
 }
 
 func Signup(c *gin.Context, service *AuthService) {
-	db := service.DB
+	database := service.DB
 	var req SignupRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
@@ -72,7 +66,7 @@ func Signup(c *gin.Context, service *AuthService) {
 
 	// Check if user exists
 	var count int
-	err := db.Pool.QueryRow(c.Request.Context(), "SELECT COUNT(*) FROM users WHERE email = $1", req.Email).Scan(&count)
+	err := database.Pool.QueryRow(c.Request.Context(), "SELECT COUNT(*) FROM users WHERE email = $1", req.Email).Scan(&count)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "database error"})
 		return
@@ -92,7 +86,7 @@ func Signup(c *gin.Context, service *AuthService) {
 	// Insert user
 	var u user.User
 	var rawCreatedAt time.Time
-	err = db.Pool.QueryRow(c.Request.Context(),
+	err = database.Pool.QueryRow(c.Request.Context(),
 		"INSERT INTO users (email, username, password_hash) VALUES ($1, $2, $3) RETURNING id, email, username, created_at",
 		req.Email, req.Username, string(hash)).Scan(&u.ID, &u.Email, &u.Username, &rawCreatedAt)
 	if err != nil {
@@ -114,7 +108,7 @@ func Signup(c *gin.Context, service *AuthService) {
 	}
 
 	// Create sync session
-	syncSessionID, err := createSyncSession(c.Request.Context(), db, u.ID)
+	syncSessionID, err := createSyncSession(c.Request.Context(), database, u.ID)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "failed to create sync session"})
 		return
@@ -150,7 +144,7 @@ func GetMe(c *gin.Context, service *AuthService) {
 }
 
 func Login(c *gin.Context, service *AuthService) {
-	db := service.DB
+	database := service.DB
 	var req LoginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
@@ -165,7 +159,7 @@ func Login(c *gin.Context, service *AuthService) {
 	// Get user
 	var u user.User
 	var rawCreatedAt time.Time
-	err := db.Pool.QueryRow(c.Request.Context(),
+	err := database.Pool.QueryRow(c.Request.Context(),
 		"SELECT id, email, username, password_hash, created_at FROM users WHERE email = $1", req.Email).Scan(
 		&u.ID, &u.Email, &u.Username, &u.PasswordHash, &rawCreatedAt)
 	if err != nil {
@@ -188,7 +182,7 @@ func Login(c *gin.Context, service *AuthService) {
 	}
 
 	// Create sync session
-	syncSessionID, err := createSyncSession(c.Request.Context(), db, u.ID)
+	syncSessionID, err := createSyncSession(c.Request.Context(), database, u.ID)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "failed to create sync session"})
 		return
@@ -268,7 +262,7 @@ func createSyncSession(ctx context.Context, database *db.DB, userID uuid.UUID) (
 }
 
 func generateToken(userID uuid.UUID, email string, jwtSecret string) (string, error) {
-	claims := Claims{
+	claims := user.Claims{
 		UserID: userID,
 		Email:  email,
 		RegisteredClaims: jwt.RegisteredClaims{
