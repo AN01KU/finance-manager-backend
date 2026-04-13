@@ -81,7 +81,7 @@ func main() {
 	logStore := admin.NewLogStore()
 	r.Use(admin.LoggerMiddleware(logStore))
 	adminPanel := admin.New(database.Pool, cfg.AdminUsername, cfg.AdminPassword, logStore)
-	adminPanel.RegisterRoutes(r)
+	adminPanel.RegisterRoutes(r, middleware.RateLimiter())
 
 	// Health check
 	r.GET("/health", func(c *gin.Context) {

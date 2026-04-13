@@ -3,6 +3,7 @@ package transaction
 import (
 	"errors"
 	"fmt"
+	"log"
 	"strconv"
 	"time"
 
@@ -127,7 +128,7 @@ func CreateTransaction(c *gin.Context, database *db.DB) {
 			c.JSON(409, gin.H{"error": "transaction ID conflict with another user"})
 			return
 		}
-		fmt.Printf("[ERROR] CreateTransaction: %v\n", err)
+		log.Printf("[ERROR] CreateTransaction: %v", err)
 		c.JSON(500, gin.H{"error": "failed to create transaction"})
 		return
 	}
@@ -160,7 +161,7 @@ func ListTransactions(c *gin.Context, database *db.DB) {
 	}
 
 	if err := recurring.GenerateDueTransactions(c.Request.Context(), userID, database, time.Now()); err != nil {
-		fmt.Printf("[WARN] GenerateDueTransactions: %v\n", err)
+		log.Printf("[WARN] GenerateDueTransactions: %v", err)
 	}
 
 	limit := 50
@@ -251,7 +252,7 @@ func ListTransactions(c *gin.Context, database *db.DB) {
 
 	var total int
 	if err := database.Pool.QueryRow(c.Request.Context(), countQuery, args...).Scan(&total); err != nil {
-		fmt.Printf("[ERROR] ListTransactions count: %v\n", err)
+		log.Printf("[ERROR] ListTransactions count: %v", err)
 		c.JSON(500, gin.H{"error": "failed to get total count"})
 		return
 	}
@@ -261,7 +262,7 @@ func ListTransactions(c *gin.Context, database *db.DB) {
 
 	rows, err := database.Pool.Query(c.Request.Context(), query, args...)
 	if err != nil {
-		fmt.Printf("[ERROR] ListTransactions query: %v\n", err)
+		log.Printf("[ERROR] ListTransactions query: %v", err)
 		c.JSON(500, gin.H{"error": "failed to retrieve transactions"})
 		return
 	}
@@ -277,7 +278,7 @@ func ListTransactions(c *gin.Context, database *db.DB) {
 			&tx.RecurringTransactionID, &tx.GroupTransactionID, &tx.GroupID, &tx.GroupName, &tx.SettlementID,
 			&tx.IsDeleted, &rawCreatedAt, &rawUpdatedAt,
 		); err != nil {
-			fmt.Printf("[ERROR] ListTransactions scan: %v\n", err)
+			log.Printf("[ERROR] ListTransactions scan: %v", err)
 			c.JSON(500, gin.H{"error": "failed to scan transaction"})
 			return
 		}
@@ -319,7 +320,7 @@ func GetTransaction(c *gin.Context, database *db.DB) {
 		 LEFT JOIN group_transactions gt ON t.group_transaction_id = gt.id
 		 LEFT JOIN groups g1 ON gt.group_id = g1.id
 		 LEFT JOIN groups g2 ON t.group_id = g2.id
-		 WHERE t.id = $1 AND t.user_id = $2`,
+		 WHERE t.id = $1 AND t.user_id = $2 AND t.is_deleted = FALSE`,
 		id, userID,
 	).Scan(
 		&tx.ID, &tx.UserID, &tx.Type, &tx.Amount, &tx.Category,
@@ -431,9 +432,9 @@ func UpdateTransaction(c *gin.Context, database *db.DB) {
 		return
 	}
 
-	query += fmt.Sprintf(` WHERE id = $%d
-		RETURNING id, user_id, type, amount, category, date, description, notes, recurring_transaction_id, group_transaction_id, settlement_id, is_deleted, created_at, updated_at`, n)
-	args = append(args, id)
+	query += fmt.Sprintf(` WHERE id = $%d AND user_id = $%d
+		RETURNING id, user_id, type, amount, category, date, description, notes, recurring_transaction_id, group_transaction_id, settlement_id, is_deleted, created_at, updated_at`, n, n+1)
+	args = append(args, id, userID)
 
 	var tx Transaction
 	var rawDate, rawCreatedAt, rawUpdatedAt time.Time
@@ -497,7 +498,7 @@ func DeleteTransaction(c *gin.Context, database *db.DB) {
 	}
 
 	_, err = database.Pool.Exec(c.Request.Context(),
-		`UPDATE transactions SET is_deleted = true, updated_at = NOW() WHERE id = $1`, id)
+		`UPDATE transactions SET is_deleted = true, updated_at = NOW() WHERE id = $1 AND user_id = $2`, id, userID)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "failed to delete transaction"})
 		return

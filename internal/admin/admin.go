@@ -141,12 +141,13 @@ func New(pool *pgxpool.Pool, username, password string, logStore *LogStore) *Adm
 }
 
 // RegisterRoutes registers all admin routes on the given router group.
-func (a *Admin) RegisterRoutes(r *gin.Engine) {
+// rateLimiter is applied to the login POST to prevent brute-force attacks.
+func (a *Admin) RegisterRoutes(r *gin.Engine, rateLimiter gin.HandlerFunc) {
 	g := r.Group("/admin")
 
 	// Public routes
 	g.GET("/login", a.loginPage)
-	g.POST("/login", a.loginSubmit)
+	g.POST("/login", rateLimiter, a.loginSubmit)
 
 	// Protected routes
 	protected := g.Group("/")
