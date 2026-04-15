@@ -32,6 +32,41 @@ var limiter = &rateLimiter{
 	window:   time.Duration(getEnvInt("RATE_WINDOW_SECONDS", 60)) * time.Second,
 }
 
+var startCleanup sync.Once
+
+// sweep removes expired entries from the rate limiter map.
+func (rl *rateLimiter) sweep() {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+
+	now := time.Now()
+	for ip, reqs := range rl.requests {
+		var valid []time.Time
+		for _, t := range reqs {
+			if now.Sub(t) < rl.window {
+				valid = append(valid, t)
+			}
+		}
+		if len(valid) == 0 {
+			delete(rl.requests, ip)
+		} else {
+			rl.requests[ip] = valid
+		}
+	}
+}
+
+// startBackgroundCleanup launches a goroutine that periodically sweeps
+// expired entries so the map doesn't grow unboundedly.
+func (rl *rateLimiter) startBackgroundCleanup() {
+	go func() {
+		ticker := time.NewTicker(rl.window)
+		defer ticker.Stop()
+		for range ticker.C {
+			rl.sweep()
+		}
+	}()
+}
+
 // RateLimiter middleware to prevent brute force attacks.
 // Skipped in non-release mode (debug/test) for easier local development.
 func RateLimiter() gin.HandlerFunc {
@@ -40,6 +75,10 @@ func RateLimiter() gin.HandlerFunc {
 			c.Next()
 			return
 		}
+
+		startCleanup.Do(func() {
+			limiter.startBackgroundCleanup()
+		})
 
 		ip := c.ClientIP()
 
@@ -76,15 +115,6 @@ func RateLimiter() gin.HandlerFunc {
 		// Add current request
 		validRequests = append(validRequests, now)
 		limiter.requests[ip] = validRequests
-
-		// Cleanup old entries periodically (simple approach)
-		if len(limiter.requests) > 1000 {
-			for ip, reqs := range limiter.requests {
-				if len(reqs) == 0 || now.Sub(reqs[len(reqs)-1]) > limiter.window {
-					delete(limiter.requests, ip)
-				}
-			}
-		}
 
 		c.Next()
 	}
