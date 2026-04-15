@@ -178,37 +178,32 @@ func ListTransactions(c *gin.Context, database *db.DB) {
 		}
 	}
 
-	query := `SELECT t.id, t.user_id, t.type, t.amount, t.category, t.date, t.description, t.notes, t.recurring_transaction_id, t.group_transaction_id, COALESCE(t.group_id, gt.group_id), COALESCE(g1.name, g2.name), t.settlement_id, t.is_deleted, t.created_at, t.updated_at
+	query := `SELECT t.id, t.user_id, t.type, t.amount, t.category, t.date, t.description, t.notes, t.recurring_transaction_id, t.group_transaction_id, COALESCE(t.group_id, gt.group_id), COALESCE(g1.name, g2.name), t.settlement_id, t.is_deleted, t.created_at, t.updated_at, COUNT(*) OVER() AS total_count
 		      FROM transactions t
 		      LEFT JOIN group_transactions gt ON t.group_transaction_id = gt.id
 		      LEFT JOIN groups g1 ON gt.group_id = g1.id
 		      LEFT JOIN groups g2 ON t.group_id = g2.id
 		      WHERE t.user_id = $1`
-	countQuery := `SELECT COUNT(*) FROM transactions WHERE user_id = $1`
 	args := []interface{}{userID}
 	n := 2
 
 	if c.Query("is_deleted") == "true" {
 		query += fmt.Sprintf(" AND t.is_deleted = $%d", n)
-		countQuery += fmt.Sprintf(" AND is_deleted = $%d", n)
 		args = append(args, true)
 	} else {
 		query += fmt.Sprintf(" AND t.is_deleted = $%d", n)
-		countQuery += fmt.Sprintf(" AND is_deleted = $%d", n)
 		args = append(args, false)
 	}
 	n++
 
 	if v := c.Query("type"); v != "" {
 		query += fmt.Sprintf(" AND t.type = $%d", n)
-		countQuery += fmt.Sprintf(" AND type = $%d", n)
 		args = append(args, v)
 		n++
 	}
 
 	if v := c.Query("category"); v != "" {
 		query += fmt.Sprintf(" AND t.category = $%d", n)
-		countQuery += fmt.Sprintf(" AND category = $%d", n)
 		args = append(args, v)
 		n++
 	}
@@ -217,7 +212,6 @@ func ListTransactions(c *gin.Context, database *db.DB) {
 	if v := c.Query("start_date"); v != "" {
 		if ms, err := strconv.ParseInt(v, 10, 64); err == nil {
 			query += fmt.Sprintf(" AND t.date >= $%d", n)
-			countQuery += fmt.Sprintf(" AND date >= $%d", n)
 			args = append(args, time.UnixMilli(ms).UTC())
 			n++
 		}
@@ -226,7 +220,6 @@ func ListTransactions(c *gin.Context, database *db.DB) {
 	if v := c.Query("end_date"); v != "" {
 		if ms, err := strconv.ParseInt(v, 10, 64); err == nil {
 			query += fmt.Sprintf(" AND t.date <= $%d", n)
-			countQuery += fmt.Sprintf(" AND date <= $%d", n)
 			args = append(args, time.UnixMilli(ms).UTC())
 			n++
 		}
@@ -235,7 +228,6 @@ func ListTransactions(c *gin.Context, database *db.DB) {
 	if v := c.Query("group_transaction_id"); v != "" {
 		if id, err := uuid.Parse(v); err == nil {
 			query += fmt.Sprintf(" AND t.group_transaction_id = $%d", n)
-			countQuery += fmt.Sprintf(" AND group_transaction_id = $%d", n)
 			args = append(args, id)
 			n++
 		}
@@ -244,17 +236,9 @@ func ListTransactions(c *gin.Context, database *db.DB) {
 	if v := c.Query("recurring_transaction_id"); v != "" {
 		if id, err := uuid.Parse(v); err == nil {
 			query += fmt.Sprintf(" AND t.recurring_transaction_id = $%d", n)
-			countQuery += fmt.Sprintf(" AND recurring_transaction_id = $%d", n)
 			args = append(args, id)
 			n++
 		}
-	}
-
-	var total int
-	if err := database.Pool.QueryRow(c.Request.Context(), countQuery, args...).Scan(&total); err != nil {
-		log.Printf("[ERROR] ListTransactions count: %v", err)
-		c.JSON(500, gin.H{"error": "failed to get total count"})
-		return
 	}
 
 	query += fmt.Sprintf(" ORDER BY t.date DESC, t.created_at DESC LIMIT $%d OFFSET $%d", n, n+1)
@@ -269,6 +253,7 @@ func ListTransactions(c *gin.Context, database *db.DB) {
 	defer rows.Close()
 
 	txs := []Transaction{}
+	var total int
 	for rows.Next() {
 		var tx Transaction
 		var rawDate, rawCreatedAt, rawUpdatedAt time.Time
@@ -277,6 +262,7 @@ func ListTransactions(c *gin.Context, database *db.DB) {
 			&rawDate, &tx.Description, &tx.Notes,
 			&tx.RecurringTransactionID, &tx.GroupTransactionID, &tx.GroupID, &tx.GroupName, &tx.SettlementID,
 			&tx.IsDeleted, &rawCreatedAt, &rawUpdatedAt,
+			&total,
 		); err != nil {
 			log.Printf("[ERROR] ListTransactions scan: %v", err)
 			c.JSON(500, gin.H{"error": "failed to scan transaction"})
