@@ -126,20 +126,23 @@ func nextOccurrence(startDate time.Time, frequency string, dayOfMonth *int, days
 
 	case "weekly":
 		if len(daysOfWeek) == 0 {
-			for next.AddDate(0, 0, 7).Before(today) || next.AddDate(0, 0, 7).Equal(today) {
-				next = next.AddDate(0, 0, 7)
-			}
+			// Jump forward in bulk: calculate weeks between start and today.
+			days := int(today.Sub(next).Hours() / 24)
+			weeks := days / 7
+			next = next.AddDate(0, 0, weeks*7)
 		} else {
-			// Walk forward to find the latest matching weekday on or before today.
+			// Walk backwards from today (at most 7 days) to find the latest matching weekday.
 			var latest *time.Time
-			candidate := next
-			for !candidate.After(today) {
-				weekday := int(candidate.Weekday())
-				if containsInt(daysOfWeek, weekday) {
+			for i := 0; i < 7; i++ {
+				candidate := today.AddDate(0, 0, -i)
+				if candidate.Before(next) {
+					break
+				}
+				if containsInt(daysOfWeek, int(candidate.Weekday())) {
 					t := candidate
 					latest = &t
+					break
 				}
-				candidate = candidate.AddDate(0, 0, 1)
 			}
 			if latest == nil {
 				return nil

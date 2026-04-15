@@ -93,6 +93,14 @@ func TestNextOccurrence(t *testing.T) {
 			want:       nil,
 		},
 		{
+			name:       "weekly — long range (3 years) stays O(1)",
+			startDate:  date(2023, 1, 2), // Monday, 3 years ago
+			frequency:  "weekly",
+			daysOfWeek: []int{1, 5}, // Monday, Friday
+			today:      date(2026, 4, 10), // Friday → matches daysOfWeek
+			want:       timePtr(date(2026, 4, 10)),
+		},
+		{
 			name:      "yearly — same day",
 			startDate: date(2024, 4, 10),
 			frequency: "yearly",
