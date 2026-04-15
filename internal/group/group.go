@@ -322,15 +322,15 @@ func GetGroup(c *gin.Context, database *db.DB) {
 	}
 
 	var g Group
-	var rawGroupCreatedAt2 time.Time
+	var rawCreatedAt time.Time
 	err = database.Pool.QueryRow(c.Request.Context(),
 		"SELECT id, name, created_by, created_at FROM groups WHERE id = $1", groupID,
-	).Scan(&g.ID, &g.Name, &g.CreatedBy, &rawGroupCreatedAt2)
+	).Scan(&g.ID, &g.Name, &g.CreatedBy, &rawCreatedAt)
 	if err != nil {
 		c.JSON(404, gin.H{"error": "group not found"})
 		return
 	}
-	g.CreatedAt = helpers.FromTime(rawGroupCreatedAt2)
+	g.CreatedAt = helpers.FromTime(rawCreatedAt)
 
 	memberRows, err := database.Pool.Query(c.Request.Context(),
 		`SELECT u.id, u.email, u.username, gm.joined_at
