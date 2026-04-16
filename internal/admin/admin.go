@@ -448,7 +448,7 @@ func (a *Admin) rowDelete(c *gin.Context) {
 
 	// Validate table exists
 	var tableExists bool
-	a.pool.QueryRow(c.Request.Context(),
+	_ = a.pool.QueryRow(c.Request.Context(),
 		`SELECT EXISTS(SELECT 1 FROM pg_tables WHERE schemaname='public' AND tablename=$1)`, table).Scan(&tableExists)
 	if !tableExists {
 		c.Redirect(http.StatusFound, "/admin/tables")
@@ -458,7 +458,7 @@ func (a *Admin) rowDelete(c *gin.Context) {
 	// Validate all columns exist in the catalog (prevents SQL injection)
 	for _, col := range pkCols {
 		var colExists bool
-		a.pool.QueryRow(c.Request.Context(),
+		_ = a.pool.QueryRow(c.Request.Context(),
 			`SELECT EXISTS(
 				SELECT 1 FROM information_schema.columns
 				WHERE table_schema='public' AND table_name=$1 AND column_name=$2
@@ -510,7 +510,7 @@ func (a *Admin) rowCreateSubmit(c *gin.Context) {
 	table := c.PostForm("table")
 
 	var tableExists bool
-	a.pool.QueryRow(c.Request.Context(),
+	_ = a.pool.QueryRow(c.Request.Context(),
 		`SELECT EXISTS(SELECT 1 FROM pg_tables WHERE schemaname='public' AND tablename=$1)`, table).Scan(&tableExists)
 	if !tableExists {
 		c.Redirect(http.StatusFound, "/admin/tables")

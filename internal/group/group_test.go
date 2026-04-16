@@ -136,8 +136,8 @@ func TestBalanceCalculation(t *testing.T) {
 				createSettlement(t, testDB, groupID, userB, userA, decimal.NewFromFloat(20))
 			},
 			expected: map[uuid.UUID]decimal.Decimal{
-				userA: decimal.NewFromFloat(60).Sub(decimal.NewFromFloat(20)),                              // 40
-				userB: decimal.NewFromFloat(0).Sub(decimal.NewFromFloat(20)).Add(decimal.NewFromFloat(20)), // 0
+				userA: decimal.NewFromFloat(60).Sub(decimal.NewFromFloat(20)).Sub(decimal.NewFromFloat(20)), // 60 - 20 (split) - 20 (received settlement) = 20
+				userB: decimal.NewFromFloat(0).Sub(decimal.NewFromFloat(20)).Add(decimal.NewFromFloat(20)), // 0 - 20 (split) + 20 (paid settlement) = 0
 				userC: decimal.NewFromFloat(0).Sub(decimal.NewFromFloat(20)),                               // -20
 			},
 		},
@@ -162,9 +162,9 @@ func TestBalanceCalculation(t *testing.T) {
 				createSettlement(t, testDB, groupID, userC, userA, decimal.NewFromFloat(10))
 			},
 			expected: map[uuid.UUID]decimal.Decimal{
-				userA: decimal.NewFromFloat(90).Sub(decimal.NewFromFloat(30)).Sub(decimal.NewFromFloat(20)).Add(decimal.NewFromFloat(10)), // 90 - 30 - 20 + 10 = 50
-				userB: decimal.NewFromFloat(60).Sub(decimal.NewFromFloat(20)).Sub(decimal.NewFromFloat(30)),                               // 60 - 20 - 30 = 10
-				userC: decimal.NewFromFloat(0).Sub(decimal.NewFromFloat(30)).Sub(decimal.NewFromFloat(20)).Sub(decimal.NewFromFloat(10)),  // -30 -20 -10 = -60
+				userA: decimal.NewFromFloat(90).Sub(decimal.NewFromFloat(30)).Sub(decimal.NewFromFloat(20)).Sub(decimal.NewFromFloat(10)), // 90 - 30 (split) - 20 (split) - 10 (received settlement) = 30
+				userB: decimal.NewFromFloat(60).Sub(decimal.NewFromFloat(20)).Sub(decimal.NewFromFloat(30)),                               // 60 - 20 (split) - 30 (split) = 10
+				userC: decimal.NewFromFloat(0).Sub(decimal.NewFromFloat(30)).Sub(decimal.NewFromFloat(20)).Add(decimal.NewFromFloat(10)),  // -30 - 20 + 10 (paid settlement) = -40
 			},
 		},
 	}
@@ -213,7 +213,7 @@ func TestBalanceCalculation(t *testing.T) {
 				balances[uid] = balances[uid].Sub(amt)
 			}
 
-			// Adjust settlements
+			// Adjust settlements: from_user paid off debt (+), to_user received payment (-)
 			settRows, err := testDB.Pool.Query(context.Background(),
 				"SELECT from_user, to_user, amount FROM settlements WHERE group_id = $1", groupID)
 			require.NoError(t, err)
@@ -224,8 +224,8 @@ func TestBalanceCalculation(t *testing.T) {
 				var amt decimal.Decimal
 				err := settRows.Scan(&from, &to, &amt)
 				require.NoError(t, err)
-				balances[from] = balances[from].Sub(amt)
-				balances[to] = balances[to].Add(amt)
+				balances[from] = balances[from].Add(amt)
+				balances[to] = balances[to].Sub(amt)
 			}
 
 			// Check expectations (allowing small decimal differences)
