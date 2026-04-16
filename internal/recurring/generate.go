@@ -80,20 +80,24 @@ func GenerateDueTransactions(ctx context.Context, userID uuid.UUID, database *db
 		}
 
 		txID := uuid.New()
-		_, err := database.Pool.Exec(ctx,
+		tx, err := database.Pool.Begin(ctx)
+		if err != nil {
+			return fmt.Errorf("begin tx for recurring %s: %w", r.id, err)
+		}
+
+		_, err = tx.Exec(ctx,
 			`INSERT INTO transactions (id, user_id, type, amount, category, date, description, notes, recurring_transaction_id, updated_at)
 			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
-			 ON CONFLICT DO NOTHING`,
+			 ON CONFLICT ON CONSTRAINT uq_transactions_recurring_occurrence DO NOTHING`,
 			txID, userID, r.txType, r.amount, r.category, *next, r.name, nil, r.id,
 		)
 		if err != nil {
+			_ = tx.Rollback(ctx)
 			return fmt.Errorf("insert transaction for recurring %s: %w", r.id, err)
 		}
 
-		// Always update last_added_date regardless of whether the INSERT
-		// actually created a row (ON CONFLICT DO NOTHING may have fired).
-		// This prevents infinite retry on each GET /transactions.
-		_, err = database.Pool.Exec(ctx,
+		// Update last_added_date in the same transaction so insert + date update are atomic.
+		_, err = tx.Exec(ctx,
 			`UPDATE recurring_transactions
 			 SET last_added_date = GREATEST(COALESCE(last_added_date, '-infinity'::timestamptz), $1),
 			     updated_at = NOW()
@@ -101,7 +105,12 @@ func GenerateDueTransactions(ctx context.Context, userID uuid.UUID, database *db
 			*next, r.id,
 		)
 		if err != nil {
+			_ = tx.Rollback(ctx)
 			return fmt.Errorf("update last_added_date for recurring %s: %w", r.id, err)
+		}
+
+		if err := tx.Commit(ctx); err != nil {
+			return fmt.Errorf("commit tx for recurring %s: %w", r.id, err)
 		}
 	}
 
