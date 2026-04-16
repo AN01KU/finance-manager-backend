@@ -69,8 +69,9 @@ func main() {
 		}
 	}
 
-	// Start sync session cleanup
+	// Start background jobs
 	sync.StartSessionCleanup(ctx, database, cfg.SyncSessionTTLDays)
+	recurring.StartBackgroundGeneration(ctx, database)
 
 	// Setup Gin
 	r := gin.Default()

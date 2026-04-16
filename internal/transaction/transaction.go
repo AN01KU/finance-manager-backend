@@ -16,7 +16,6 @@ import (
 	"github.com/yanonymousV2/finance-manager-backend/internal/db"
 	"github.com/yanonymousV2/finance-manager-backend/internal/helpers"
 	"github.com/yanonymousV2/finance-manager-backend/internal/middleware"
-	"github.com/yanonymousV2/finance-manager-backend/internal/recurring"
 )
 
 var validate = validator.New()
@@ -156,10 +155,6 @@ func ListTransactions(c *gin.Context, database *db.DB) {
 	userID, ok := middleware.RequireUserID(c)
 	if !ok {
 		return
-	}
-
-	if err := recurring.GenerateDueTransactions(c.Request.Context(), userID, database, time.Now()); err != nil {
-		log.Printf("[WARN] GenerateDueTransactions: %v", err)
 	}
 
 	limit := 50
