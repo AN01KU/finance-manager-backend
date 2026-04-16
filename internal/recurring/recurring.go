@@ -199,6 +199,10 @@ func ListRecurringTransactions(c *gin.Context, db *db.DB) {
 		rt.UpdatedAt = helpers.FromTime(rawUpdatedAt)
 		transactions = append(transactions, rt)
 	}
+	if err := rows.Err(); err != nil {
+		c.JSON(500, gin.H{"error": "database iteration failed"})
+		return
+	}
 
 	if transactions == nil {
 		transactions = []RecurringTransaction{}

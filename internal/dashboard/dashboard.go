@@ -106,6 +106,10 @@ func GetMonthlyDashboard(c *gin.Context, db *db.DB) {
 		}
 		categoryBreakdown = append(categoryBreakdown, cs)
 	}
+	if err := rows.Err(); err != nil {
+		c.JSON(500, gin.H{"error": "database iteration failed"})
+		return
+	}
 
 	if categoryBreakdown == nil {
 		categoryBreakdown = []CategorySpending{}

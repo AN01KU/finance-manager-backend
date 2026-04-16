@@ -245,6 +245,10 @@ func ListGroupTransactions(c *gin.Context, database *db.DB) {
 		gts = append(gts, gt)
 		gtIDs = append(gtIDs, gt.ID)
 	}
+	if err := rows.Err(); err != nil {
+		c.JSON(500, gin.H{"error": "database iteration failed"})
+		return
+	}
 
 	if len(gtIDs) == 0 {
 		c.JSON(200, gin.H{
@@ -273,6 +277,10 @@ func ListGroupTransactions(c *gin.Context, database *db.DB) {
 			return
 		}
 		splitsByGT[gtID] = append(splitsByGT[gtID], s)
+	}
+	if err := splitRows.Err(); err != nil {
+		c.JSON(500, gin.H{"error": "database iteration failed"})
+		return
 	}
 
 	for i := range gts {
@@ -346,6 +354,10 @@ func GetGroupTransaction(c *gin.Context, database *db.DB) {
 			return
 		}
 		gt.Splits = append(gt.Splits, s)
+	}
+	if err := splitRows.Err(); err != nil {
+		c.JSON(500, gin.H{"error": "database iteration failed"})
+		return
 	}
 
 	c.JSON(200, gt)
@@ -505,6 +517,10 @@ func UpdateGroupTransaction(c *gin.Context, database *db.DB) {
 			return
 		}
 		gt.Splits = append(gt.Splits, s)
+	}
+	if err := splitRows.Err(); err != nil {
+		c.JSON(500, gin.H{"error": "database iteration failed"})
+		return
 	}
 
 	c.JSON(200, gt)

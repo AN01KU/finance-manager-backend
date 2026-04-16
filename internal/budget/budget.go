@@ -150,6 +150,10 @@ func ListBudgets(c *gin.Context, db *db.DB) {
 		budget.UpdatedAt = helpers.FromTime(rawUpdatedAt)
 		budgets = append(budgets, budget)
 	}
+	if err := rows.Err(); err != nil {
+		c.JSON(500, gin.H{"error": "database iteration failed"})
+		return
+	}
 
 	c.JSON(200, gin.H{"data": budgets})
 }

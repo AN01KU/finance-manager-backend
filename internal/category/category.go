@@ -173,6 +173,10 @@ func ListCategories(c *gin.Context, db *db.DB) {
 			customCats = append(customCats, cat)
 		}
 	}
+	if err := rows.Err(); err != nil {
+		c.JSON(500, gin.H{"error": "database iteration failed"})
+		return
+	}
 
 	// Build the merged list: predefined first (with overrides applied), then custom.
 	now := helpers.FromTime(time.Now())

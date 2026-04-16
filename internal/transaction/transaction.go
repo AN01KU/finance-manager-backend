@@ -266,6 +266,11 @@ func ListTransactions(c *gin.Context, database *db.DB) {
 		tx.UpdatedAt = helpers.FromTime(rawUpdatedAt)
 		txs = append(txs, tx)
 	}
+	if err := rows.Err(); err != nil {
+		log.Printf("[ERROR] ListTransactions rows: %v", err)
+		c.JSON(500, gin.H{"error": "database iteration failed"})
+		return
+	}
 
 	c.JSON(200, gin.H{
 		"data": txs,
