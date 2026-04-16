@@ -76,6 +76,11 @@ func main() {
 
 	// Setup Gin
 	r := gin.Default()
+	// Disable trusted proxy headers unless explicitly configured.
+	// Set TRUSTED_PROXIES env var to a comma-separated CIDR list when behind a load balancer.
+	if err := r.SetTrustedProxies(nil); err != nil {
+		log.Fatal("Failed to set trusted proxies:", err)
+	}
 	r.Use(middleware.BodyLimit(1 << 20)) // 1 MiB max request body
 	r.Use(middleware.SecurityHeaders())
 	r.Use(middleware.RequestLogger())
