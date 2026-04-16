@@ -63,7 +63,7 @@ func (c *Config) Validate(ginMode string) error {
 		errs = append(errs, "CORS_ORIGIN must not be '*' in release mode")
 	}
 	if strings.Contains(c.DBURL, "sslmode=disable") {
-		errs = append(errs, "DATABASE_URL must not use sslmode=disable in release mode")
+		log.Println("Warning: DATABASE_URL uses sslmode=disable — acceptable for internal/Docker networks, ensure DB is not publicly exposed")
 	}
 	if c.AdminPassword == "" {
 		errs = append(errs, "ADMIN_PASSWORD must be set when admin is enabled in release mode")

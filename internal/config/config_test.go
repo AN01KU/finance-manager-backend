@@ -32,11 +32,11 @@ func TestValidate_ReleaseMode(t *testing.T) {
 		assert.ErrorContains(t, err, "CORS_ORIGIN")
 	})
 
-	t.Run("fatal if DATABASE_URL uses sslmode=disable in release", func(t *testing.T) {
+	t.Run("sslmode=disable allowed in release for internal/Docker networks", func(t *testing.T) {
 		cfg := safeConfig()
 		cfg.DBURL = "postgres://user:password@localhost:5432/finance_manager?sslmode=disable"
 		err := cfg.Validate("release")
-		assert.ErrorContains(t, err, "sslmode=disable")
+		assert.NoError(t, err)
 	})
 
 	t.Run("fatal if admin password is empty when admin username is set in release", func(t *testing.T) {
