@@ -137,8 +137,8 @@ func TestBalanceCalculation(t *testing.T) {
 			},
 			expected: map[uuid.UUID]decimal.Decimal{
 				userA: decimal.NewFromFloat(60).Sub(decimal.NewFromFloat(20)).Sub(decimal.NewFromFloat(20)), // 60 - 20 (split) - 20 (received settlement) = 20
-				userB: decimal.NewFromFloat(0).Sub(decimal.NewFromFloat(20)).Add(decimal.NewFromFloat(20)), // 0 - 20 (split) + 20 (paid settlement) = 0
-				userC: decimal.NewFromFloat(0).Sub(decimal.NewFromFloat(20)),                               // -20
+				userB: decimal.NewFromFloat(0).Sub(decimal.NewFromFloat(20)).Add(decimal.NewFromFloat(20)),  // 0 - 20 (split) + 20 (paid settlement) = 0
+				userC: decimal.NewFromFloat(0).Sub(decimal.NewFromFloat(20)),                                // -20
 			},
 		},
 		{
