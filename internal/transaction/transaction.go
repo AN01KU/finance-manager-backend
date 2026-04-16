@@ -21,42 +21,42 @@ import (
 var validate = validator.New()
 
 type Transaction struct {
-	ID                 uuid.UUID              `json:"id"`
-	UserID             uuid.UUID              `json:"user_id"`
-	Type               string                 `json:"type"`
-	Amount             float64                `json:"amount"`
-	Category           string                 `json:"category"`
-	Date               helpers.EpochMillis    `json:"date"`
-	Description        *string                `json:"description,omitempty"`
-	Notes              *string                `json:"notes,omitempty"`
-	RecurringTransactionID *uuid.UUID             `json:"recurring_transaction_id,omitempty"`
-	GroupTransactionID *uuid.UUID             `json:"group_transaction_id,omitempty"`
-	GroupID            *uuid.UUID             `json:"group_id,omitempty"`
-	GroupName          *string                `json:"group_name,omitempty"`
-	SettlementID       *uuid.UUID             `json:"settlement_id,omitempty"`
-	IsDeleted          bool                   `json:"is_deleted"`
-	CreatedAt          helpers.EpochMillis    `json:"created_at"`
-	UpdatedAt          helpers.EpochMillis    `json:"updated_at"`
+	ID                     uuid.UUID           `json:"id"`
+	UserID                 uuid.UUID           `json:"user_id"`
+	Type                   string              `json:"type"`
+	Amount                 float64             `json:"amount"`
+	Category               string              `json:"category"`
+	Date                   helpers.EpochMillis `json:"date"`
+	Description            *string             `json:"description,omitempty"`
+	Notes                  *string             `json:"notes,omitempty"`
+	RecurringTransactionID *uuid.UUID          `json:"recurring_transaction_id,omitempty"`
+	GroupTransactionID     *uuid.UUID          `json:"group_transaction_id,omitempty"`
+	GroupID                *uuid.UUID          `json:"group_id,omitempty"`
+	GroupName              *string             `json:"group_name,omitempty"`
+	SettlementID           *uuid.UUID          `json:"settlement_id,omitempty"`
+	IsDeleted              bool                `json:"is_deleted"`
+	CreatedAt              helpers.EpochMillis `json:"created_at"`
+	UpdatedAt              helpers.EpochMillis `json:"updated_at"`
 }
 
 type CreateTransactionRequest struct {
-	ID                 *uuid.UUID `json:"id,omitempty"`
-	Type               string     `json:"type" validate:"required,oneof=expense income"`
-	Amount             float64    `json:"amount" validate:"required"`
-	Category           string     `json:"category" validate:"required,max=100"`
-	Date               int64      `json:"date" validate:"required"`
-	Description        *string    `json:"description,omitempty" validate:"omitempty,max=255"`
-	Notes              *string    `json:"notes,omitempty"`
+	ID                     *uuid.UUID `json:"id,omitempty"`
+	Type                   string     `json:"type" validate:"required,oneof=expense income"`
+	Amount                 float64    `json:"amount" validate:"required"`
+	Category               string     `json:"category" validate:"required,max=100"`
+	Date                   int64      `json:"date" validate:"required"`
+	Description            *string    `json:"description,omitempty" validate:"omitempty,max=255"`
+	Notes                  *string    `json:"notes,omitempty"`
 	RecurringTransactionID *uuid.UUID `json:"recurring_transaction_id,omitempty"`
 }
 
 type UpdateTransactionRequest struct {
-	Type        *string `json:"type,omitempty" validate:"omitempty,oneof=expense income"`
+	Type        *string  `json:"type,omitempty" validate:"omitempty,oneof=expense income"`
 	Amount      *float64 `json:"amount,omitempty"`
-	Category    *string `json:"category,omitempty" validate:"omitempty,max=100"`
-	Date        *int64  `json:"date,omitempty"`
-	Description *string `json:"description,omitempty" validate:"omitempty,max=255"`
-	Notes       *string `json:"notes,omitempty"`
+	Category    *string  `json:"category,omitempty" validate:"omitempty,max=100"`
+	Date        *int64   `json:"date,omitempty"`
+	Description *string  `json:"description,omitempty" validate:"omitempty,max=255"`
+	Notes       *string  `json:"notes,omitempty"`
 }
 
 func CreateTransaction(c *gin.Context, database *db.DB) {

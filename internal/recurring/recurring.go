@@ -52,17 +52,17 @@ type CreateRecurringTransactionRequest struct {
 }
 
 type UpdateRecurringTransactionRequest struct {
-	Type       *string `json:"type,omitempty" validate:"omitempty,oneof=expense income"`
-	Name       *string `json:"name,omitempty" validate:"omitempty"`
+	Type       *string  `json:"type,omitempty" validate:"omitempty,oneof=expense income"`
+	Name       *string  `json:"name,omitempty" validate:"omitempty"`
 	Amount     *float64 `json:"amount,omitempty"`
-	Category   *string `json:"category,omitempty" validate:"omitempty"`
-	Frequency  *string `json:"frequency,omitempty" validate:"omitempty,oneof=daily weekly monthly yearly"`
-	DayOfMonth *int    `json:"day_of_month,omitempty" validate:"omitempty,min=1,max=31"`
-	DaysOfWeek []int   `json:"days_of_week,omitempty" validate:"omitempty,dive,min=0,max=6"`
-	StartDate  *int64  `json:"start_date,omitempty"`
-	EndDate    *int64  `json:"end_date,omitempty"`
-	IsActive   *bool   `json:"is_active,omitempty"`
-	Notes      *string `json:"notes,omitempty"`
+	Category   *string  `json:"category,omitempty" validate:"omitempty"`
+	Frequency  *string  `json:"frequency,omitempty" validate:"omitempty,oneof=daily weekly monthly yearly"`
+	DayOfMonth *int     `json:"day_of_month,omitempty" validate:"omitempty,min=1,max=31"`
+	DaysOfWeek []int    `json:"days_of_week,omitempty" validate:"omitempty,dive,min=0,max=6"`
+	StartDate  *int64   `json:"start_date,omitempty"`
+	EndDate    *int64   `json:"end_date,omitempty"`
+	IsActive   *bool    `json:"is_active,omitempty"`
+	Notes      *string  `json:"notes,omitempty"`
 }
 
 func CreateRecurringTransaction(c *gin.Context, db *db.DB) {

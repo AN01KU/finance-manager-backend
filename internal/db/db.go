@@ -26,8 +26,8 @@ func New(ctx context.Context, dbURL string, maxConns, minConns int32) (*DB, erro
 	}
 
 	// Set pool settings for better performance
-	config.MaxConns = maxConns                  // Configurable via DB_MAX_CONNS (default 25)
-	config.MinConns = minConns                  // Configurable via DB_MIN_CONNS (default 5)
+	config.MaxConns = maxConns                 // Configurable via DB_MAX_CONNS (default 25)
+	config.MinConns = minConns                 // Configurable via DB_MIN_CONNS (default 5)
 	config.MaxConnLifetime = 1 * time.Hour     // Maximum connection lifetime
 	config.MaxConnIdleTime = 30 * time.Minute  // Maximum idle time
 	config.HealthCheckPeriod = 1 * time.Minute // Health check frequency

@@ -107,13 +107,13 @@ func LoggerMiddleware(ls *LogStore) gin.HandlerFunc {
 
 // Admin holds all dependencies for the admin dashboard.
 type Admin struct {
-	pool      *pgxpool.Pool
-	tmpls     map[string]*template.Template
-	username  string
-	password  string
-	sessions  map[string]time.Time
-	mu        sync.Mutex
-	logStore  *LogStore
+	pool     *pgxpool.Pool
+	tmpls    map[string]*template.Template
+	username string
+	password string
+	sessions map[string]time.Time
+	mu       sync.Mutex
+	logStore *LogStore
 }
 
 // New creates a new Admin instance.

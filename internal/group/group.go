@@ -49,23 +49,23 @@ type GroupWithDetails struct {
 }
 
 type GroupTransaction struct {
-	ID           uuid.UUID             `json:"id"`
-	GroupID      uuid.UUID             `json:"group_id"`
-	PaidByUserID uuid.UUID             `json:"paid_by_user_id"`
-	TotalAmount  float64               `json:"total_amount"`
-	Category     string                `json:"category"`
-	Date         helpers.EpochMillis   `json:"date"`
-	Description  *string               `json:"description,omitempty"`
-	Notes        *string               `json:"notes,omitempty"`
-	IsDeleted    bool                  `json:"is_deleted"`
-	CreatedAt    helpers.EpochMillis   `json:"created_at"`
-	UpdatedAt    helpers.EpochMillis   `json:"updated_at"`
-	Splits       []SplitDetail         `json:"splits"`
+	ID           uuid.UUID           `json:"id"`
+	GroupID      uuid.UUID           `json:"group_id"`
+	PaidByUserID uuid.UUID           `json:"paid_by_user_id"`
+	TotalAmount  float64             `json:"total_amount"`
+	Category     string              `json:"category"`
+	Date         helpers.EpochMillis `json:"date"`
+	Description  *string             `json:"description,omitempty"`
+	Notes        *string             `json:"notes,omitempty"`
+	IsDeleted    bool                `json:"is_deleted"`
+	CreatedAt    helpers.EpochMillis `json:"created_at"`
+	UpdatedAt    helpers.EpochMillis `json:"updated_at"`
+	Splits       []SplitDetail       `json:"splits"`
 }
 
 type SplitDetail struct {
-	ID            uuid.UUID             `json:"id"`
-	UserID        uuid.UUID             `json:"user_id"`
+	ID            uuid.UUID  `json:"id"`
+	UserID        uuid.UUID  `json:"user_id"`
 	Amount        float64    `json:"amount"`
 	TransactionID *uuid.UUID `json:"transaction_id,omitempty"`
 }

@@ -16,13 +16,13 @@ import (
 var validate = validator.New()
 
 type Settlement struct {
-	ID        uuid.UUID             `json:"id"`
-	GroupID   uuid.UUID             `json:"group_id"`
-	FromUser  uuid.UUID             `json:"from_user"`
-	ToUser    uuid.UUID             `json:"to_user"`
-	Amount    float64               `json:"amount"`
-	Notes     *string               `json:"notes,omitempty"`
-	CreatedAt helpers.EpochMillis   `json:"created_at"`
+	ID        uuid.UUID           `json:"id"`
+	GroupID   uuid.UUID           `json:"group_id"`
+	FromUser  uuid.UUID           `json:"from_user"`
+	ToUser    uuid.UUID           `json:"to_user"`
+	Amount    float64             `json:"amount"`
+	Notes     *string             `json:"notes,omitempty"`
+	CreatedAt helpers.EpochMillis `json:"created_at"`
 }
 
 type CreateSettlementRequest struct {

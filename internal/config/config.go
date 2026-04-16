@@ -23,13 +23,13 @@ type Config struct {
 
 func Load() *Config {
 	cfg := &Config{
-		DBURL:      getEnv("DATABASE_URL", "postgres://user:password@localhost:5432/finance_manager?sslmode=disable"),
-		JWTSecret:  getEnvRequired("JWT_SECRET"),
-		Port:       getEnv("PORT", "8080"),
-		InviteCode:    getEnv("INVITE_CODE", ""),
-		CORSOrigin:    getEnv("CORS_ORIGIN", "*"),
-		AdminUsername:       getEnv("ADMIN_USERNAME", "admin"),
-		AdminPassword:       getEnv("ADMIN_PASSWORD", ""),
+		DBURL:              getEnv("DATABASE_URL", "postgres://user:password@localhost:5432/finance_manager?sslmode=disable"),
+		JWTSecret:          getEnvRequired("JWT_SECRET"),
+		Port:               getEnv("PORT", "8080"),
+		InviteCode:         getEnv("INVITE_CODE", ""),
+		CORSOrigin:         getEnv("CORS_ORIGIN", "*"),
+		AdminUsername:      getEnv("ADMIN_USERNAME", "admin"),
+		AdminPassword:      getEnv("ADMIN_PASSWORD", ""),
 		SyncSessionTTLDays: getEnvInt("SYNC_SESSION_TTL_DAYS", 90),
 		DBMaxConns:         int32(getEnvInt("DB_MAX_CONNS", 25)),
 		DBMinConns:         int32(getEnvInt("DB_MIN_CONNS", 5)),

@@ -5,6 +5,7 @@ on:
     branches: [main]
   push:
     branches: [main]
+  workflow_dispatch:
 
 # Cancel in-progress CI runs for the same branch/PR on new pushes.
 # The deploy job has its own concurrency group (cancel-in-progress: false)
