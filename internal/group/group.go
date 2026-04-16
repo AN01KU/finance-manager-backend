@@ -359,44 +359,36 @@ func GetGroup(c *gin.Context, database *db.DB) {
 		members = []GroupMember{}
 	}
 
-	gtRows, err := database.Pool.Query(c.Request.Context(),
-		`SELECT paid_by_user_id, total_amount FROM group_transactions
-		 WHERE group_id = $1 AND is_deleted = FALSE`, groupID)
+	// Fetch payer and split data in a single query using UNION ALL.
+	balanceRows, err := database.Pool.Query(c.Request.Context(),
+		`SELECT 'payer' AS kind, paid_by_user_id, total_amount
+		   FROM group_transactions WHERE group_id = $1 AND is_deleted = FALSE
+		 UNION ALL
+		 SELECT 'split', gts.user_id, gts.amount
+		   FROM group_transaction_splits gts
+		   JOIN group_transactions gt ON gts.group_transaction_id = gt.id
+		   WHERE gt.group_id = $1 AND gt.is_deleted = FALSE`, groupID)
 	if err != nil {
-		c.JSON(500, gin.H{"error": "failed to get group transactions"})
+		c.JSON(500, gin.H{"error": "failed to get balance data"})
 		return
 	}
-	defer gtRows.Close()
+	defer balanceRows.Close()
 
 	var payers []payerEntry
-	for gtRows.Next() {
-		var e payerEntry
-		if err := gtRows.Scan(&e.paidBy, &e.amount); err != nil {
-			c.JSON(500, gin.H{"error": "failed to scan group transaction"})
-			return
-		}
-		payers = append(payers, e)
-	}
-
-	splitRows, err := database.Pool.Query(c.Request.Context(),
-		`SELECT gts.user_id, gts.amount
-		 FROM group_transaction_splits gts
-		 JOIN group_transactions gt ON gts.group_transaction_id = gt.id
-		 WHERE gt.group_id = $1 AND gt.is_deleted = FALSE`, groupID)
-	if err != nil {
-		c.JSON(500, gin.H{"error": "failed to get splits"})
-		return
-	}
-	defer splitRows.Close()
-
 	var splits []splitEntry
-	for splitRows.Next() {
-		var s splitEntry
-		if err := splitRows.Scan(&s.userID, &s.amount); err != nil {
-			c.JSON(500, gin.H{"error": "failed to scan split"})
+	for balanceRows.Next() {
+		var kind string
+		var uid uuid.UUID
+		var amount decimal.Decimal
+		if err := balanceRows.Scan(&kind, &uid, &amount); err != nil {
+			c.JSON(500, gin.H{"error": "failed to scan balance data"})
 			return
 		}
-		splits = append(splits, s)
+		if kind == "payer" {
+			payers = append(payers, payerEntry{paidBy: uid, amount: amount})
+		} else {
+			splits = append(splits, splitEntry{userID: uid, amount: amount})
+		}
 	}
 
 	settRows, err := database.Pool.Query(c.Request.Context(),
@@ -592,44 +584,35 @@ func GetBalances(c *gin.Context, database *db.DB) {
 		members = append(members, m)
 	}
 
-	gtRows, err := database.Pool.Query(c.Request.Context(),
-		`SELECT paid_by_user_id, total_amount FROM group_transactions
-		 WHERE group_id = $1 AND is_deleted = FALSE`, groupID)
+	balanceRows, err := database.Pool.Query(c.Request.Context(),
+		`SELECT 'payer' AS kind, paid_by_user_id, total_amount
+		   FROM group_transactions WHERE group_id = $1 AND is_deleted = FALSE
+		 UNION ALL
+		 SELECT 'split', gts.user_id, gts.amount
+		   FROM group_transaction_splits gts
+		   JOIN group_transactions gt ON gts.group_transaction_id = gt.id
+		   WHERE gt.group_id = $1 AND gt.is_deleted = FALSE`, groupID)
 	if err != nil {
-		c.JSON(500, gin.H{"error": "failed to get group transactions"})
+		c.JSON(500, gin.H{"error": "failed to get balance data"})
 		return
 	}
-	defer gtRows.Close()
+	defer balanceRows.Close()
 
 	var payers []payerEntry
-	for gtRows.Next() {
-		var e payerEntry
-		if err := gtRows.Scan(&e.paidBy, &e.amount); err != nil {
-			c.JSON(500, gin.H{"error": "failed to scan group transaction"})
-			return
-		}
-		payers = append(payers, e)
-	}
-
-	splitRows, err := database.Pool.Query(c.Request.Context(),
-		`SELECT gts.user_id, gts.amount
-		 FROM group_transaction_splits gts
-		 JOIN group_transactions gt ON gts.group_transaction_id = gt.id
-		 WHERE gt.group_id = $1 AND gt.is_deleted = FALSE`, groupID)
-	if err != nil {
-		c.JSON(500, gin.H{"error": "failed to get splits"})
-		return
-	}
-	defer splitRows.Close()
-
 	var splits []splitEntry
-	for splitRows.Next() {
-		var s splitEntry
-		if err := splitRows.Scan(&s.userID, &s.amount); err != nil {
-			c.JSON(500, gin.H{"error": "failed to scan split"})
+	for balanceRows.Next() {
+		var kind string
+		var uid uuid.UUID
+		var amount decimal.Decimal
+		if err := balanceRows.Scan(&kind, &uid, &amount); err != nil {
+			c.JSON(500, gin.H{"error": "failed to scan balance data"})
 			return
 		}
-		splits = append(splits, s)
+		if kind == "payer" {
+			payers = append(payers, payerEntry{paidBy: uid, amount: amount})
+		} else {
+			splits = append(splits, splitEntry{userID: uid, amount: amount})
+		}
 	}
 
 	settRows, err := database.Pool.Query(c.Request.Context(),
