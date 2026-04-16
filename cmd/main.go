@@ -75,6 +75,8 @@ func main() {
 
 	// Setup Gin
 	r := gin.Default()
+	r.Use(middleware.BodyLimit(1 << 20)) // 1 MiB max request body
+	r.Use(middleware.SecurityHeaders())
 	r.Use(middleware.RequestLogger())
 	r.Use(middleware.CORS(cfg.CORSOrigin))
 
