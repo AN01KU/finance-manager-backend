@@ -693,7 +693,7 @@ func GetGroupSettlements(c *gin.Context, database *db.DB) {
 
 	limit := 20
 	if s := c.Query("limit"); s != "" {
-		if l, err := strconv.Atoi(s); err == nil && l > 0 {
+		if l, err := strconv.Atoi(s); err == nil && l > 0 && l <= 100 {
 			limit = l
 		}
 	}

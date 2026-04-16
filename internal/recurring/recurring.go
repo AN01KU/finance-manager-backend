@@ -2,6 +2,7 @@ package recurring
 
 import (
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -163,6 +164,19 @@ func ListRecurringTransactions(c *gin.Context, db *db.DB) {
 		return
 	}
 
+	limit := 50
+	if s := c.Query("limit"); s != "" {
+		if l, err := strconv.Atoi(s); err == nil && l > 0 && l <= 100 {
+			limit = l
+		}
+	}
+	offset := 0
+	if s := c.Query("offset"); s != "" {
+		if o, err := strconv.Atoi(s); err == nil && o >= 0 {
+			offset = o
+		}
+	}
+
 	query := `SELECT id, user_id, type, name, amount, category, frequency, day_of_month, days_of_week, start_date, end_date, is_active, last_added_date, notes, created_at, updated_at
 		      FROM recurring_transactions
 		      WHERE user_id = $1`
@@ -172,7 +186,8 @@ func ListRecurringTransactions(c *gin.Context, db *db.DB) {
 		query += " AND is_active = true"
 	}
 
-	query += " ORDER BY created_at DESC"
+	query += fmt.Sprintf(" ORDER BY created_at DESC LIMIT $%d OFFSET $%d", len(args)+1, len(args)+2)
+	args = append(args, limit, offset)
 
 	rows, err := db.Pool.Query(c.Request.Context(), query, args...)
 	if err != nil {
@@ -208,7 +223,13 @@ func ListRecurringTransactions(c *gin.Context, db *db.DB) {
 		transactions = []RecurringTransaction{}
 	}
 
-	c.JSON(200, gin.H{"data": transactions})
+	c.JSON(200, gin.H{
+		"data": transactions,
+		"pagination": gin.H{
+			"limit":  limit,
+			"offset": offset,
+		},
+	})
 }
 
 func GetRecurringTransaction(c *gin.Context, db *db.DB) {
