@@ -9,6 +9,7 @@ import (
 	"github.com/golang-migrate/migrate/v4"
 	"github.com/golang-migrate/migrate/v4/database/postgres"
 	_ "github.com/golang-migrate/migrate/v4/source/file"
+	"github.com/golang-migrate/migrate/v4/source/iofs"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
 )
@@ -47,9 +48,12 @@ func (db *DB) Close() {
 	db.Pool.Close()
 }
 
+// RunMigrations runs database migrations. If migrationsPath is non-empty,
+// migrations are loaded from that directory path (useful for development /
+// custom overrides). Otherwise the embedded migrations are used so the binary
+// works regardless of the working directory.
 func RunMigrations(ctx context.Context, dbURL, migrationsPath string) error {
 	log.Println("  → Creating migration pool connection...")
-	// Create a sql.DB from pgx pool for migrate
 	pool, err := pgxpool.New(ctx, dbURL)
 	if err != nil {
 		return fmt.Errorf("failed to create pool for migration: %w", err)
@@ -72,9 +76,18 @@ func RunMigrations(ctx context.Context, dbURL, migrationsPath string) error {
 	log.Println("  ✓ Postgres driver created")
 
 	log.Println("  → Initializing migration instance...")
-	m, err := migrate.NewWithDatabaseInstance(
-		fmt.Sprintf("file://%s", migrationsPath),
-		"postgres", driver)
+	var m *migrate.Migrate
+	if migrationsPath != "" {
+		m, err = migrate.NewWithDatabaseInstance(
+			fmt.Sprintf("file://%s", migrationsPath),
+			"postgres", driver)
+	} else {
+		src, srcErr := iofs.New(MigrationsFS, "migrations")
+		if srcErr != nil {
+			return fmt.Errorf("failed to create iofs source: %w", srcErr)
+		}
+		m, err = migrate.NewWithInstance("iofs", src, "postgres", driver)
+	}
 	if err != nil {
 		return fmt.Errorf("failed to create migrate instance: %w", err)
 	}

@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"syscall"
 	"time"
 
@@ -54,9 +53,9 @@ func main() {
 	}
 	log.Println("✓ Database connection established")
 
-	// Run migrations
+	// Run migrations — use embedded FS by default; override with MIGRATION_PATH env var.
 	log.Println("Running database migrations...")
-	migrationsPath := filepath.Join("internal", "db", "migrations")
+	migrationsPath := os.Getenv("MIGRATION_PATH")
 	if err := db.RunMigrations(ctx, cfg.DBURL, migrationsPath); err != nil {
 		log.Fatal("Failed to run migrations:", err)
 	}
