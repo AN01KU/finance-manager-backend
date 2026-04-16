@@ -34,9 +34,8 @@ type MonthlyDashboard struct {
 }
 
 func GetMonthlyDashboard(c *gin.Context, db *db.DB) {
-	userID, ok := middleware.GetUserID(c)
+	userID, ok := middleware.RequireUserID(c)
 	if !ok {
-		c.JSON(401, gin.H{"error": "unauthorized"})
 		return
 	}
 

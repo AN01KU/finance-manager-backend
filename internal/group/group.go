@@ -106,9 +106,8 @@ type AddMemberRequest struct {
 // ---------------------------------------------------------------------------
 
 func CreateGroup(c *gin.Context, database *db.DB) {
-	userID, ok := middleware.GetUserID(c)
+	userID, ok := middleware.RequireUserID(c)
 	if !ok {
-		c.JSON(401, gin.H{"error": "unauthorized"})
 		return
 	}
 
@@ -157,9 +156,8 @@ func CreateGroup(c *gin.Context, database *db.DB) {
 }
 
 func GetUserGroups(c *gin.Context, database *db.DB) {
-	userID, ok := middleware.GetUserID(c)
+	userID, ok := middleware.RequireUserID(c)
 	if !ok {
-		c.JSON(401, gin.H{"error": "unauthorized"})
 		return
 	}
 
@@ -309,9 +307,8 @@ func GetUserGroups(c *gin.Context, database *db.DB) {
 }
 
 func GetGroup(c *gin.Context, database *db.DB) {
-	userID, ok := middleware.GetUserID(c)
+	userID, ok := middleware.RequireUserID(c)
 	if !ok {
-		c.JSON(401, gin.H{"error": "unauthorized"})
 		return
 	}
 
@@ -453,9 +450,8 @@ func GetGroup(c *gin.Context, database *db.DB) {
 }
 
 func AddMember(c *gin.Context, database *db.DB) {
-	userID, ok := middleware.GetUserID(c)
+	userID, ok := middleware.RequireUserID(c)
 	if !ok {
-		c.JSON(401, gin.H{"error": "unauthorized"})
 		return
 	}
 
@@ -513,9 +509,8 @@ func AddMember(c *gin.Context, database *db.DB) {
 }
 
 func GetMembers(c *gin.Context, database *db.DB) {
-	userID, ok := middleware.GetUserID(c)
+	userID, ok := middleware.RequireUserID(c)
 	if !ok {
-		c.JSON(401, gin.H{"error": "unauthorized"})
 		return
 	}
 
@@ -558,9 +553,8 @@ func GetMembers(c *gin.Context, database *db.DB) {
 }
 
 func GetBalances(c *gin.Context, database *db.DB) {
-	userID, ok := middleware.GetUserID(c)
+	userID, ok := middleware.RequireUserID(c)
 	if !ok {
-		c.JSON(401, gin.H{"error": "unauthorized"})
 		return
 	}
 
@@ -661,9 +655,8 @@ func GetBalances(c *gin.Context, database *db.DB) {
 }
 
 func GetGroupSettlements(c *gin.Context, database *db.DB) {
-	userID, ok := middleware.GetUserID(c)
+	userID, ok := middleware.RequireUserID(c)
 	if !ok {
-		c.JSON(401, gin.H{"error": "unauthorized"})
 		return
 	}
 

@@ -65,9 +65,8 @@ type UpdateRecurringTransactionRequest struct {
 }
 
 func CreateRecurringTransaction(c *gin.Context, db *db.DB) {
-	userID, ok := middleware.GetUserID(c)
+	userID, ok := middleware.RequireUserID(c)
 	if !ok {
-		c.JSON(401, gin.H{"error": "unauthorized"})
 		return
 	}
 
@@ -159,9 +158,8 @@ func CreateRecurringTransaction(c *gin.Context, db *db.DB) {
 }
 
 func ListRecurringTransactions(c *gin.Context, db *db.DB) {
-	userID, ok := middleware.GetUserID(c)
+	userID, ok := middleware.RequireUserID(c)
 	if !ok {
-		c.JSON(401, gin.H{"error": "unauthorized"})
 		return
 	}
 
@@ -210,9 +208,8 @@ func ListRecurringTransactions(c *gin.Context, db *db.DB) {
 }
 
 func GetRecurringTransaction(c *gin.Context, db *db.DB) {
-	userID, ok := middleware.GetUserID(c)
+	userID, ok := middleware.RequireUserID(c)
 	if !ok {
-		c.JSON(401, gin.H{"error": "unauthorized"})
 		return
 	}
 
@@ -248,9 +245,8 @@ func GetRecurringTransaction(c *gin.Context, db *db.DB) {
 }
 
 func UpdateRecurringTransaction(c *gin.Context, db *db.DB) {
-	userID, ok := middleware.GetUserID(c)
+	userID, ok := middleware.RequireUserID(c)
 	if !ok {
-		c.JSON(401, gin.H{"error": "unauthorized"})
 		return
 	}
 
@@ -401,9 +397,8 @@ func UpdateRecurringTransaction(c *gin.Context, db *db.DB) {
 }
 
 func DeleteRecurringTransaction(c *gin.Context, db *db.DB) {
-	userID, ok := middleware.GetUserID(c)
+	userID, ok := middleware.RequireUserID(c)
 	if !ok {
-		c.JSON(401, gin.H{"error": "unauthorized"})
 		return
 	}
 

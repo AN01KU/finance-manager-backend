@@ -41,9 +41,8 @@ type UpdateBudgetRequest struct {
 
 // CreateBudget creates or updates the budget for a specific month
 func CreateBudget(c *gin.Context, db *db.DB) {
-	userID, ok := middleware.GetUserID(c)
+	userID, ok := middleware.RequireUserID(c)
 	if !ok {
-		c.JSON(401, gin.H{"error": "unauthorized"})
 		return
 	}
 
@@ -93,9 +92,8 @@ func CreateBudget(c *gin.Context, db *db.DB) {
 
 // ListBudgets retrieves budgets for a user with optional month/year filtering
 func ListBudgets(c *gin.Context, db *db.DB) {
-	userID, ok := middleware.GetUserID(c)
+	userID, ok := middleware.RequireUserID(c)
 	if !ok {
-		c.JSON(401, gin.H{"error": "unauthorized"})
 		return
 	}
 
@@ -158,9 +156,8 @@ func ListBudgets(c *gin.Context, db *db.DB) {
 
 // UpdateBudget partially updates a budget by ID
 func UpdateBudget(c *gin.Context, db *db.DB) {
-	userID, ok := middleware.GetUserID(c)
+	userID, ok := middleware.RequireUserID(c)
 	if !ok {
-		c.JSON(401, gin.H{"error": "unauthorized"})
 		return
 	}
 
@@ -252,9 +249,8 @@ func UpdateBudget(c *gin.Context, db *db.DB) {
 
 // DeleteBudget deletes a budget by ID
 func DeleteBudget(c *gin.Context, db *db.DB) {
-	userID, ok := middleware.GetUserID(c)
+	userID, ok := middleware.RequireUserID(c)
 	if !ok {
-		c.JSON(401, gin.H{"error": "unauthorized"})
 		return
 	}
 

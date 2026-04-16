@@ -85,9 +85,8 @@ func GetPredefinedCategories() []predefinedCategory {
 
 // CreateCategory creates or upserts a category (custom or predefined override).
 func CreateCategory(c *gin.Context, db *db.DB) {
-	userID, ok := middleware.GetUserID(c)
+	userID, ok := middleware.RequireUserID(c)
 	if !ok {
-		c.JSON(401, gin.H{"error": "unauthorized"})
 		return
 	}
 
@@ -137,9 +136,8 @@ func CreateCategory(c *gin.Context, db *db.DB) {
 // ListCategories returns a merged list: predefined defaults (with user overrides applied) + user's custom categories.
 // DB rows only exist for overrides and custom categories — untouched predefined categories are generated in-memory.
 func ListCategories(c *gin.Context, db *db.DB) {
-	userID, ok := middleware.GetUserID(c)
+	userID, ok := middleware.RequireUserID(c)
 	if !ok {
-		c.JSON(401, gin.H{"error": "unauthorized"})
 		return
 	}
 
@@ -210,9 +208,8 @@ func ListCategories(c *gin.Context, db *db.DB) {
 // UpdateCategory updates an existing category.
 // If the category ID matches a virtual predefined (no DB row yet), it creates an override row.
 func UpdateCategory(c *gin.Context, db *db.DB) {
-	userID, ok := middleware.GetUserID(c)
+	userID, ok := middleware.RequireUserID(c)
 	if !ok {
-		c.JSON(401, gin.H{"error": "unauthorized"})
 		return
 	}
 
@@ -352,9 +349,8 @@ func UpdateCategory(c *gin.Context, db *db.DB) {
 // For custom categories: permanent delete.
 // The "Other" predefined can never be deleted.
 func DeleteCategory(c *gin.Context, db *db.DB) {
-	userID, ok := middleware.GetUserID(c)
+	userID, ok := middleware.RequireUserID(c)
 	if !ok {
-		c.JSON(401, gin.H{"error": "unauthorized"})
 		return
 	}
 

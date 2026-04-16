@@ -57,3 +57,14 @@ func GetUserID(c *gin.Context) (uuid.UUID, bool) {
 	id, ok := userID.(uuid.UUID)
 	return id, ok
 }
+
+// RequireUserID extracts the authenticated user ID from the context.
+// If missing, it responds with 401 and returns uuid.Nil, false.
+func RequireUserID(c *gin.Context) (uuid.UUID, bool) {
+	userID, ok := GetUserID(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return uuid.Nil, false
+	}
+	return userID, true
+}

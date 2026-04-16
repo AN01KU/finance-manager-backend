@@ -17,9 +17,8 @@ import (
 )
 
 func CreateGroupTransaction(c *gin.Context, database *db.DB) {
-	userID, ok := middleware.GetUserID(c)
+	userID, ok := middleware.RequireUserID(c)
 	if !ok {
-		c.JSON(401, gin.H{"error": "unauthorized"})
 		return
 	}
 
@@ -178,9 +177,8 @@ func CreateGroupTransaction(c *gin.Context, database *db.DB) {
 }
 
 func ListGroupTransactions(c *gin.Context, database *db.DB) {
-	userID, ok := middleware.GetUserID(c)
+	userID, ok := middleware.RequireUserID(c)
 	if !ok {
-		c.JSON(401, gin.H{"error": "unauthorized"})
 		return
 	}
 
@@ -290,9 +288,8 @@ func ListGroupTransactions(c *gin.Context, database *db.DB) {
 }
 
 func GetGroupTransaction(c *gin.Context, database *db.DB) {
-	userID, ok := middleware.GetUserID(c)
+	userID, ok := middleware.RequireUserID(c)
 	if !ok {
-		c.JSON(401, gin.H{"error": "unauthorized"})
 		return
 	}
 
@@ -355,9 +352,8 @@ func GetGroupTransaction(c *gin.Context, database *db.DB) {
 }
 
 func UpdateGroupTransaction(c *gin.Context, database *db.DB) {
-	userID, ok := middleware.GetUserID(c)
+	userID, ok := middleware.RequireUserID(c)
 	if !ok {
-		c.JSON(401, gin.H{"error": "unauthorized"})
 		return
 	}
 
@@ -476,9 +472,8 @@ func UpdateGroupTransaction(c *gin.Context, database *db.DB) {
 }
 
 func DeleteGroupTransaction(c *gin.Context, database *db.DB) {
-	userID, ok := middleware.GetUserID(c)
+	userID, ok := middleware.RequireUserID(c)
 	if !ok {
-		c.JSON(401, gin.H{"error": "unauthorized"})
 		return
 	}
 
