@@ -36,6 +36,9 @@ func main() {
 	}
 
 	cfg := config.Load()
+	if err := cfg.Validate(gin.Mode()); err != nil {
+		log.Fatal("Config validation failed: ", err)
+	}
 
 	log.Println("==============================================")
 	log.Println("Finance Manager Backend starting...")

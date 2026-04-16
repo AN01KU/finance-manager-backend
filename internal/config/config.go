@@ -1,9 +1,11 @@
 package config
 
 import (
+	"fmt"
 	"log"
 	"os"
 	"strconv"
+	"strings"
 )
 
 type Config struct {
@@ -35,6 +37,37 @@ func Load() *Config {
 	}
 
 	return cfg
+}
+
+// Validate checks that the config is safe for the given gin mode ("release", "debug", "test").
+// Returns an error listing all violations; in release mode unsafe settings are fatal.
+// In non-release mode unsafe settings emit warnings only.
+func (c *Config) Validate(ginMode string) error {
+	if ginMode != "release" {
+		if c.CORSOrigin == "*" {
+			log.Println("Warning: CORS_ORIGIN=* — set a specific origin in production")
+		}
+		if strings.Contains(c.DBURL, "sslmode=disable") {
+			log.Println("Warning: DATABASE_URL uses sslmode=disable — enable SSL in production")
+		}
+		return nil
+	}
+
+	// Release mode: fail closed
+	var errs []string
+	if c.CORSOrigin == "*" {
+		errs = append(errs, "CORS_ORIGIN must not be '*' in release mode")
+	}
+	if strings.Contains(c.DBURL, "sslmode=disable") {
+		errs = append(errs, "DATABASE_URL must not use sslmode=disable in release mode")
+	}
+	if c.AdminPassword == "" {
+		errs = append(errs, "ADMIN_PASSWORD must be set when admin is enabled in release mode")
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("unsafe production config: %s", strings.Join(errs, "; "))
+	}
+	return nil
 }
 
 func getEnv(key, defaultValue string) string {
