@@ -8,10 +8,11 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 
+	"github.com/yanonymousV2/finance-manager-backend/internal/db"
 	"github.com/yanonymousV2/finance-manager-backend/internal/user"
 )
 
-func JWTAuth(jwtSecret string) gin.HandlerFunc {
+func JWTAuth(jwtSecret string, database *db.DB) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		authHeader := c.GetHeader("Authorization")
 		if authHeader == "" {
@@ -41,6 +42,18 @@ func JWTAuth(jwtSecret string) gin.HandlerFunc {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid token claims"})
 			c.Abort()
 			return
+		}
+
+		// Verify the user still exists (revokes tokens for deleted users).
+		if database != nil {
+			var exists bool
+			if err := database.Pool.QueryRow(c.Request.Context(),
+				"SELECT EXISTS(SELECT 1 FROM users WHERE id = $1)", claims.UserID,
+			).Scan(&exists); err != nil || !exists {
+				c.JSON(http.StatusUnauthorized, gin.H{"error": "user no longer exists"})
+				c.Abort()
+				return
+			}
 		}
 
 		c.Set("user_id", claims.UserID)

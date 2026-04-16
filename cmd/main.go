@@ -110,7 +110,7 @@ func main() {
 
 	// Protected routes
 	protected := r.Group("/")
-	protected.Use(middleware.JWTAuth(cfg.JWTSecret))
+	protected.Use(middleware.JWTAuth(cfg.JWTSecret, database))
 	syncGuard := sync.SyncSessionGuard(database)
 	{
 		// Auth (protected)

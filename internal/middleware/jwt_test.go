@@ -77,7 +77,7 @@ func TestJWTAuth(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			r := gin.New()
-			r.Use(JWTAuth(secret))
+			r.Use(JWTAuth(secret, nil))
 			var gotUserID uuid.UUID
 			r.GET("/test", func(c *gin.Context) {
 				if id, ok := GetUserID(c); ok {
