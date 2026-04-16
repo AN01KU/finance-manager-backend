@@ -401,29 +401,47 @@ func UpdateGroupTransaction(c *gin.Context, database *db.DB) {
 		return
 	}
 
-	query := `UPDATE group_transactions SET updated_at = NOW()`
+	gtQuery := `UPDATE group_transactions SET updated_at = NOW()`
 	args := []interface{}{}
 	n := 1
 
+	// Track which personal-transaction fields need syncing
+	personalQuery := `UPDATE transactions SET updated_at = NOW()`
+	var personalArgs []interface{}
+	pn := 1
+
 	if req.Category != nil {
-		query += fmt.Sprintf(", category = $%d", n)
+		gtQuery += fmt.Sprintf(", category = $%d", n)
 		args = append(args, *req.Category)
 		n++
+		personalQuery += fmt.Sprintf(", category = $%d", pn)
+		personalArgs = append(personalArgs, *req.Category)
+		pn++
 	}
 	if req.Date != nil {
-		query += fmt.Sprintf(", date = $%d", n)
-		args = append(args, time.UnixMilli(*req.Date).UTC())
+		t := time.UnixMilli(*req.Date).UTC()
+		gtQuery += fmt.Sprintf(", date = $%d", n)
+		args = append(args, t)
 		n++
+		personalQuery += fmt.Sprintf(", date = $%d", pn)
+		personalArgs = append(personalArgs, t)
+		pn++
 	}
 	if req.Description != nil {
-		query += fmt.Sprintf(", description = $%d", n)
+		gtQuery += fmt.Sprintf(", description = $%d", n)
 		args = append(args, *req.Description)
 		n++
+		personalQuery += fmt.Sprintf(", description = $%d", pn)
+		personalArgs = append(personalArgs, *req.Description)
+		pn++
 	}
 	if req.Notes != nil {
-		query += fmt.Sprintf(", notes = $%d", n)
+		gtQuery += fmt.Sprintf(", notes = $%d", n)
 		args = append(args, *req.Notes)
 		n++
+		personalQuery += fmt.Sprintf(", notes = $%d", pn)
+		personalArgs = append(personalArgs, *req.Notes)
+		pn++
 	}
 
 	if n == 1 {
@@ -431,13 +449,23 @@ func UpdateGroupTransaction(c *gin.Context, database *db.DB) {
 		return
 	}
 
-	query += fmt.Sprintf(` WHERE id = $%d
+	gtQuery += fmt.Sprintf(` WHERE id = $%d
 		RETURNING id, group_id, paid_by_user_id, total_amount, category, date, description, notes, is_deleted, created_at, updated_at`, n)
 	args = append(args, txID)
 
+	personalQuery += fmt.Sprintf(` WHERE group_transaction_id = $%d AND is_deleted = FALSE`, pn)
+	personalArgs = append(personalArgs, txID)
+
+	dbTx, err := database.Pool.Begin(c.Request.Context())
+	if err != nil {
+		c.JSON(500, gin.H{"error": "failed to start transaction"})
+		return
+	}
+	defer dbTx.Rollback(c.Request.Context())
+
 	var gt GroupTransaction
 	var rawDate, rawCreatedAt, rawUpdatedAt time.Time
-	err = database.Pool.QueryRow(c.Request.Context(), query, args...).Scan(
+	err = dbTx.QueryRow(c.Request.Context(), gtQuery, args...).Scan(
 		&gt.ID, &gt.GroupID, &gt.PaidByUserID, &gt.TotalAmount, &gt.Category, &rawDate,
 		&gt.Description, &gt.Notes, &gt.IsDeleted, &rawCreatedAt, &rawUpdatedAt,
 	)
@@ -448,6 +476,17 @@ func UpdateGroupTransaction(c *gin.Context, database *db.DB) {
 	gt.Date = helpers.FromTime(rawDate)
 	gt.CreatedAt = helpers.FromTime(rawCreatedAt)
 	gt.UpdatedAt = helpers.FromTime(rawUpdatedAt)
+
+	// Sync the same field changes to linked personal transactions.
+	if _, err = dbTx.Exec(c.Request.Context(), personalQuery, personalArgs...); err != nil {
+		c.JSON(500, gin.H{"error": "failed to sync personal transactions"})
+		return
+	}
+
+	if err := dbTx.Commit(c.Request.Context()); err != nil {
+		c.JSON(500, gin.H{"error": "failed to commit"})
+		return
+	}
 
 	splitRows, err := database.Pool.Query(c.Request.Context(),
 		`SELECT id, user_id, amount, transaction_id
