@@ -17,7 +17,7 @@ type DB struct {
 	Pool *pgxpool.Pool
 }
 
-func New(ctx context.Context, dbURL string) (*DB, error) {
+func New(ctx context.Context, dbURL string, maxConns, minConns int32) (*DB, error) {
 	// Configure connection pool
 	config, err := pgxpool.ParseConfig(dbURL)
 	if err != nil {
@@ -25,8 +25,8 @@ func New(ctx context.Context, dbURL string) (*DB, error) {
 	}
 
 	// Set pool settings for better performance
-	config.MaxConns = 25                       // Maximum number of connections
-	config.MinConns = 5                        // Minimum number of connections
+	config.MaxConns = maxConns                  // Configurable via DB_MAX_CONNS (default 25)
+	config.MinConns = minConns                  // Configurable via DB_MIN_CONNS (default 5)
 	config.MaxConnLifetime = 1 * time.Hour     // Maximum connection lifetime
 	config.MaxConnIdleTime = 30 * time.Minute  // Maximum idle time
 	config.HealthCheckPeriod = 1 * time.Minute // Health check frequency

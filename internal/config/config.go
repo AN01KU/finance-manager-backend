@@ -14,9 +14,11 @@ type Config struct {
 	Port               string
 	InviteCode         string
 	CORSOrigin         string
-	AdminUsername       string
+	AdminUsername      string
 	AdminPassword      string
 	SyncSessionTTLDays int
+	DBMaxConns         int32
+	DBMinConns         int32
 }
 
 func Load() *Config {
@@ -29,6 +31,8 @@ func Load() *Config {
 		AdminUsername:       getEnv("ADMIN_USERNAME", "admin"),
 		AdminPassword:       getEnv("ADMIN_PASSWORD", ""),
 		SyncSessionTTLDays: getEnvInt("SYNC_SESSION_TTL_DAYS", 90),
+		DBMaxConns:         int32(getEnvInt("DB_MAX_CONNS", 25)),
+		DBMinConns:         int32(getEnvInt("DB_MIN_CONNS", 5)),
 	}
 
 	// Validate JWT secret strength

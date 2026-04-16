@@ -48,7 +48,7 @@ func main() {
 
 	// Connect to DB
 	log.Println("Connecting to database...")
-	database, err := db.New(ctx, cfg.DBURL)
+	database, err := db.New(ctx, cfg.DBURL, cfg.DBMaxConns, cfg.DBMinConns)
 	if err != nil {
 		log.Fatal("Failed to connect to database:", err)
 	}
