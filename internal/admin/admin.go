@@ -215,7 +215,9 @@ func (a *Admin) authMiddleware() gin.HandlerFunc {
 }
 
 func (a *Admin) loginPage(c *gin.Context) {
-	a.tmpls["login"].ExecuteTemplate(c.Writer, "login.html", gin.H{"Error": ""})
+	if err := a.tmpls["login"].ExecuteTemplate(c.Writer, "login.html", gin.H{"Error": ""}); err != nil {
+		c.String(500, "template error: %v", err)
+	}
 }
 
 func (a *Admin) loginSubmit(c *gin.Context) {
@@ -230,7 +232,9 @@ func (a *Admin) loginSubmit(c *gin.Context) {
 		c.Redirect(http.StatusFound, "/admin/")
 		return
 	}
-	a.tmpls["login"].ExecuteTemplate(c.Writer, "login.html", gin.H{"Error": "Invalid credentials"})
+	if err := a.tmpls["login"].ExecuteTemplate(c.Writer, "login.html", gin.H{"Error": "Invalid credentials"}); err != nil {
+		c.String(500, "template error: %v", err)
+	}
 }
 
 func (a *Admin) logout(c *gin.Context) {
@@ -296,10 +300,10 @@ func (a *Admin) dashboard(c *gin.Context) {
 	}
 
 	var userCount int64
-	a.pool.QueryRow(c.Request.Context(), `SELECT COUNT(*) FROM users`).Scan(&userCount)
+	_ = a.pool.QueryRow(c.Request.Context(), `SELECT COUNT(*) FROM users`).Scan(&userCount)
 
 	var dbSize string
-	a.pool.QueryRow(c.Request.Context(),
+	_ = a.pool.QueryRow(c.Request.Context(),
 		`SELECT pg_size_pretty(pg_database_size(current_database()))`).Scan(&dbSize)
 
 	a.render(c, "dashboard.html", gin.H{
@@ -345,7 +349,7 @@ func (a *Admin) tableBrowse(c *gin.Context) {
 
 	// Get total rows
 	var totalRows int64
-	a.pool.QueryRow(c.Request.Context(), fmt.Sprintf(`SELECT COUNT(*) FROM %q`, tableName)).Scan(&totalRows)
+	_ = a.pool.QueryRow(c.Request.Context(), fmt.Sprintf(`SELECT COUNT(*) FROM %q`, tableName)).Scan(&totalRows)
 
 	// Get all primary key columns (supports composite PKs like group_members)
 	var pkColumns []string
@@ -531,7 +535,7 @@ func (a *Admin) rowCreateSubmit(c *gin.Context) {
 		}
 		if val == "" && col.Nullable {
 			insertCols = append(insertCols, quoteIdent(col.Name))
-			placeholders = append(placeholders, fmt.Sprintf("NULL"))
+			placeholders = append(placeholders, "NULL")
 			continue
 		}
 		if val == "" {

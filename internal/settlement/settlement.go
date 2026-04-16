@@ -95,7 +95,7 @@ func CreateSettlement(c *gin.Context, db *db.DB) {
 		c.JSON(500, gin.H{"error": "failed to start transaction"})
 		return
 	}
-	defer dbTx.Rollback(c.Request.Context())
+	defer func() { _ = dbTx.Rollback(c.Request.Context()) }()
 
 	// Insert settlement
 	var s Settlement

@@ -127,7 +127,7 @@ func CreateGroup(c *gin.Context, database *db.DB) {
 		c.JSON(500, gin.H{"error": "failed to start transaction"})
 		return
 	}
-	defer tx.Rollback(c.Request.Context())
+	defer func() { _ = tx.Rollback(c.Request.Context()) }()
 
 	var g Group
 	var rawGroupCreatedAt time.Time

@@ -19,6 +19,10 @@ func setupBalanceTestDB(t *testing.T) *db.DB {
 	if dbURL == "" {
 		dbURL = "postgres://postgres:postgres@localhost:5432/finance_manager_test?sslmode=disable"
 	}
+
+	err := db.RunMigrations(context.Background(), dbURL, "")
+	require.NoError(t, err)
+
 	pool, err := pgxpool.New(context.Background(), dbURL)
 	require.NoError(t, err)
 

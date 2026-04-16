@@ -125,7 +125,6 @@ func ListBudgets(c *gin.Context, db *db.DB) {
 		}
 		query += fmt.Sprintf(" AND year = $%d", argCount)
 		args = append(args, year)
-		argCount++
 	}
 
 	query += " ORDER BY year DESC, month DESC"

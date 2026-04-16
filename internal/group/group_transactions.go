@@ -97,7 +97,7 @@ func CreateGroupTransaction(c *gin.Context, database *db.DB) {
 		c.JSON(500, gin.H{"error": "failed to start transaction"})
 		return
 	}
-	defer tx.Rollback(c.Request.Context())
+	defer func() { _ = tx.Rollback(c.Request.Context()) }()
 
 	// Insert group_transaction
 	var gt GroupTransaction
@@ -473,7 +473,7 @@ func UpdateGroupTransaction(c *gin.Context, database *db.DB) {
 		c.JSON(500, gin.H{"error": "failed to start transaction"})
 		return
 	}
-	defer dbTx.Rollback(c.Request.Context())
+	defer func() { _ = dbTx.Rollback(c.Request.Context()) }()
 
 	var gt GroupTransaction
 	var rawDate, rawCreatedAt, rawUpdatedAt time.Time
@@ -569,7 +569,7 @@ func DeleteGroupTransaction(c *gin.Context, database *db.DB) {
 		c.JSON(500, gin.H{"error": "failed to start transaction"})
 		return
 	}
-	defer dbTx.Rollback(c.Request.Context())
+	defer func() { _ = dbTx.Rollback(c.Request.Context()) }()
 
 	// Soft-delete all linked personal transactions
 	_, err = dbTx.Exec(c.Request.Context(),
