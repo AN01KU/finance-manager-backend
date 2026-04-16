@@ -2,6 +2,7 @@ package group
 
 import (
 	"context"
+	"os"
 	"testing"
 
 	"github.com/google/uuid"
@@ -14,7 +15,10 @@ import (
 )
 
 func setupBalanceTestDB(t *testing.T) *db.DB {
-	dbURL := "postgres://postgres:postgres@localhost:5432/finance_manager_test?sslmode=disable"
+	dbURL := os.Getenv("DATABASE_URL")
+	if dbURL == "" {
+		dbURL = "postgres://postgres:postgres@localhost:5432/finance_manager_test?sslmode=disable"
+	}
 	pool, err := pgxpool.New(context.Background(), dbURL)
 	require.NoError(t, err)
 

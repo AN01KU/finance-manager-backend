@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http/httptest"
+	"os"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -18,8 +19,10 @@ import (
 )
 
 func setupTestDB(t *testing.T) *db.DB {
-	// Use a test database URL - in real tests you'd use testcontainers or similar
-	dbURL := "postgres://postgres:postgres@localhost:5432/finance_manager_test?sslmode=disable"
+	dbURL := os.Getenv("DATABASE_URL")
+	if dbURL == "" {
+		dbURL = "postgres://postgres:postgres@localhost:5432/finance_manager_test?sslmode=disable"
+	}
 	pool, err := pgxpool.New(context.Background(), dbURL)
 	require.NoError(t, err)
 
