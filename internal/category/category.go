@@ -173,6 +173,10 @@ func ListCategories(c *gin.Context, db *db.DB) {
 			customCats = append(customCats, cat)
 		}
 	}
+	if err := rows.Err(); err != nil {
+		c.JSON(500, gin.H{"error": "database iteration failed"})
+		return
+	}
 
 	// Build the merged list: predefined first (with overrides applied), then custom.
 	now := helpers.FromTime(time.Now())
@@ -325,7 +329,7 @@ func UpdateCategory(c *gin.Context, db *db.DB) {
 		argCount++
 	}
 
-	query += fmt.Sprintf("updated_at = NOW() ")
+	query += "updated_at = NOW() "
 	query += fmt.Sprintf("WHERE id = $%d RETURNING id, user_id, name, icon, color, is_hidden, is_predefined, predefined_key, created_at, updated_at", argCount)
 	args = append(args, categoryID)
 

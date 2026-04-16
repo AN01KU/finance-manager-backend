@@ -107,13 +107,13 @@ func LoggerMiddleware(ls *LogStore) gin.HandlerFunc {
 
 // Admin holds all dependencies for the admin dashboard.
 type Admin struct {
-	pool      *pgxpool.Pool
-	tmpls     map[string]*template.Template
-	username  string
-	password  string
-	sessions  map[string]time.Time
-	mu        sync.Mutex
-	logStore  *LogStore
+	pool     *pgxpool.Pool
+	tmpls    map[string]*template.Template
+	username string
+	password string
+	sessions map[string]time.Time
+	mu       sync.Mutex
+	logStore *LogStore
 }
 
 // New creates a new Admin instance.
@@ -215,7 +215,9 @@ func (a *Admin) authMiddleware() gin.HandlerFunc {
 }
 
 func (a *Admin) loginPage(c *gin.Context) {
-	a.tmpls["login"].ExecuteTemplate(c.Writer, "login.html", gin.H{"Error": ""})
+	if err := a.tmpls["login"].ExecuteTemplate(c.Writer, "login.html", gin.H{"Error": ""}); err != nil {
+		c.String(500, "template error: %v", err)
+	}
 }
 
 func (a *Admin) loginSubmit(c *gin.Context) {
@@ -230,7 +232,9 @@ func (a *Admin) loginSubmit(c *gin.Context) {
 		c.Redirect(http.StatusFound, "/admin/")
 		return
 	}
-	a.tmpls["login"].ExecuteTemplate(c.Writer, "login.html", gin.H{"Error": "Invalid credentials"})
+	if err := a.tmpls["login"].ExecuteTemplate(c.Writer, "login.html", gin.H{"Error": "Invalid credentials"}); err != nil {
+		c.String(500, "template error: %v", err)
+	}
 }
 
 func (a *Admin) logout(c *gin.Context) {
@@ -296,10 +300,10 @@ func (a *Admin) dashboard(c *gin.Context) {
 	}
 
 	var userCount int64
-	a.pool.QueryRow(c.Request.Context(), `SELECT COUNT(*) FROM users`).Scan(&userCount)
+	_ = a.pool.QueryRow(c.Request.Context(), `SELECT COUNT(*) FROM users`).Scan(&userCount)
 
 	var dbSize string
-	a.pool.QueryRow(c.Request.Context(),
+	_ = a.pool.QueryRow(c.Request.Context(),
 		`SELECT pg_size_pretty(pg_database_size(current_database()))`).Scan(&dbSize)
 
 	a.render(c, "dashboard.html", gin.H{
@@ -345,7 +349,7 @@ func (a *Admin) tableBrowse(c *gin.Context) {
 
 	// Get total rows
 	var totalRows int64
-	a.pool.QueryRow(c.Request.Context(), fmt.Sprintf(`SELECT COUNT(*) FROM %q`, tableName)).Scan(&totalRows)
+	_ = a.pool.QueryRow(c.Request.Context(), fmt.Sprintf(`SELECT COUNT(*) FROM %q`, tableName)).Scan(&totalRows)
 
 	// Get all primary key columns (supports composite PKs like group_members)
 	var pkColumns []string
@@ -444,7 +448,7 @@ func (a *Admin) rowDelete(c *gin.Context) {
 
 	// Validate table exists
 	var tableExists bool
-	a.pool.QueryRow(c.Request.Context(),
+	_ = a.pool.QueryRow(c.Request.Context(),
 		`SELECT EXISTS(SELECT 1 FROM pg_tables WHERE schemaname='public' AND tablename=$1)`, table).Scan(&tableExists)
 	if !tableExists {
 		c.Redirect(http.StatusFound, "/admin/tables")
@@ -454,7 +458,7 @@ func (a *Admin) rowDelete(c *gin.Context) {
 	// Validate all columns exist in the catalog (prevents SQL injection)
 	for _, col := range pkCols {
 		var colExists bool
-		a.pool.QueryRow(c.Request.Context(),
+		_ = a.pool.QueryRow(c.Request.Context(),
 			`SELECT EXISTS(
 				SELECT 1 FROM information_schema.columns
 				WHERE table_schema='public' AND table_name=$1 AND column_name=$2
@@ -506,7 +510,7 @@ func (a *Admin) rowCreateSubmit(c *gin.Context) {
 	table := c.PostForm("table")
 
 	var tableExists bool
-	a.pool.QueryRow(c.Request.Context(),
+	_ = a.pool.QueryRow(c.Request.Context(),
 		`SELECT EXISTS(SELECT 1 FROM pg_tables WHERE schemaname='public' AND tablename=$1)`, table).Scan(&tableExists)
 	if !tableExists {
 		c.Redirect(http.StatusFound, "/admin/tables")
@@ -531,7 +535,7 @@ func (a *Admin) rowCreateSubmit(c *gin.Context) {
 		}
 		if val == "" && col.Nullable {
 			insertCols = append(insertCols, quoteIdent(col.Name))
-			placeholders = append(placeholders, fmt.Sprintf("NULL"))
+			placeholders = append(placeholders, "NULL")
 			continue
 		}
 		if val == "" {
@@ -565,7 +569,7 @@ func (a *Admin) rowEditForm(c *gin.Context) {
 
 	// Validate table exists
 	var exists bool
-	a.pool.QueryRow(c.Request.Context(),
+	_ = a.pool.QueryRow(c.Request.Context(),
 		`SELECT EXISTS(SELECT 1 FROM pg_tables WHERE schemaname='public' AND tablename=$1)`, table).Scan(&exists)
 	if !exists {
 		c.Redirect(http.StatusFound, "/admin/tables")
@@ -642,7 +646,7 @@ func (a *Admin) rowEditSubmit(c *gin.Context) {
 	}
 
 	var tableExists bool
-	a.pool.QueryRow(c.Request.Context(),
+	_ = a.pool.QueryRow(c.Request.Context(),
 		`SELECT EXISTS(SELECT 1 FROM pg_tables WHERE schemaname='public' AND tablename=$1)`, table).Scan(&tableExists)
 	if !tableExists {
 		c.Redirect(http.StatusFound, "/admin/tables")
@@ -906,7 +910,7 @@ func pgCastType(c *gin.Context, pool *pgxpool.Pool, table, column string) string
 	case "user-defined":
 		// For custom/enum types, query the actual udt_name
 		var udtName string
-		pool.QueryRow(c.Request.Context(),
+		_ = pool.QueryRow(c.Request.Context(),
 			`SELECT udt_name FROM information_schema.columns
 			 WHERE table_schema = 'public' AND table_name = $1 AND column_name = $2`,
 			table, column).Scan(&udtName)

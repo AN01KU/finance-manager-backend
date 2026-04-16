@@ -49,23 +49,23 @@ type GroupWithDetails struct {
 }
 
 type GroupTransaction struct {
-	ID           uuid.UUID             `json:"id"`
-	GroupID      uuid.UUID             `json:"group_id"`
-	PaidByUserID uuid.UUID             `json:"paid_by_user_id"`
-	TotalAmount  float64               `json:"total_amount"`
-	Category     string                `json:"category"`
-	Date         helpers.EpochMillis   `json:"date"`
-	Description  *string               `json:"description,omitempty"`
-	Notes        *string               `json:"notes,omitempty"`
-	IsDeleted    bool                  `json:"is_deleted"`
-	CreatedAt    helpers.EpochMillis   `json:"created_at"`
-	UpdatedAt    helpers.EpochMillis   `json:"updated_at"`
-	Splits       []SplitDetail         `json:"splits"`
+	ID           uuid.UUID           `json:"id"`
+	GroupID      uuid.UUID           `json:"group_id"`
+	PaidByUserID uuid.UUID           `json:"paid_by_user_id"`
+	TotalAmount  float64             `json:"total_amount"`
+	Category     string              `json:"category"`
+	Date         helpers.EpochMillis `json:"date"`
+	Description  *string             `json:"description,omitempty"`
+	Notes        *string             `json:"notes,omitempty"`
+	IsDeleted    bool                `json:"is_deleted"`
+	CreatedAt    helpers.EpochMillis `json:"created_at"`
+	UpdatedAt    helpers.EpochMillis `json:"updated_at"`
+	Splits       []SplitDetail       `json:"splits"`
 }
 
 type SplitDetail struct {
-	ID            uuid.UUID             `json:"id"`
-	UserID        uuid.UUID             `json:"user_id"`
+	ID            uuid.UUID  `json:"id"`
+	UserID        uuid.UUID  `json:"user_id"`
 	Amount        float64    `json:"amount"`
 	TransactionID *uuid.UUID `json:"transaction_id,omitempty"`
 }
@@ -127,7 +127,7 @@ func CreateGroup(c *gin.Context, database *db.DB) {
 		c.JSON(500, gin.H{"error": "failed to start transaction"})
 		return
 	}
-	defer tx.Rollback(c.Request.Context())
+	defer func() { _ = tx.Rollback(c.Request.Context()) }()
 
 	var g Group
 	var rawGroupCreatedAt time.Time
@@ -186,6 +186,10 @@ func GetUserGroups(c *gin.Context, database *db.DB) {
 		groups = append(groups, g)
 		groupIDs = append(groupIDs, g.ID)
 	}
+	if err := rows.Err(); err != nil {
+		c.JSON(500, gin.H{"error": "database iteration failed"})
+		return
+	}
 
 	if len(groupIDs) == 0 {
 		c.JSON(200, gin.H{"data": []GroupWithDetails{}})
@@ -217,6 +221,10 @@ func GetUserGroups(c *gin.Context, database *db.DB) {
 		m.CreatedAt = helpers.FromTime(rawJoinedAt)
 		membersByGroup[gid] = append(membersByGroup[gid], m)
 	}
+	if err := memberRows.Err(); err != nil {
+		c.JSON(500, gin.H{"error": "database iteration failed"})
+		return
+	}
 
 	// Fetch balance data: payer side from group_transactions
 	gtRows, err := database.Pool.Query(c.Request.Context(),
@@ -238,6 +246,10 @@ func GetUserGroups(c *gin.Context, database *db.DB) {
 			return
 		}
 		payersByGroup[gid] = append(payersByGroup[gid], payerEntry{paidBy, amount})
+	}
+	if err := gtRows.Err(); err != nil {
+		c.JSON(500, gin.H{"error": "database iteration failed"})
+		return
 	}
 
 	// Fetch split side
@@ -262,6 +274,10 @@ func GetUserGroups(c *gin.Context, database *db.DB) {
 		}
 		splitsByGroup[gid] = append(splitsByGroup[gid], splitEntry{uid, amount})
 	}
+	if err := splitRows.Err(); err != nil {
+		c.JSON(500, gin.H{"error": "database iteration failed"})
+		return
+	}
 
 	// Fetch settlements
 	settRows, err := database.Pool.Query(c.Request.Context(),
@@ -282,6 +298,10 @@ func GetUserGroups(c *gin.Context, database *db.DB) {
 			return
 		}
 		settByGroup[gid] = append(settByGroup[gid], settlementEntry{from, to, amount})
+	}
+	if err := settRows.Err(); err != nil {
+		c.JSON(500, gin.H{"error": "database iteration failed"})
+		return
 	}
 
 	var result []GroupWithDetails
@@ -540,6 +560,10 @@ func GetMembers(c *gin.Context, database *db.DB) {
 		m.CreatedAt = helpers.FromTime(rawJoinedAt)
 		members = append(members, m)
 	}
+	if err := rows.Err(); err != nil {
+		c.JSON(500, gin.H{"error": "database iteration failed"})
+		return
+	}
 
 	c.JSON(200, gin.H{"data": members})
 }
@@ -583,6 +607,10 @@ func GetBalances(c *gin.Context, database *db.DB) {
 		m.CreatedAt = helpers.FromTime(rawJoinedAt)
 		members = append(members, m)
 	}
+	if err := memberRows.Err(); err != nil {
+		c.JSON(500, gin.H{"error": "database iteration failed"})
+		return
+	}
 
 	balanceRows, err := database.Pool.Query(c.Request.Context(),
 		`SELECT 'payer' AS kind, paid_by_user_id, total_amount
@@ -614,6 +642,10 @@ func GetBalances(c *gin.Context, database *db.DB) {
 			splits = append(splits, splitEntry{userID: uid, amount: amount})
 		}
 	}
+	if err := balanceRows.Err(); err != nil {
+		c.JSON(500, gin.H{"error": "database iteration failed"})
+		return
+	}
 
 	settRows, err := database.Pool.Query(c.Request.Context(),
 		"SELECT from_user, to_user, amount FROM settlements WHERE group_id = $1", groupID)
@@ -631,6 +663,10 @@ func GetBalances(c *gin.Context, database *db.DB) {
 			return
 		}
 		setts = append(setts, s)
+	}
+	if err := settRows.Err(); err != nil {
+		c.JSON(500, gin.H{"error": "database iteration failed"})
+		return
 	}
 
 	balances := computeBalances(members, payers, splits, setts)
@@ -657,7 +693,7 @@ func GetGroupSettlements(c *gin.Context, database *db.DB) {
 
 	limit := 20
 	if s := c.Query("limit"); s != "" {
-		if l, err := strconv.Atoi(s); err == nil && l > 0 {
+		if l, err := strconv.Atoi(s); err == nil && l > 0 && l <= 100 {
 			limit = l
 		}
 	}
@@ -703,6 +739,10 @@ func GetGroupSettlements(c *gin.Context, database *db.DB) {
 		}
 		item.CreatedAt = helpers.FromTime(rawCreatedAt)
 		result = append(result, item)
+	}
+	if err := rows.Err(); err != nil {
+		c.JSON(500, gin.H{"error": "database iteration failed"})
+		return
 	}
 
 	c.JSON(200, gin.H{

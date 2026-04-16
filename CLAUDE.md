@@ -2,6 +2,26 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Pre-Commit Checklist
+
+**Never commit without running these first. No exceptions.**
+
+```bash
+# 1. Format
+gofmt -s -w .
+
+# 2. Build
+go build ./...
+
+# 3. Vet
+go vet ./...
+
+# 4. Unit tests
+go test ./internal/middleware/... ./internal/config/... ./internal/recurring/... ./internal/helpers/...
+```
+
+All four must pass cleanly before committing. If any fail, fix them first.
+
 ## Commands
 
 ```bash

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http/httptest"
+	"os"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -18,8 +19,14 @@ import (
 )
 
 func setupTestDB(t *testing.T) *db.DB {
-	// Use a test database URL - in real tests you'd use testcontainers or similar
-	dbURL := "postgres://postgres:postgres@localhost:5432/finance_manager_test?sslmode=disable"
+	dbURL := os.Getenv("DATABASE_URL")
+	if dbURL == "" {
+		dbURL = "postgres://postgres:postgres@localhost:5432/finance_manager_test?sslmode=disable"
+	}
+
+	err := db.RunMigrations(context.Background(), dbURL, "")
+	require.NoError(t, err)
+
 	pool, err := pgxpool.New(context.Background(), dbURL)
 	require.NoError(t, err)
 
@@ -50,6 +57,7 @@ func TestSignup(t *testing.T) {
 			name: "valid signup",
 			requestBody: SignupRequest{
 				Email:    "test@example.com",
+				Username: "testuser",
 				Password: "password123",
 			},
 			expectedStatus: 201,
@@ -59,6 +67,7 @@ func TestSignup(t *testing.T) {
 			name: "duplicate email",
 			requestBody: SignupRequest{
 				Email:    "test@example.com",
+				Username: "testuser2",
 				Password: "password123",
 			},
 			expectedStatus: 400,
@@ -68,6 +77,7 @@ func TestSignup(t *testing.T) {
 			name: "invalid email",
 			requestBody: SignupRequest{
 				Email:    "invalid-email",
+				Username: "testuser3",
 				Password: "password123",
 			},
 			expectedStatus: 400,
@@ -77,6 +87,7 @@ func TestSignup(t *testing.T) {
 			name: "password too short",
 			requestBody: SignupRequest{
 				Email:    "test2@example.com",
+				Username: "testuser4",
 				Password: "123",
 			},
 			expectedStatus: 400,
@@ -125,8 +136,8 @@ func TestLogin(t *testing.T) {
 	hashedPassword, _ := bcrypt.GenerateFromPassword([]byte("password123"), bcrypt.DefaultCost)
 	userID := uuid.New()
 	_, err := testDB.Pool.Exec(context.Background(),
-		"INSERT INTO users (id, email, password_hash) VALUES ($1, $2, $3)",
-		userID, "login@example.com", string(hashedPassword))
+		"INSERT INTO users (id, email, username, password_hash) VALUES ($1, $2, $3, $4)",
+		userID, "login@example.com", "loginuser", string(hashedPassword))
 	require.NoError(t, err)
 
 	tests := []struct {

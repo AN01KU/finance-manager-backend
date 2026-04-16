@@ -1,66 +1,189 @@
 name: CI
 
 on:
-  push:
-    branches: [ main, master ]
   pull_request:
-    branches: [ main, master ]
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Cancel in-progress CI runs for the same branch/PR on new pushes.
+# The deploy job has its own concurrency group (cancel-in-progress: false)
+# so a mid-flight deploy is never interrupted by a subsequent push.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  test:
+  # ── 1. Lint ──────────────────────────────────────────────────────────────────
+  lint:
+    name: Lint
     runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # Fast fail: gofmt before the heavier linter
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -s -l .)
+          if [ -n "$unformatted" ]; then
+            echo "The following files are not gofmt-formatted:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: v1.64.5
+          args: --timeout=5m
+
+  # ── 2. Build ─────────────────────────────────────────────────────────────────
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # Build with the release tag to match the production binary
+      - name: Build binary
+        run: go build -v -tags release -o finance-manager ./cmd/main.go
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: finance-manager-${{ github.sha }}
+          path: finance-manager
+          retention-days: 7
+
+  # ── 3. Unit tests (no DB required) ───────────────────────────────────────────
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    env:
+      # Required so any test that indirectly touches config doesn't log.Fatal
+      JWT_SECRET: ci-test-secret-minimum-32-characters-long
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # Single pass: -race + coverage together avoids compiling the packages twice
+      - name: Run unit tests
+        run: |
+          go test -v -race -count=1 -coverprofile=coverage.out -covermode=atomic \
+            ./internal/middleware/... \
+            ./internal/config/... \
+            ./internal/recurring/... \
+            ./internal/helpers/...
+          go tool cover -func=coverage.out
+
+      - name: Upload coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ github.sha }}
+          path: coverage.out
+          retention-days: 7
+
+  # ── 4. Integration tests (requires Postgres) ─────────────────────────────────
+  # Depends on build so DB tests don't start if the binary doesn't even compile.
+  integration-tests:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    needs: [build]
 
     services:
       postgres:
-        image: postgres:15
+        image: postgres:16
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
           POSTGRES_DB: finance_manager_test
+        ports:
+          - 5432:5432
         options: >-
           --health-cmd pg_isready
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
-        ports:
-          - 5432:5432
 
     steps:
-    - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-    - name: Set up Go
-      uses: actions/setup-go@v4
-      with:
-        go-version: '1.24.2'
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
 
-    - name: Cache Go modules
-      uses: actions/cache@v3
-      with:
-        path: ~/go/pkg/mod
-        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-        restore-keys: |
-          ${{ runner.os }}-go-
+      # Scope to packages that actually need the DB — not ./... — to keep
+      # the job focused and avoid compiling unrelated packages unnecessarily.
+      - name: Run integration tests
+        run: go test -v -race -count=1 ./internal/auth/... ./internal/group/...
+        env:
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/finance_manager_test?sslmode=disable
+          JWT_SECRET: ci-test-secret-minimum-32-characters-long
 
-    - name: Download dependencies
-      run: go mod download
+  # ── 5. Security audit ────────────────────────────────────────────────────────
+  security:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
 
-    - name: Run go vet
-      run: go vet ./...
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
 
-    - name: Run golangci-lint
-      uses: golangci/golangci-lint-action@v3
-      with:
-        version: latest
+      # govulncheck-action is pre-built and cached — faster than go install @latest
+      - name: govulncheck
+        uses: golang/govulncheck-action@v1
+        with:
+          go-version-file: go.mod
 
-    - name: Run gofmt check
-      run: |
-        if [ "$(gofmt -s -l . | wc -l)" -gt 0 ]; then
-          echo "The following files are not formatted:"
-          gofmt -s -l .
-          exit 1
-        fi
+  # ── 6. Deploy (dummy — replace with your real deployment command) ─────────────
+  # Only runs on push to main after ALL gates pass.
+  # Uses a separate concurrency group so a mid-flight deploy is never cancelled
+  # by a subsequent commit landing while it is still running.
+  deploy:
+    name: Deploy
+    runs-on: ubuntu-latest
+    needs: [lint, build, unit-tests, integration-tests, security]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    environment: production
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
 
-    - name: Run tests
-      run: go test ./...
-      env:
-        DATABASE_URL: postgres://postgres:postgres@localhost:5432/finance_manager_test?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download binary
+        uses: actions/download-artifact@v4
+        with:
+          name: finance-manager-${{ github.sha }}
+
+      - name: Deploy to production
+        run: |
+          echo "Deploying commit ${{ github.sha }} to production..."
+          echo "Replace this step with your actual deployment command, e.g.:"
+          echo "  fly deploy"
+          echo "  railway up"
+          echo "  kubectl set image deployment/api api=ghcr.io/org/api:${{ github.sha }}"
+          echo "Deployment complete (dummy run)"

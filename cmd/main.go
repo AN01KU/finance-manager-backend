@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"syscall"
 	"time"
 
@@ -36,26 +35,27 @@ func main() {
 	}
 
 	cfg := config.Load()
+	if err := cfg.Validate(gin.Mode()); err != nil {
+		log.Fatal("Config validation failed: ", err)
+	}
 
 	log.Println("==============================================")
 	log.Println("Finance Manager Backend starting...")
 	log.Println("==============================================")
 
 	ctx, ctxCancel := context.WithCancel(context.Background())
-	defer ctxCancel()
 
 	// Connect to DB
 	log.Println("Connecting to database...")
-	database, err := db.New(ctx, cfg.DBURL)
+	database, err := db.New(ctx, cfg.DBURL, cfg.DBMaxConns, cfg.DBMinConns)
 	if err != nil {
 		log.Fatal("Failed to connect to database:", err)
 	}
-	defer database.Close()
 	log.Println("✓ Database connection established")
 
-	// Run migrations
+	// Run migrations — use embedded FS by default; override with MIGRATION_PATH env var.
 	log.Println("Running database migrations...")
-	migrationsPath := filepath.Join("internal", "db", "migrations")
+	migrationsPath := os.Getenv("MIGRATION_PATH")
 	if err := db.RunMigrations(ctx, cfg.DBURL, migrationsPath); err != nil {
 		log.Fatal("Failed to run migrations:", err)
 	}
@@ -75,6 +75,13 @@ func main() {
 
 	// Setup Gin
 	r := gin.Default()
+	// Disable trusted proxy headers unless explicitly configured.
+	// Set TRUSTED_PROXIES env var to a comma-separated CIDR list when behind a load balancer.
+	if err := r.SetTrustedProxies(nil); err != nil {
+		log.Fatal("Failed to set trusted proxies:", err)
+	}
+	r.Use(middleware.BodyLimit(1 << 20)) // 1 MiB max request body
+	r.Use(middleware.SecurityHeaders())
 	r.Use(middleware.RequestLogger())
 	r.Use(middleware.CORS(cfg.CORSOrigin))
 
@@ -174,12 +181,13 @@ func main() {
 
 	// Create server with timeouts
 	srv := &http.Server{
-		Addr:           ":" + cfg.Port,
-		Handler:        r,
-		ReadTimeout:    10 * time.Second,
-		WriteTimeout:   10 * time.Second,
-		IdleTimeout:    60 * time.Second,
-		MaxHeaderBytes: 1 << 20,
+		Addr:              ":" + cfg.Port,
+		Handler:           r,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       10 * time.Second,
+		WriteTimeout:      10 * time.Second,
+		IdleTimeout:       60 * time.Second,
+		MaxHeaderBytes:    1 << 20,
 	}
 
 	go func() {
@@ -196,6 +204,10 @@ func main() {
 	<-quit
 	log.Println("Shutting down server...")
 
+	// Correct shutdown order: cancel background jobs first, then drain HTTP,
+	// then close DB so no background goroutine touches the pool after Close().
+	ctxCancel()
+
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -208,5 +220,6 @@ func main() {
 		seed.Cleanup(context.Background(), database)
 	}
 
+	database.Close()
 	log.Println("Server exited gracefully")
 }

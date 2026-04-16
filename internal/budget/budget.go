@@ -125,7 +125,6 @@ func ListBudgets(c *gin.Context, db *db.DB) {
 		}
 		query += fmt.Sprintf(" AND year = $%d", argCount)
 		args = append(args, year)
-		argCount++
 	}
 
 	query += " ORDER BY year DESC, month DESC"
@@ -149,6 +148,10 @@ func ListBudgets(c *gin.Context, db *db.DB) {
 		budget.CreatedAt = helpers.FromTime(rawCreatedAt)
 		budget.UpdatedAt = helpers.FromTime(rawUpdatedAt)
 		budgets = append(budgets, budget)
+	}
+	if err := rows.Err(); err != nil {
+		c.JSON(500, gin.H{"error": "database iteration failed"})
+		return
 	}
 
 	c.JSON(200, gin.H{"data": budgets})

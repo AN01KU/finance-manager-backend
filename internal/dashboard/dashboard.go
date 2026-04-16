@@ -18,18 +18,18 @@ type CategorySpending struct {
 }
 
 type MonthlyDashboard struct {
-	Month             int     `json:"month"`
-	Year              int     `json:"year"`
-	TotalExpenses     float64 `json:"total_expenses"`
-	ExpenseCount      int     `json:"expense_count"`
-	Budget            *float64 `json:"budget,omitempty"`
-	RemainingBudget   *float64 `json:"remaining_budget,omitempty"`
-	DaysInMonth       int     `json:"days_in_month"`
-	DaysElapsed       int     `json:"days_elapsed"`
-	DaysRemaining     int     `json:"days_remaining"`
-	DailyAverageSpent float64 `json:"daily_average_spent"`
-	ProjectedSpending *float64 `json:"projected_spending,omitempty"`
-	IsOverBudget      bool    `json:"is_over_budget"`
+	Month             int                `json:"month"`
+	Year              int                `json:"year"`
+	TotalExpenses     float64            `json:"total_expenses"`
+	ExpenseCount      int                `json:"expense_count"`
+	Budget            *float64           `json:"budget,omitempty"`
+	RemainingBudget   *float64           `json:"remaining_budget,omitempty"`
+	DaysInMonth       int                `json:"days_in_month"`
+	DaysElapsed       int                `json:"days_elapsed"`
+	DaysRemaining     int                `json:"days_remaining"`
+	DailyAverageSpent float64            `json:"daily_average_spent"`
+	ProjectedSpending *float64           `json:"projected_spending,omitempty"`
+	IsOverBudget      bool               `json:"is_over_budget"`
 	CategoryBreakdown []CategorySpending `json:"category_breakdown"`
 }
 
@@ -105,6 +105,10 @@ func GetMonthlyDashboard(c *gin.Context, db *db.DB) {
 			return
 		}
 		categoryBreakdown = append(categoryBreakdown, cs)
+	}
+	if err := rows.Err(); err != nil {
+		c.JSON(500, gin.H{"error": "database iteration failed"})
+		return
 	}
 
 	if categoryBreakdown == nil {

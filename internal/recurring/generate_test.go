@@ -80,8 +80,8 @@ func TestNextOccurrence(t *testing.T) {
 			name:       "weekly — with daysOfWeek",
 			startDate:  date(2026, 1, 1), // Thursday
 			frequency:  "weekly",
-			daysOfWeek: []int{1, 3}, // Monday, Wednesday
-			today:      date(2026, 1, 8), // Thursday
+			daysOfWeek: []int{1, 3},               // Monday, Wednesday
+			today:      date(2026, 1, 8),          // Thursday
 			want:       timePtr(date(2026, 1, 7)), // Wednesday Jan 7
 		},
 		{
@@ -96,7 +96,7 @@ func TestNextOccurrence(t *testing.T) {
 			name:       "weekly — long range (3 years) stays O(1)",
 			startDate:  date(2023, 1, 2), // Monday, 3 years ago
 			frequency:  "weekly",
-			daysOfWeek: []int{1, 5}, // Monday, Friday
+			daysOfWeek: []int{1, 5},       // Monday, Friday
 			today:      date(2026, 4, 10), // Friday → matches daysOfWeek
 			want:       timePtr(date(2026, 4, 10)),
 		},

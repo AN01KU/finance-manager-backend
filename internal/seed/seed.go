@@ -108,12 +108,12 @@ func Seed(ctx context.Context, database *db.DB) error {
 	// ── Category overrides & custom categories ────────────────────────────────
 	// Predefined categories are served from code — DB rows only for overrides and custom.
 	type catRow struct {
-		userID       uuid.UUID
-		name         string
-		icon         string
-		color        string
-		isHidden     bool
-		isPredefined bool
+		userID        uuid.UUID
+		name          string
+		icon          string
+		color         string
+		isHidden      bool
+		isPredefined  bool
 		predefinedKey *string
 	}
 	strPtr := func(s string) *string { return &s }
@@ -211,15 +211,15 @@ func Seed(ctx context.Context, database *db.DB) error {
 	// ── Personal transactions (Ankush) ─────────────────────────────────────────
 	// type: 'expense' or 'income'
 	type txRow struct {
-		id                 uuid.UUID
-		txType             string
-		amount             float64
-		category           string
-		date               time.Time
-		description        string
-		notes              string
-		isDeleted          bool
-		recurringTxID      *uuid.UUID
+		id            uuid.UUID
+		txType        string
+		amount        float64
+		category      string
+		date          time.Time
+		description   string
+		notes         string
+		isDeleted     bool
+		recurringTxID *uuid.UUID
 	}
 
 	personalTxs := []txRow{
