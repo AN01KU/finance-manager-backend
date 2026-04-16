@@ -569,7 +569,7 @@ func (a *Admin) rowEditForm(c *gin.Context) {
 
 	// Validate table exists
 	var exists bool
-	a.pool.QueryRow(c.Request.Context(),
+	_ = a.pool.QueryRow(c.Request.Context(),
 		`SELECT EXISTS(SELECT 1 FROM pg_tables WHERE schemaname='public' AND tablename=$1)`, table).Scan(&exists)
 	if !exists {
 		c.Redirect(http.StatusFound, "/admin/tables")
@@ -646,7 +646,7 @@ func (a *Admin) rowEditSubmit(c *gin.Context) {
 	}
 
 	var tableExists bool
-	a.pool.QueryRow(c.Request.Context(),
+	_ = a.pool.QueryRow(c.Request.Context(),
 		`SELECT EXISTS(SELECT 1 FROM pg_tables WHERE schemaname='public' AND tablename=$1)`, table).Scan(&tableExists)
 	if !tableExists {
 		c.Redirect(http.StatusFound, "/admin/tables")
@@ -910,7 +910,7 @@ func pgCastType(c *gin.Context, pool *pgxpool.Pool, table, column string) string
 	case "user-defined":
 		// For custom/enum types, query the actual udt_name
 		var udtName string
-		pool.QueryRow(c.Request.Context(),
+		_ = pool.QueryRow(c.Request.Context(),
 			`SELECT udt_name FROM information_schema.columns
 			 WHERE table_schema = 'public' AND table_name = $1 AND column_name = $2`,
 			table, column).Scan(&udtName)
