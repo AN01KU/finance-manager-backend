@@ -45,7 +45,6 @@ func main() {
 	log.Println("==============================================")
 
 	ctx, ctxCancel := context.WithCancel(context.Background())
-	defer ctxCancel()
 
 	// Connect to DB
 	log.Println("Connecting to database...")
@@ -53,7 +52,6 @@ func main() {
 	if err != nil {
 		log.Fatal("Failed to connect to database:", err)
 	}
-	defer database.Close()
 	log.Println("✓ Database connection established")
 
 	// Run migrations
@@ -179,12 +177,13 @@ func main() {
 
 	// Create server with timeouts
 	srv := &http.Server{
-		Addr:           ":" + cfg.Port,
-		Handler:        r,
-		ReadTimeout:    10 * time.Second,
-		WriteTimeout:   10 * time.Second,
-		IdleTimeout:    60 * time.Second,
-		MaxHeaderBytes: 1 << 20,
+		Addr:              ":" + cfg.Port,
+		Handler:           r,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       10 * time.Second,
+		WriteTimeout:      10 * time.Second,
+		IdleTimeout:       60 * time.Second,
+		MaxHeaderBytes:    1 << 20,
 	}
 
 	go func() {
@@ -201,6 +200,10 @@ func main() {
 	<-quit
 	log.Println("Shutting down server...")
 
+	// Correct shutdown order: cancel background jobs first, then drain HTTP,
+	// then close DB so no background goroutine touches the pool after Close().
+	ctxCancel()
+
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -213,5 +216,6 @@ func main() {
 		seed.Cleanup(context.Background(), database)
 	}
 
+	database.Close()
 	log.Println("Server exited gracefully")
 }
