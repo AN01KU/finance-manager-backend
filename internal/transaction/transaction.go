@@ -303,7 +303,7 @@ func GetTransaction(c *gin.Context, database *db.DB) {
 		 LEFT JOIN group_transactions gt ON t.group_transaction_id = gt.id
 		 LEFT JOIN groups g1 ON gt.group_id = g1.id
 		 LEFT JOIN groups g2 ON t.group_id = g2.id
-		 WHERE t.id = $1 AND t.user_id = $2 AND t.is_deleted = FALSE`,
+		 WHERE t.id = $1 AND t.user_id = $2`,
 		id, userID,
 	).Scan(
 		&tx.ID, &tx.UserID, &tx.Type, &tx.Amount, &tx.Category,
