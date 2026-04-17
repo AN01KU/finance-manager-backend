@@ -125,6 +125,7 @@ func main() {
 
 		// User profile
 		protected.GET("/me", func(c *gin.Context) { auth.GetMe(c, authService) })
+		protected.PATCH("/me", func(c *gin.Context) { auth.UpdateMe(c, authService) })
 		protected.DELETE("/me", func(c *gin.Context) { auth.DeleteMe(c, authService) })
 
 		// Transactions (personal expenses + income)
@@ -160,8 +161,12 @@ func main() {
 		protected.POST("/groups", func(c *gin.Context) { group.CreateGroup(c, database) })
 		protected.GET("/groups", func(c *gin.Context) { group.GetUserGroups(c, database) })
 		protected.GET("/groups/:id", func(c *gin.Context) { group.GetGroup(c, database) })
+		protected.PATCH("/groups/:id", func(c *gin.Context) { group.UpdateGroup(c, database) })
+		protected.DELETE("/groups/:id", func(c *gin.Context) { group.DeleteGroup(c, database) })
 		protected.POST("/groups/:id/add-member", func(c *gin.Context) { group.AddMember(c, database) })
 		protected.GET("/groups/:id/members", func(c *gin.Context) { group.GetMembers(c, database) })
+		protected.DELETE("/groups/:id/members/:userId", func(c *gin.Context) { group.RemoveMember(c, database) })
+		protected.POST("/groups/:id/leave", func(c *gin.Context) { group.LeaveGroup(c, database) })
 		protected.GET("/groups/:id/balances", func(c *gin.Context) { group.GetBalances(c, database) })
 		protected.GET("/groups/:id/settlements", func(c *gin.Context) { group.GetGroupSettlements(c, database) })
 

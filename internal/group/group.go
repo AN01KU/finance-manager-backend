@@ -97,6 +97,10 @@ type CreateGroupRequest struct {
 	Name string `json:"name" validate:"required,min=1"`
 }
 
+type UpdateGroupRequest struct {
+	Name *string `json:"name,omitempty" validate:"omitempty,min=1"`
+}
+
 type AddMemberRequest struct {
 	Email string `json:"email" validate:"required,email"`
 }
@@ -165,7 +169,7 @@ func GetUserGroups(c *gin.Context, database *db.DB) {
 		`SELECT g.id, g.name, g.created_by, g.created_at
 		 FROM groups g
 		 JOIN group_members gm ON g.id = gm.group_id
-		 WHERE gm.user_id = $1
+		 WHERE gm.user_id = $1 AND g.is_deleted = FALSE
 		 ORDER BY g.created_at DESC`, userID)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "failed to get groups"})
@@ -341,7 +345,7 @@ func GetGroup(c *gin.Context, database *db.DB) {
 	var g Group
 	var rawCreatedAt time.Time
 	err = database.Pool.QueryRow(c.Request.Context(),
-		"SELECT id, name, created_by, created_at FROM groups WHERE id = $1", groupID,
+		"SELECT id, name, created_by, created_at FROM groups WHERE id = $1 AND is_deleted = FALSE", groupID,
 	).Scan(&g.ID, &g.Name, &g.CreatedBy, &rawCreatedAt)
 	if err != nil {
 		c.JSON(404, gin.H{"error": "group not found"})
@@ -753,4 +757,248 @@ func GetGroupSettlements(c *gin.Context, database *db.DB) {
 			"total":  total,
 		},
 	})
+}
+
+// ---------------------------------------------------------------------------
+// UpdateGroup — PATCH /groups/:id (creator only)
+// ---------------------------------------------------------------------------
+
+func UpdateGroup(c *gin.Context, database *db.DB) {
+	userID, ok := middleware.RequireUserID(c)
+	if !ok {
+		return
+	}
+
+	groupID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(400, gin.H{"error": "invalid group id"})
+		return
+	}
+
+	// Only creator can update
+	var createdBy uuid.UUID
+	err = database.Pool.QueryRow(c.Request.Context(),
+		"SELECT created_by FROM groups WHERE id = $1 AND is_deleted = FALSE", groupID,
+	).Scan(&createdBy)
+	if err != nil {
+		c.JSON(404, gin.H{"error": "group not found"})
+		return
+	}
+	if createdBy != userID {
+		c.JSON(403, gin.H{"error": "only the group creator can update the group"})
+		return
+	}
+
+	var req UpdateGroupRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+
+	if err := validate.Struct(req); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+
+	if req.Name == nil {
+		c.JSON(400, gin.H{"error": "no fields to update"})
+		return
+	}
+
+	var g Group
+	var rawCreatedAt time.Time
+	err = database.Pool.QueryRow(c.Request.Context(),
+		`UPDATE groups SET name = $1, updated_at = NOW()
+		 WHERE id = $2 AND is_deleted = FALSE
+		 RETURNING id, name, created_by, created_at`,
+		*req.Name, groupID,
+	).Scan(&g.ID, &g.Name, &g.CreatedBy, &rawCreatedAt)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "failed to update group"})
+		return
+	}
+	g.CreatedAt = helpers.FromTime(rawCreatedAt)
+
+	c.JSON(200, g)
+}
+
+// ---------------------------------------------------------------------------
+// RemoveMember — DELETE /groups/:id/members/:userId
+// ---------------------------------------------------------------------------
+
+func RemoveMember(c *gin.Context, database *db.DB) {
+	userID, ok := middleware.RequireUserID(c)
+	if !ok {
+		return
+	}
+
+	groupID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(400, gin.H{"error": "invalid group id"})
+		return
+	}
+
+	targetUserID, err := uuid.Parse(c.Param("userId"))
+	if err != nil {
+		c.JSON(400, gin.H{"error": "invalid user id"})
+		return
+	}
+
+	if targetUserID == userID {
+		c.JSON(400, gin.H{"error": "cannot remove yourself; use the leave endpoint instead"})
+		return
+	}
+
+	// Caller must be a member
+	isMember, err := helpers.IsGroupMember(c.Request.Context(), database, groupID, userID)
+	if err != nil || !isMember {
+		c.JSON(403, gin.H{"error": "not a member of the group"})
+		return
+	}
+
+	// Target must be a member
+	targetIsMember, err := helpers.IsGroupMember(c.Request.Context(), database, groupID, targetUserID)
+	if err != nil || !targetIsMember {
+		c.JSON(404, gin.H{"error": "user is not a member of the group"})
+		return
+	}
+
+	// Check target's balance is zero
+	balance, err := helpers.GetUserGroupBalance(c.Request.Context(), database, groupID, targetUserID)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "failed to calculate balance"})
+		return
+	}
+	if !balance.IsZero() {
+		c.JSON(400, gin.H{"error": "cannot remove member with non-zero balance; settle up first"})
+		return
+	}
+
+	_, err = database.Pool.Exec(c.Request.Context(),
+		"DELETE FROM group_members WHERE group_id = $1 AND user_id = $2",
+		groupID, targetUserID)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "failed to remove member"})
+		return
+	}
+
+	c.JSON(200, gin.H{"message": "member removed"})
+}
+
+// ---------------------------------------------------------------------------
+// LeaveGroup — POST /groups/:id/leave
+// ---------------------------------------------------------------------------
+
+func LeaveGroup(c *gin.Context, database *db.DB) {
+	userID, ok := middleware.RequireUserID(c)
+	if !ok {
+		return
+	}
+
+	groupID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(400, gin.H{"error": "invalid group id"})
+		return
+	}
+
+	isMember, err := helpers.IsGroupMember(c.Request.Context(), database, groupID, userID)
+	if err != nil || !isMember {
+		c.JSON(403, gin.H{"error": "not a member of the group"})
+		return
+	}
+
+	// Check own balance is zero
+	balance, err := helpers.GetUserGroupBalance(c.Request.Context(), database, groupID, userID)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "failed to calculate balance"})
+		return
+	}
+	if !balance.IsZero() {
+		c.JSON(400, gin.H{"error": "cannot leave group with non-zero balance; settle up first"})
+		return
+	}
+
+	_, err = database.Pool.Exec(c.Request.Context(),
+		"DELETE FROM group_members WHERE group_id = $1 AND user_id = $2",
+		groupID, userID)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "failed to leave group"})
+		return
+	}
+
+	c.JSON(200, gin.H{"message": "left group successfully"})
+}
+
+// ---------------------------------------------------------------------------
+// DeleteGroup — DELETE /groups/:id (creator only, soft-delete)
+// ---------------------------------------------------------------------------
+
+func DeleteGroup(c *gin.Context, database *db.DB) {
+	userID, ok := middleware.RequireUserID(c)
+	if !ok {
+		return
+	}
+
+	groupID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(400, gin.H{"error": "invalid group id"})
+		return
+	}
+
+	// Only creator can delete
+	var createdBy uuid.UUID
+	err = database.Pool.QueryRow(c.Request.Context(),
+		"SELECT created_by FROM groups WHERE id = $1 AND is_deleted = FALSE", groupID,
+	).Scan(&createdBy)
+	if err != nil {
+		c.JSON(404, gin.H{"error": "group not found"})
+		return
+	}
+	if createdBy != userID {
+		c.JSON(403, gin.H{"error": "only the group creator can delete the group"})
+		return
+	}
+
+	tx, err := database.Pool.Begin(c.Request.Context())
+	if err != nil {
+		c.JSON(500, gin.H{"error": "failed to start transaction"})
+		return
+	}
+	defer func() { _ = tx.Rollback(c.Request.Context()) }()
+
+	// Soft-delete linked personal transactions
+	_, err = tx.Exec(c.Request.Context(),
+		`UPDATE transactions SET is_deleted = true, updated_at = NOW()
+		 WHERE group_transaction_id IN (
+			SELECT id FROM group_transactions WHERE group_id = $1
+		 )`, groupID)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "failed to delete personal transactions"})
+		return
+	}
+
+	// Soft-delete group transactions
+	_, err = tx.Exec(c.Request.Context(),
+		`UPDATE group_transactions SET is_deleted = true, updated_at = NOW()
+		 WHERE group_id = $1`, groupID)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "failed to delete group transactions"})
+		return
+	}
+
+	// Soft-delete the group
+	_, err = tx.Exec(c.Request.Context(),
+		`UPDATE groups SET is_deleted = true, updated_at = NOW()
+		 WHERE id = $1`, groupID)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "failed to delete group"})
+		return
+	}
+
+	if err := tx.Commit(c.Request.Context()); err != nil {
+		c.JSON(500, gin.H{"error": "failed to commit"})
+		return
+	}
+
+	c.JSON(200, gin.H{"message": "group deleted successfully"})
 }

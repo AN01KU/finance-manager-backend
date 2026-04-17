@@ -228,6 +228,98 @@ func Logout(c *gin.Context, service *AuthService) {
 	c.JSON(200, gin.H{"message": "logged out successfully"})
 }
 
+type UpdateMeRequest struct {
+	Username *string `json:"username,omitempty" validate:"omitempty,min=3"`
+	Email    *string `json:"email,omitempty" validate:"omitempty,email"`
+	Password *string `json:"password,omitempty" validate:"omitempty,min=6"`
+}
+
+func UpdateMe(c *gin.Context, service *AuthService) {
+	val, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(401, gin.H{"error": "unauthorized"})
+		return
+	}
+	userID, ok := val.(uuid.UUID)
+	if !ok {
+		c.JSON(401, gin.H{"error": "unauthorized"})
+		return
+	}
+
+	var req UpdateMeRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+
+	if err := validate.Struct(req); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+
+	if req.Username == nil && req.Email == nil && req.Password == nil {
+		c.JSON(400, gin.H{"error": "no fields to update"})
+		return
+	}
+
+	query := `UPDATE users SET`
+	args := []interface{}{}
+	n := 1
+
+	if req.Username != nil {
+		query += fmt.Sprintf(` username = $%d,`, n)
+		args = append(args, *req.Username)
+		n++
+	}
+
+	if req.Email != nil {
+		// Check email uniqueness
+		var count int
+		err := service.DB.Pool.QueryRow(c.Request.Context(),
+			"SELECT COUNT(*) FROM users WHERE email = $1 AND id != $2",
+			*req.Email, userID).Scan(&count)
+		if err != nil {
+			c.JSON(500, gin.H{"error": "database error"})
+			return
+		}
+		if count > 0 {
+			c.JSON(409, gin.H{"error": "email already in use"})
+			return
+		}
+		query += fmt.Sprintf(` email = $%d,`, n)
+		args = append(args, *req.Email)
+		n++
+	}
+
+	if req.Password != nil {
+		hash, err := bcrypt.GenerateFromPassword([]byte(*req.Password), bcrypt.DefaultCost)
+		if err != nil {
+			c.JSON(500, gin.H{"error": "failed to hash password"})
+			return
+		}
+		query += fmt.Sprintf(` password_hash = $%d,`, n)
+		args = append(args, string(hash))
+		n++
+	}
+
+	// Remove trailing comma and add WHERE + RETURNING
+	query = query[:len(query)-1]
+	query += fmt.Sprintf(` WHERE id = $%d RETURNING id, email, username, created_at`, n)
+	args = append(args, userID)
+
+	var u user.User
+	var rawCreatedAt time.Time
+	err := service.DB.Pool.QueryRow(c.Request.Context(), query, args...).Scan(
+		&u.ID, &u.Email, &u.Username, &rawCreatedAt)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "failed to update user"})
+		return
+	}
+	u.CreatedAt = helpers.FromTime(rawCreatedAt)
+
+	c.JSON(200, u)
+}
+
 func DeleteMe(c *gin.Context, service *AuthService) {
 	val, exists := c.Get("user_id")
 	if !exists {
@@ -240,7 +332,37 @@ func DeleteMe(c *gin.Context, service *AuthService) {
 		return
 	}
 
-	_, err := service.DB.Pool.Exec(c.Request.Context(), "DELETE FROM users WHERE id = $1", userID)
+	// Check if user has non-zero balance in any group
+	rows, err := service.DB.Pool.Query(c.Request.Context(),
+		"SELECT group_id FROM group_members WHERE user_id = $1", userID)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "database error"})
+		return
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var groupID uuid.UUID
+		if err := rows.Scan(&groupID); err != nil {
+			c.JSON(500, gin.H{"error": "database error"})
+			return
+		}
+		balance, err := helpers.GetUserGroupBalance(c.Request.Context(), service.DB, groupID, userID)
+		if err != nil {
+			c.JSON(500, gin.H{"error": "failed to calculate group balance"})
+			return
+		}
+		if !balance.IsZero() {
+			c.JSON(400, gin.H{"error": "cannot delete account with non-zero group balances; settle up and leave all groups first"})
+			return
+		}
+	}
+	if err := rows.Err(); err != nil {
+		c.JSON(500, gin.H{"error": "database error"})
+		return
+	}
+
+	_, err = service.DB.Pool.Exec(c.Request.Context(), "DELETE FROM users WHERE id = $1", userID)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "failed to delete user"})
 		return

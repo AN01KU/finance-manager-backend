@@ -259,6 +259,7 @@ type dashStats struct {
 	Tables    int
 	TotalRows int64
 	Users     int64
+	Groups    int64
 	DBSize    string
 }
 
@@ -302,6 +303,9 @@ func (a *Admin) dashboard(c *gin.Context) {
 	var userCount int64
 	_ = a.pool.QueryRow(c.Request.Context(), `SELECT COUNT(*) FROM users`).Scan(&userCount)
 
+	var groupCount int64
+	_ = a.pool.QueryRow(c.Request.Context(), `SELECT COUNT(*) FROM groups WHERE is_deleted = FALSE`).Scan(&groupCount)
+
 	var dbSize string
 	_ = a.pool.QueryRow(c.Request.Context(),
 		`SELECT pg_size_pretty(pg_database_size(current_database()))`).Scan(&dbSize)
@@ -310,7 +314,7 @@ func (a *Admin) dashboard(c *gin.Context) {
 		"Title":  "Dashboard",
 		"Active": "dashboard",
 		"Tables": tables,
-		"Stats":  dashStats{Tables: len(tables), TotalRows: totalRows, Users: userCount, DBSize: dbSize},
+		"Stats":  dashStats{Tables: len(tables), TotalRows: totalRows, Users: userCount, Groups: groupCount, DBSize: dbSize},
 	})
 }
 
