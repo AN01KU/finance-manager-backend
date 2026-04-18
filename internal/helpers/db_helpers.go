@@ -10,14 +10,27 @@ import (
 	"github.com/yanonymousV2/finance-manager-backend/internal/db"
 )
 
-// GetUserGroupBalance computes a user's net balance in a group.
-// Positive = owed money (paid more), Negative = owes money.
+// Querier abstracts pgxpool.Pool and pgx.Tx for query execution.
+type Querier interface {
+	QueryRow(ctx context.Context, sql string, args ...interface{}) pgx.Row
+}
+
+// GetUserGroupBalance computes a user's net balance in a group using the pool.
 func GetUserGroupBalance(ctx context.Context, database *db.DB, groupID, userID uuid.UUID) (decimal.Decimal, error) {
+	return getUserGroupBalance(ctx, database.Pool, groupID, userID)
+}
+
+// GetUserGroupBalanceTx computes a user's net balance in a group within a transaction.
+func GetUserGroupBalanceTx(ctx context.Context, tx pgx.Tx, groupID, userID uuid.UUID) (decimal.Decimal, error) {
+	return getUserGroupBalance(ctx, tx, groupID, userID)
+}
+
+func getUserGroupBalance(ctx context.Context, q Querier, groupID, userID uuid.UUID) (decimal.Decimal, error) {
 	balance := decimal.Zero
 
 	// Amount paid by user
 	var paid decimal.NullDecimal
-	err := database.Pool.QueryRow(ctx,
+	err := q.QueryRow(ctx,
 		`SELECT COALESCE(SUM(total_amount), 0) FROM group_transactions
 		 WHERE group_id = $1 AND paid_by_user_id = $2 AND is_deleted = FALSE`,
 		groupID, userID).Scan(&paid)
@@ -30,7 +43,7 @@ func GetUserGroupBalance(ctx context.Context, database *db.DB, groupID, userID u
 
 	// Amount owed (splits)
 	var splits decimal.NullDecimal
-	err = database.Pool.QueryRow(ctx,
+	err = q.QueryRow(ctx,
 		`SELECT COALESCE(SUM(gts.amount), 0)
 		 FROM group_transaction_splits gts
 		 JOIN group_transactions gt ON gts.group_transaction_id = gt.id
@@ -45,7 +58,7 @@ func GetUserGroupBalance(ctx context.Context, database *db.DB, groupID, userID u
 
 	// Settlements: from_user paid off debt (+), to_user received (-)
 	var settPaid decimal.NullDecimal
-	err = database.Pool.QueryRow(ctx,
+	err = q.QueryRow(ctx,
 		`SELECT COALESCE(SUM(amount), 0) FROM settlements
 		 WHERE group_id = $1 AND from_user = $2`,
 		groupID, userID).Scan(&settPaid)
@@ -57,7 +70,7 @@ func GetUserGroupBalance(ctx context.Context, database *db.DB, groupID, userID u
 	}
 
 	var settReceived decimal.NullDecimal
-	err = database.Pool.QueryRow(ctx,
+	err = q.QueryRow(ctx,
 		`SELECT COALESCE(SUM(amount), 0) FROM settlements
 		 WHERE group_id = $1 AND to_user = $2`,
 		groupID, userID).Scan(&settReceived)
@@ -71,11 +84,15 @@ func GetUserGroupBalance(ctx context.Context, database *db.DB, groupID, userID u
 	return balance, nil
 }
 
-// IsGroupMember checks if a user is a member of a group
+// IsGroupMember checks if a user is a member of an active (non-deleted) group.
 func IsGroupMember(ctx context.Context, db *db.DB, groupID, userID uuid.UUID) (bool, error) {
 	var isMember bool
 	err := db.Pool.QueryRow(ctx,
-		"SELECT EXISTS(SELECT 1 FROM group_members WHERE group_id = $1 AND user_id = $2)",
+		`SELECT EXISTS(
+			SELECT 1 FROM group_members gm
+			JOIN groups g ON gm.group_id = g.id
+			WHERE gm.group_id = $1 AND gm.user_id = $2 AND g.is_deleted = FALSE
+		)`,
 		groupID, userID).Scan(&isMember)
 	return isMember, err
 }

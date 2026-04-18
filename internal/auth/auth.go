@@ -332,9 +332,25 @@ func DeleteMe(c *gin.Context, service *AuthService) {
 		return
 	}
 
-	// Check if user has non-zero balance in any group
+	// Check if user is the creator of any active groups
+	var ownedGroupCount int
+	err := service.DB.Pool.QueryRow(c.Request.Context(),
+		"SELECT COUNT(*) FROM groups WHERE created_by = $1 AND is_deleted = FALSE", userID,
+	).Scan(&ownedGroupCount)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "database error"})
+		return
+	}
+	if ownedGroupCount > 0 {
+		c.JSON(400, gin.H{"error": "cannot delete account while you are the creator of active groups; delete your groups first"})
+		return
+	}
+
+	// Check if user has non-zero balance in any active group
 	rows, err := service.DB.Pool.Query(c.Request.Context(),
-		"SELECT group_id FROM group_members WHERE user_id = $1", userID)
+		`SELECT gm.group_id FROM group_members gm
+		 JOIN groups g ON gm.group_id = g.id
+		 WHERE gm.user_id = $1 AND g.is_deleted = FALSE`, userID)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "database error"})
 		return
