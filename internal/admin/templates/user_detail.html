@@ -1,0 +1,63 @@
+{{define "content"}}
+<h1>
+    <a href="/admin/users" style="color:var(--text2);">Users</a> / {{.User.Username}}
+    <span class="text-muted" style="font-size:14px;margin-left:8px;">{{.User.Email}}</span>
+</h1>
+
+{{if .Success}}
+<div class="alert alert-success">{{.Success}}</div>
+{{end}}
+
+<div class="stats-grid">
+    <div class="stat-card">
+        <div class="value">{{.User.TxCount}}</div>
+        <div class="label">Transactions</div>
+    </div>
+    <div class="stat-card">
+        <div class="value">{{.User.BudgetCount}}</div>
+        <div class="label">Budgets</div>
+    </div>
+    <div class="stat-card">
+        <div class="value">{{.User.GroupCount}}</div>
+        <div class="label">Groups</div>
+    </div>
+    <div class="stat-card">
+        <div class="value">{{.User.RecurringCount}}</div>
+        <div class="label">Recurring Rules</div>
+    </div>
+</div>
+
+<div class="card">
+    <h3>Account Info</h3>
+    <table>
+        <tbody>
+            <tr><td style="width:160px;color:var(--text2);">User ID</td><td class="mono">{{.User.ID}}</td></tr>
+            <tr><td style="color:var(--text2);">Email</td><td>{{.User.Email}}</td></tr>
+            <tr><td style="color:var(--text2);">Username</td><td>{{.User.Username}}</td></tr>
+            <tr><td style="color:var(--text2);">Signed Up</td><td>{{.User.CreatedAt}}</td></tr>
+        </tbody>
+    </table>
+</div>
+
+{{if .RecentTransactions}}
+<div class="card" style="overflow-x:auto;">
+    <h3>Recent Transactions (last 20)</h3>
+    <table>
+        <thead>
+            <tr><th>Type</th><th>Amount</th><th>Category</th><th>Description</th><th>Date</th></tr>
+        </thead>
+        <tbody>
+            {{range .RecentTransactions}}
+            <tr>
+                <td><span class="badge {{if eq .Type "income"}}badge-income{{else}}badge-expense{{end}}">{{.Type}}</span></td>
+                <td class="mono">{{.Amount}}</td>
+                <td>{{.Category}}</td>
+                <td>{{.Description}}</td>
+                <td>{{.Date}}</td>
+            </tr>
+            {{end}}
+        </tbody>
+    </table>
+</div>
+{{end}}
+{{end}}

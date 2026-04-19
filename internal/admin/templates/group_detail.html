@@ -1,0 +1,81 @@
+{{define "content"}}
+<h1>
+    <a href="/admin/groups" style="color:var(--text2);">Groups</a> / {{.Group.Name}}
+</h1>
+
+<div class="stats-grid">
+    <div class="stat-card">
+        <div class="value">{{.Group.MemberCount}}</div>
+        <div class="label">Members</div>
+    </div>
+    <div class="stat-card">
+        <div class="value">{{.Group.TxCount}}</div>
+        <div class="label">Transactions</div>
+    </div>
+    <div class="stat-card">
+        <div class="value">{{.Group.SettlementCount}}</div>
+        <div class="label">Settlements</div>
+    </div>
+    <div class="stat-card">
+        <div class="value">{{.Group.TotalSpent}}</div>
+        <div class="label">Total Spent</div>
+    </div>
+</div>
+
+{{if .Members}}
+<div class="card">
+    <h3>Members</h3>
+    <table>
+        <thead><tr><th>Username</th><th>Email</th><th>Joined</th></tr></thead>
+        <tbody>
+            {{range .Members}}
+            <tr>
+                <td>{{.Username}}</td>
+                <td class="mono">{{.Email}}</td>
+                <td>{{.JoinedAt}}</td>
+            </tr>
+            {{end}}
+        </tbody>
+    </table>
+</div>
+{{end}}
+
+{{if .Transactions}}
+<div class="card" style="overflow-x:auto;">
+    <h3>Recent Transactions (last 20)</h3>
+    <table>
+        <thead><tr><th>Paid By</th><th>Amount</th><th>Category</th><th>Description</th><th>Date</th></tr></thead>
+        <tbody>
+            {{range .Transactions}}
+            <tr>
+                <td>{{.PaidBy}}</td>
+                <td class="mono">{{.Amount}}</td>
+                <td>{{.Category}}</td>
+                <td>{{.Description}}</td>
+                <td>{{.Date}}</td>
+            </tr>
+            {{end}}
+        </tbody>
+    </table>
+</div>
+{{end}}
+
+{{if .Settlements}}
+<div class="card" style="overflow-x:auto;">
+    <h3>Settlements</h3>
+    <table>
+        <thead><tr><th>From</th><th>To</th><th>Amount</th><th>Date</th></tr></thead>
+        <tbody>
+            {{range .Settlements}}
+            <tr>
+                <td>{{.FromUser}}</td>
+                <td>{{.ToUser}}</td>
+                <td class="mono">{{.Amount}}</td>
+                <td>{{.CreatedAt}}</td>
+            </tr>
+            {{end}}
+        </tbody>
+    </table>
+</div>
+{{end}}
+{{end}}

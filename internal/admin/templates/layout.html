@@ -62,6 +62,8 @@
 
         .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
         .badge-info { background: rgba(108,92,231,0.2); color: var(--accent2); }
+        .badge-income { background: rgba(46,204,113,0.2); color: var(--success); }
+        .badge-expense { background: rgba(231,76,60,0.2); color: var(--danger); }
 
         .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; margin-bottom: 24px; }
         .stat-card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
@@ -84,6 +86,11 @@
         .log-duration { color: var(--text2); margin-left: 8px; }
         .log-controls { display: flex; gap: 10px; align-items: center; margin-bottom: 12px; }
         .log-controls select { padding: 5px 10px; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; color: var(--text); font-size: 12px; }
+        .log-entry-error { background: rgba(231,76,60,0.1); border-left: 3px solid var(--danger); }
+        .log-entry-slow { background: rgba(243,156,18,0.08); }
+        .log-entry-error.log-entry-slow { background: rgba(231,76,60,0.1); }
+        .log-duration-slow { color: var(--warn) !important; font-weight: 600; }
+        .log-body-size { color: var(--text2); margin-left: 8px; font-size: 11px; }
 
         .mono { font-family: 'SF Mono', 'Fira Code', monospace; }
         .text-muted { color: var(--text2); }
@@ -99,10 +106,17 @@
                 <small>Database Manager</small>
             </div>
             <nav>
+                <form method="GET" action="/admin/search" style="padding:8px 16px 12px;">
+                    <input type="text" name="q" placeholder="Search users, groups…" value="" style="width:100%;padding:7px 10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px;">
+                </form>
                 <a href="/admin/" {{if eq .Active "dashboard"}}class="active"{{end}}>📊 Dashboard</a>
+                <a href="/admin/users" {{if eq .Active "users"}}class="active"{{end}}>👤 Users</a>
+                <a href="/admin/groups" {{if eq .Active "groups"}}class="active"{{end}}>👥 Groups</a>
+                <a href="/admin/recurring" {{if eq .Active "recurring"}}class="active"{{end}}>🔁 Recurring</a>
                 <a href="/admin/tables" {{if eq .Active "tables"}}class="active"{{end}}>🗄️ Tables</a>
                 <a href="/admin/sql" {{if eq .Active "sql"}}class="active"{{end}}>⚡ SQL Runner</a>
                 <a href="/admin/logs" {{if eq .Active "logs"}}class="active"{{end}}>📋 Logs</a>
+                <a href="/admin/audit" {{if eq .Active "audit"}}class="active"{{end}}>🔒 Audit Log</a>
             </nav>
             <div class="sidebar-footer">
                 <a href="/admin/logout">← Logout</a>

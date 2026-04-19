@@ -1,0 +1,32 @@
+{{define "content"}}
+<h1>Groups <span class="badge badge-info">{{len .Groups}}</span></h1>
+
+<div class="card" style="overflow-x:auto;">
+    <table>
+        <thead>
+            <tr>
+                <th>Name</th>
+                <th>Members</th>
+                <th>Transactions</th>
+                <th>Created By</th>
+                <th>Created</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {{range .Groups}}
+            <tr>
+                <td>{{.Name}}</td>
+                <td>{{.MemberCount}}</td>
+                <td>{{.TxCount}}</td>
+                <td>{{.CreatedByEmail}}</td>
+                <td>{{.CreatedAt}}</td>
+                <td><a href="/admin/groups/{{.ID}}" class="btn btn-sm">View</a></td>
+            </tr>
+            {{else}}
+            <tr><td colspan="6" class="text-muted" style="text-align:center;padding:20px;">No groups found.</td></tr>
+            {{end}}
+        </tbody>
+    </table>
+</div>
+{{end}}

@@ -1,0 +1,68 @@
+{{define "content"}}
+<h1>Search Results for "{{.Query}}"</h1>
+
+{{if .Users}}
+<div class="card">
+    <h3>Users ({{len .Users}})</h3>
+    <table>
+        <thead><tr><th>Username</th><th>Email</th><th>Signed Up</th><th>Actions</th></tr></thead>
+        <tbody>
+            {{range .Users}}
+            <tr>
+                <td>{{.Username}}</td>
+                <td class="mono">{{.Email}}</td>
+                <td>{{.CreatedAt}}</td>
+                <td><a href="/admin/users/{{.ID}}" class="btn btn-sm">View</a></td>
+            </tr>
+            {{end}}
+        </tbody>
+    </table>
+</div>
+{{end}}
+
+{{if .Groups}}
+<div class="card">
+    <h3>Groups ({{len .Groups}})</h3>
+    <table>
+        <thead><tr><th>Name</th><th>Members</th><th>Created</th><th>Actions</th></tr></thead>
+        <tbody>
+            {{range .Groups}}
+            <tr>
+                <td>{{.Name}}</td>
+                <td>{{.MemberCount}}</td>
+                <td>{{.CreatedAt}}</td>
+                <td><a href="/admin/groups/{{.ID}}" class="btn btn-sm">View</a></td>
+            </tr>
+            {{end}}
+        </tbody>
+    </table>
+</div>
+{{end}}
+
+{{if .Transactions}}
+<div class="card">
+    <h3>Transactions ({{len .Transactions}})</h3>
+    <table>
+        <thead><tr><th>ID</th><th>User</th><th>Type</th><th>Amount</th><th>Category</th><th>Date</th></tr></thead>
+        <tbody>
+            {{range .Transactions}}
+            <tr>
+                <td class="mono" style="font-size:11px;">{{.ID}}</td>
+                <td>{{.UserEmail}}</td>
+                <td><span class="badge {{if eq .Type "income"}}badge-income{{else}}badge-expense{{end}}">{{.Type}}</span></td>
+                <td class="mono">{{.Amount}}</td>
+                <td>{{.Category}}</td>
+                <td>{{.Date}}</td>
+            </tr>
+            {{end}}
+        </tbody>
+    </table>
+</div>
+{{end}}
+
+{{if and (not .Users) (not .Groups) (not .Transactions)}}
+<div class="card">
+    <p class="text-muted" style="text-align:center;padding:20px;">No results found for "{{.Query}}".</p>
+</div>
+{{end}}
+{{end}}
