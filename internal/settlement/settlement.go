@@ -139,3 +139,40 @@ func CreateSettlement(c *gin.Context, db *db.DB) {
 
 	c.JSON(201, s)
 }
+
+func GetSettlement(c *gin.Context, database *db.DB) {
+	userID, ok := middleware.RequireUserID(c)
+	if !ok {
+		return
+	}
+
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(400, gin.H{"error": "invalid settlement id"})
+		return
+	}
+
+	var s Settlement
+	var rawCreatedAt, rawUpdatedAt time.Time
+	err = database.Pool.QueryRow(c.Request.Context(),
+		`SELECT id, group_id, from_user, to_user, amount, notes, is_deleted, created_at, updated_at
+		 FROM settlements
+		 WHERE id = $1 AND is_deleted = FALSE`, id,
+	).Scan(&s.ID, &s.GroupID, &s.FromUser, &s.ToUser, &s.Amount, &s.Notes, &s.IsDeleted, &rawCreatedAt, &rawUpdatedAt)
+	if err != nil {
+		c.JSON(404, gin.H{"error": "settlement not found"})
+		return
+	}
+
+	// Only parties to the settlement or group members can view it
+	isMember, err := helpers.IsGroupMember(c.Request.Context(), database, s.GroupID, userID)
+	if err != nil || !isMember {
+		c.JSON(403, gin.H{"error": "not a member of the group"})
+		return
+	}
+
+	s.CreatedAt = helpers.FromTime(rawCreatedAt)
+	s.UpdatedAt = helpers.FromTime(rawUpdatedAt)
+
+	c.JSON(200, s)
+}

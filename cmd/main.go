@@ -179,6 +179,7 @@ func main() {
 
 		// Settlements
 		protected.POST("/settlements", func(c *gin.Context) { settlement.CreateSettlement(c, database) })
+		protected.GET("/settlements/:id", func(c *gin.Context) { settlement.GetSettlement(c, database) })
 
 		// Sync
 		protected.POST("/sync/preflight", func(c *gin.Context) { sync.Preflight(c, database) })
