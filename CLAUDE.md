@@ -102,6 +102,11 @@ All requests pass through: `RequestLogger → CORS → (JWTAuth on protected rou
 - Expenses use soft delete (`is_deleted` flag); all queries must filter `is_deleted = FALSE`
 - Balance calculations are derived at query time from `ExpenseSplit` + `Settlement` records (no materialized balance column)
 
+### Intentional Denormalizations
+
+- **`transactions.category`** is a free-text `VARCHAR(100)`, not FK'd to `custom_categories`. This is deliberate: categories are user-customizable labels, and transactions preserve the category name at the time of creation. Renaming a category does not retroactively change historical transactions.
+- **`transactions.group_id`** exists alongside `group_transaction_id`. For group expenses, the group can be derived via `group_transactions.group_id`. However, settlement transactions have a `group_id` but no `group_transaction_id`, so the direct `group_id` column is needed for those. Both columns are nullable and serve different use cases.
+
 ### Authentication
 
 - JWT claims carry `UserID` (UUID) and `Email`

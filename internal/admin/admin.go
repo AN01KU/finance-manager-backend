@@ -34,6 +34,9 @@ type LogEntry struct {
 	Status      int
 	StatusClass string // "2xx", "4xx", "5xx"
 	Duration    string
+	DurationMs  float64
+	IsSlow      bool // >500ms
+	BodySize    int64
 }
 
 // LogStore is a thread-safe in-memory ring buffer for request logs.
@@ -65,7 +68,11 @@ func (ls *LogStore) Get(method, statusFilter string) []LogEntry {
 		if method != "" && e.Method != method {
 			continue
 		}
-		if statusFilter != "" && e.StatusClass != statusFilter {
+		if statusFilter == "slow" {
+			if !e.IsSlow {
+				continue
+			}
+		} else if statusFilter != "" && e.StatusClass != statusFilter {
 			continue
 		}
 		result = append(result, e)
@@ -94,13 +101,18 @@ func LoggerMiddleware(ls *LogStore) gin.HandlerFunc {
 		default:
 			statusClass = "2xx"
 		}
+		elapsed := time.Since(start)
+		durationMs := float64(elapsed.Microseconds()) / 1000.0
 		ls.Add(LogEntry{
 			Time:        start.Format("15:04:05"),
 			Method:      c.Request.Method,
 			Path:        c.Request.URL.Path,
 			Status:      status,
 			StatusClass: statusClass,
-			Duration:    time.Since(start).Round(time.Microsecond).String(),
+			Duration:    elapsed.Round(time.Microsecond).String(),
+			DurationMs:  durationMs,
+			IsSlow:      durationMs > 500,
+			BodySize:    c.Request.ContentLength,
 		})
 	}
 }
@@ -121,7 +133,7 @@ func New(pool *pgxpool.Pool, username, password string, logStore *LogStore) *Adm
 	dir := filepath.Join("internal", "admin", "templates")
 	layoutFile := filepath.Join(dir, "layout.html")
 
-	pages := []string{"dashboard", "tables", "table_browse", "row_form", "sql", "logs"}
+	pages := []string{"dashboard", "tables", "table_browse", "row_form", "sql", "logs", "users", "user_detail", "groups", "group_detail", "recurring", "audit", "search"}
 	tmpls := make(map[string]*template.Template, len(pages))
 	for _, page := range pages {
 		pageFile := filepath.Join(dir, page+".html")
@@ -160,6 +172,14 @@ func (a *Admin) RegisterRoutes(r *gin.Engine, rateLimiter gin.HandlerFunc) {
 		protected.POST("/tables/:name/new", a.rowCreateSubmit)
 		protected.GET("/tables/:name/edit", a.rowEditForm)
 		protected.POST("/tables/:name/edit", a.rowEditSubmit)
+		protected.GET("/users", a.usersPage)
+		protected.GET("/users/:id", a.userDetail)
+		protected.POST("/users/:id/delete", a.userDelete)
+		protected.GET("/groups", a.groupsPage)
+		protected.GET("/groups/:id", a.groupDetail)
+		protected.GET("/recurring", a.recurringPage)
+		protected.GET("/audit", a.auditPage)
+		protected.GET("/search", a.searchPage)
 		protected.GET("/sql", a.sqlPage)
 		protected.POST("/sql", a.sqlExec)
 		protected.POST("/rows/delete", a.rowDelete)
@@ -256,10 +276,24 @@ type tableInfo struct {
 }
 
 type dashStats struct {
-	Tables    int
-	TotalRows int64
-	Users     int64
-	DBSize    string
+	Tables         int
+	TotalRows      int64
+	Users          int64
+	Groups         int64
+	DBSize         string
+	TxThisMonth    int64
+	TxLastMonth    int64
+	TxTrend        string // "up", "down", "flat"
+	SpendThisMonth string
+	ActiveUsers7d  int64
+	ActiveUsers30d int64
+	NewSignupsWeek int64
+}
+
+type topCategory struct {
+	Name    string
+	Total   string
+	TxCount int64
 }
 
 func (a *Admin) getTableList(c *gin.Context) ([]tableInfo, error) {
@@ -302,15 +336,635 @@ func (a *Admin) dashboard(c *gin.Context) {
 	var userCount int64
 	_ = a.pool.QueryRow(c.Request.Context(), `SELECT COUNT(*) FROM users`).Scan(&userCount)
 
+	var groupCount int64
+	_ = a.pool.QueryRow(c.Request.Context(), `SELECT COUNT(*) FROM groups WHERE is_deleted = FALSE`).Scan(&groupCount)
+
 	var dbSize string
 	_ = a.pool.QueryRow(c.Request.Context(),
 		`SELECT pg_size_pretty(pg_database_size(current_database()))`).Scan(&dbSize)
 
+	// Transactions this month vs last month
+	var txThisMonth, txLastMonth int64
+	now := time.Now()
+	monthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+	lastMonthStart := monthStart.AddDate(0, -1, 0)
+	_ = a.pool.QueryRow(c.Request.Context(),
+		`SELECT COUNT(*) FROM transactions WHERE is_deleted = FALSE AND date >= $1`, monthStart).Scan(&txThisMonth)
+	_ = a.pool.QueryRow(c.Request.Context(),
+		`SELECT COUNT(*) FROM transactions WHERE is_deleted = FALSE AND date >= $1 AND date < $2`,
+		lastMonthStart, monthStart).Scan(&txLastMonth)
+
+	txTrend := "flat"
+	if txThisMonth > txLastMonth {
+		txTrend = "up"
+	} else if txThisMonth < txLastMonth {
+		txTrend = "down"
+	}
+
+	// Total spending this month
+	var spendThisMonth float64
+	_ = a.pool.QueryRow(c.Request.Context(),
+		`SELECT COALESCE(SUM(amount), 0) FROM transactions WHERE is_deleted = FALSE AND type = 'expense' AND date >= $1`,
+		monthStart).Scan(&spendThisMonth)
+
+	// Active users (7d / 30d) — users who created a transaction
+	var activeUsers7d, activeUsers30d int64
+	_ = a.pool.QueryRow(c.Request.Context(),
+		`SELECT COUNT(DISTINCT user_id) FROM transactions WHERE is_deleted = FALSE AND created_at >= $1`,
+		now.AddDate(0, 0, -7)).Scan(&activeUsers7d)
+	_ = a.pool.QueryRow(c.Request.Context(),
+		`SELECT COUNT(DISTINCT user_id) FROM transactions WHERE is_deleted = FALSE AND created_at >= $1`,
+		now.AddDate(0, 0, -30)).Scan(&activeUsers30d)
+
+	// New signups this week
+	var newSignupsWeek int64
+	_ = a.pool.QueryRow(c.Request.Context(),
+		`SELECT COUNT(*) FROM users WHERE created_at >= $1`,
+		now.AddDate(0, 0, -7)).Scan(&newSignupsWeek)
+
+	// Top 5 categories by spend this month
+	catRows, err := a.pool.Query(c.Request.Context(),
+		`SELECT category, SUM(amount) AS total, COUNT(*) AS cnt
+		 FROM transactions
+		 WHERE is_deleted = FALSE AND type = 'expense' AND date >= $1
+		 GROUP BY category ORDER BY total DESC LIMIT 5`, monthStart)
+	var topCategories []topCategory
+	if err == nil {
+		defer catRows.Close()
+		for catRows.Next() {
+			var tc topCategory
+			var total float64
+			if catRows.Scan(&tc.Name, &total, &tc.TxCount) == nil {
+				tc.Total = fmt.Sprintf("%.2f", total)
+				topCategories = append(topCategories, tc)
+			}
+		}
+	}
+
+	stats := dashStats{
+		Tables:         len(tables),
+		TotalRows:      totalRows,
+		Users:          userCount,
+		Groups:         groupCount,
+		DBSize:         dbSize,
+		TxThisMonth:    txThisMonth,
+		TxLastMonth:    txLastMonth,
+		TxTrend:        txTrend,
+		SpendThisMonth: fmt.Sprintf("%.2f", spendThisMonth),
+		ActiveUsers7d:  activeUsers7d,
+		ActiveUsers30d: activeUsers30d,
+		NewSignupsWeek: newSignupsWeek,
+	}
+
 	a.render(c, "dashboard.html", gin.H{
-		"Title":  "Dashboard",
-		"Active": "dashboard",
-		"Tables": tables,
-		"Stats":  dashStats{Tables: len(tables), TotalRows: totalRows, Users: userCount, DBSize: dbSize},
+		"Title":         "Dashboard",
+		"Active":        "dashboard",
+		"Tables":        tables,
+		"Stats":         stats,
+		"TopCategories": topCategories,
+	})
+}
+
+// --- Users ---
+
+type userRow struct {
+	ID        string
+	Email     string
+	Username  string
+	TxCount   int64
+	CreatedAt string
+}
+
+type userDetailRow struct {
+	ID             string
+	Email          string
+	Username       string
+	TxCount        int64
+	BudgetCount    int64
+	GroupCount     int64
+	RecurringCount int64
+	CreatedAt      string
+}
+
+type recentTx struct {
+	Type        string
+	Amount      string
+	Category    string
+	Description string
+	Date        string
+}
+
+func (a *Admin) usersPage(c *gin.Context) {
+	rows, err := a.pool.Query(c.Request.Context(),
+		`SELECT u.id, u.email, u.username, u.created_at,
+		        COUNT(t.id) AS tx_count
+		 FROM users u
+		 LEFT JOIN transactions t ON t.user_id = u.id AND t.is_deleted = FALSE
+		 GROUP BY u.id
+		 ORDER BY u.created_at DESC`)
+	if err != nil {
+		c.String(500, "Error: %v", err)
+		return
+	}
+	defer rows.Close()
+
+	var users []userRow
+	for rows.Next() {
+		var u userRow
+		var id [16]byte
+		var createdAt time.Time
+		if err := rows.Scan(&id, &u.Email, &u.Username, &createdAt, &u.TxCount); err != nil {
+			continue
+		}
+		u.ID = formatValue(id)
+		u.CreatedAt = createdAt.Format("2006-01-02")
+		users = append(users, u)
+	}
+
+	a.render(c, "users.html", gin.H{
+		"Title":  "Users",
+		"Active": "users",
+		"Users":  users,
+	})
+}
+
+func (a *Admin) userDetail(c *gin.Context) {
+	uid := c.Param("id")
+
+	var u userDetailRow
+	var id [16]byte
+	var createdAt time.Time
+	err := a.pool.QueryRow(c.Request.Context(),
+		`SELECT u.id, u.email, u.username, u.created_at,
+		        (SELECT COUNT(*) FROM transactions WHERE user_id = u.id AND is_deleted = FALSE),
+		        (SELECT COUNT(*) FROM monthly_budgets WHERE user_id = u.id),
+		        (SELECT COUNT(*) FROM group_members WHERE user_id = u.id),
+		        (SELECT COUNT(*) FROM recurring_transactions WHERE user_id = u.id)
+		 FROM users u WHERE u.id = $1`, uid).Scan(
+		&id, &u.Email, &u.Username, &createdAt,
+		&u.TxCount, &u.BudgetCount, &u.GroupCount, &u.RecurringCount)
+	if err != nil {
+		c.Redirect(http.StatusFound, "/admin/users")
+		return
+	}
+	u.ID = formatValue(id)
+	u.CreatedAt = createdAt.Format("2006-01-02 15:04")
+
+	// Recent transactions
+	txRows, err := a.pool.Query(c.Request.Context(),
+		`SELECT type, amount, category, COALESCE(description, ''), date
+		 FROM transactions
+		 WHERE user_id = $1 AND is_deleted = FALSE
+		 ORDER BY date DESC LIMIT 20`, uid)
+	var recentTxs []recentTx
+	if err == nil {
+		defer txRows.Close()
+		for txRows.Next() {
+			var t recentTx
+			var txDate time.Time
+			var amount float64
+			if txRows.Scan(&t.Type, &amount, &t.Category, &t.Description, &txDate) == nil {
+				t.Amount = fmt.Sprintf("%.2f", amount)
+				t.Date = txDate.Format("2006-01-02")
+				recentTxs = append(recentTxs, t)
+			}
+		}
+	}
+
+	a.render(c, "user_detail.html", gin.H{
+		"Title":              u.Username,
+		"Active":             "users",
+		"User":               u,
+		"RecentTransactions": recentTxs,
+		"Success":            c.Query("success"),
+	})
+}
+
+func (a *Admin) userDelete(c *gin.Context) {
+	uid := c.Param("id")
+	_, err := a.pool.Exec(c.Request.Context(), `DELETE FROM users WHERE id = $1`, uid)
+	if err != nil {
+		c.Redirect(http.StatusFound, "/admin/users/"+uid+"?error="+url.QueryEscape(err.Error()))
+		return
+	}
+	a.logAudit(c, "delete", "users", "User ID: "+uid)
+	c.Redirect(http.StatusFound, "/admin/users?success=User+deleted")
+}
+
+// --- Groups ---
+
+type groupRow struct {
+	ID              string
+	Name            string
+	MemberCount     int64
+	TxCount         int64
+	SettlementCount int64
+	TotalSpent      string
+	CreatedByEmail  string
+	CreatedAt       string
+}
+
+type groupMember struct {
+	Username string
+	Email    string
+	JoinedAt string
+}
+
+type groupTx struct {
+	PaidBy      string
+	Amount      string
+	Category    string
+	Description string
+	Date        string
+}
+
+type groupSettlement struct {
+	FromUser  string
+	ToUser    string
+	Amount    string
+	CreatedAt string
+}
+
+func (a *Admin) groupsPage(c *gin.Context) {
+	rows, err := a.pool.Query(c.Request.Context(),
+		`SELECT g.id, g.name,
+		        (SELECT COUNT(*) FROM group_members WHERE group_id = g.id),
+		        (SELECT COUNT(*) FROM group_transactions WHERE group_id = g.id AND is_deleted = FALSE),
+		        u.email, g.created_at
+		 FROM groups g
+		 JOIN users u ON u.id = g.created_by
+		 WHERE g.is_deleted = FALSE
+		 ORDER BY g.created_at DESC`)
+	if err != nil {
+		c.String(500, "Error: %v", err)
+		return
+	}
+	defer rows.Close()
+
+	var groups []groupRow
+	for rows.Next() {
+		var g groupRow
+		var id [16]byte
+		var createdAt time.Time
+		if err := rows.Scan(&id, &g.Name, &g.MemberCount, &g.TxCount, &g.CreatedByEmail, &createdAt); err != nil {
+			continue
+		}
+		g.ID = formatValue(id)
+		g.CreatedAt = createdAt.Format("2006-01-02")
+		groups = append(groups, g)
+	}
+
+	a.render(c, "groups.html", gin.H{
+		"Title":  "Groups",
+		"Active": "groups",
+		"Groups": groups,
+	})
+}
+
+func (a *Admin) groupDetail(c *gin.Context) {
+	gid := c.Param("id")
+
+	var g groupRow
+	var id [16]byte
+	var createdAt time.Time
+	var totalSpent float64
+	err := a.pool.QueryRow(c.Request.Context(),
+		`SELECT g.id, g.name,
+		        (SELECT COUNT(*) FROM group_members WHERE group_id = g.id),
+		        (SELECT COUNT(*) FROM group_transactions WHERE group_id = g.id AND is_deleted = FALSE),
+		        (SELECT COUNT(*) FROM settlements WHERE group_id = g.id),
+		        COALESCE((SELECT SUM(total_amount) FROM group_transactions WHERE group_id = g.id AND is_deleted = FALSE), 0),
+		        u.email, g.created_at
+		 FROM groups g
+		 JOIN users u ON u.id = g.created_by
+		 WHERE g.id = $1 AND g.is_deleted = FALSE`, gid).Scan(
+		&id, &g.Name, &g.MemberCount, &g.TxCount, &g.SettlementCount,
+		&totalSpent, &g.CreatedByEmail, &createdAt)
+	if err != nil {
+		c.Redirect(http.StatusFound, "/admin/groups")
+		return
+	}
+	g.ID = formatValue(id)
+	g.CreatedAt = createdAt.Format("2006-01-02")
+	g.TotalSpent = fmt.Sprintf("%.2f", totalSpent)
+
+	// Members
+	memberRows, err := a.pool.Query(c.Request.Context(),
+		`SELECT u.username, u.email, gm.joined_at
+		 FROM group_members gm
+		 JOIN users u ON u.id = gm.user_id
+		 WHERE gm.group_id = $1
+		 ORDER BY gm.joined_at`, gid)
+	var members []groupMember
+	if err == nil {
+		defer memberRows.Close()
+		for memberRows.Next() {
+			var m groupMember
+			var joinedAt time.Time
+			if memberRows.Scan(&m.Username, &m.Email, &joinedAt) == nil {
+				m.JoinedAt = joinedAt.Format("2006-01-02")
+				members = append(members, m)
+			}
+		}
+	}
+
+	// Recent transactions
+	txRows, err := a.pool.Query(c.Request.Context(),
+		`SELECT u.username, gt.total_amount, gt.category, COALESCE(gt.description, ''), gt.date
+		 FROM group_transactions gt
+		 JOIN users u ON u.id = gt.paid_by_user_id
+		 WHERE gt.group_id = $1 AND gt.is_deleted = FALSE
+		 ORDER BY gt.date DESC LIMIT 20`, gid)
+	var transactions []groupTx
+	if err == nil {
+		defer txRows.Close()
+		for txRows.Next() {
+			var t groupTx
+			var amount float64
+			var txDate time.Time
+			if txRows.Scan(&t.PaidBy, &amount, &t.Category, &t.Description, &txDate) == nil {
+				t.Amount = fmt.Sprintf("%.2f", amount)
+				t.Date = txDate.Format("2006-01-02")
+				transactions = append(transactions, t)
+			}
+		}
+	}
+
+	// Settlements
+	settRows, err := a.pool.Query(c.Request.Context(),
+		`SELECT fu.username, tu.username, s.amount, s.created_at
+		 FROM settlements s
+		 JOIN users fu ON fu.id = s.from_user
+		 JOIN users tu ON tu.id = s.to_user
+		 WHERE s.group_id = $1
+		 ORDER BY s.created_at DESC LIMIT 20`, gid)
+	var settlements []groupSettlement
+	if err == nil {
+		defer settRows.Close()
+		for settRows.Next() {
+			var s groupSettlement
+			var amount float64
+			var sCreatedAt time.Time
+			if settRows.Scan(&s.FromUser, &s.ToUser, &amount, &sCreatedAt) == nil {
+				s.Amount = fmt.Sprintf("%.2f", amount)
+				s.CreatedAt = sCreatedAt.Format("2006-01-02")
+				settlements = append(settlements, s)
+			}
+		}
+	}
+
+	a.render(c, "group_detail.html", gin.H{
+		"Title":        g.Name,
+		"Active":       "groups",
+		"Group":        g,
+		"Members":      members,
+		"Transactions": transactions,
+		"Settlements":  settlements,
+	})
+}
+
+// --- Recurring ---
+
+type recurringRule struct {
+	UserEmail string
+	Name      string
+	Type      string
+	Amount    string
+	Category  string
+	Frequency string
+	LastAdded string
+	IsActive  bool
+	IsOverdue bool
+}
+
+func isOverdue(frequency string, lastAdded *time.Time, now time.Time) bool {
+	if lastAdded == nil {
+		return false
+	}
+	var next time.Time
+	switch frequency {
+	case "daily":
+		next = lastAdded.AddDate(0, 0, 1)
+	case "weekly":
+		next = lastAdded.AddDate(0, 0, 7)
+	case "monthly":
+		next = lastAdded.AddDate(0, 1, 0)
+	case "yearly":
+		next = lastAdded.AddDate(1, 0, 0)
+	default:
+		return false
+	}
+	return now.After(next)
+}
+
+func (a *Admin) recurringPage(c *gin.Context) {
+	rows, err := a.pool.Query(c.Request.Context(),
+		`SELECT u.email, rt.name, rt.type, rt.amount, rt.category,
+		        rt.frequency, rt.last_added_date, rt.is_active
+		 FROM recurring_transactions rt
+		 JOIN users u ON u.id = rt.user_id
+		 ORDER BY rt.is_active DESC, rt.updated_at DESC`)
+	if err != nil {
+		c.String(500, "Error: %v", err)
+		return
+	}
+	defer rows.Close()
+
+	now := time.Now()
+	var rules []recurringRule
+	for rows.Next() {
+		var r recurringRule
+		var amount float64
+		var lastAdded *time.Time
+		if err := rows.Scan(&r.UserEmail, &r.Name, &r.Type, &amount, &r.Category,
+			&r.Frequency, &lastAdded, &r.IsActive); err != nil {
+			continue
+		}
+		r.Amount = fmt.Sprintf("%.2f", amount)
+		if lastAdded != nil {
+			r.LastAdded = lastAdded.Format("2006-01-02")
+		} else {
+			r.LastAdded = "—"
+		}
+		r.IsOverdue = r.IsActive && isOverdue(r.Frequency, lastAdded, now)
+		rules = append(rules, r)
+	}
+
+	a.render(c, "recurring.html", gin.H{
+		"Title":  "Recurring Transactions",
+		"Active": "recurring",
+		"Rules":  rules,
+	})
+}
+
+// --- Audit Log ---
+
+func (a *Admin) logAudit(c *gin.Context, action, tableName, details string) {
+	_, _ = a.pool.Exec(c.Request.Context(),
+		`INSERT INTO admin_audit_log (action, table_name, details, admin_user) VALUES ($1, $2, $3, $4)`,
+		action, tableName, details, a.username)
+}
+
+type auditEntry struct {
+	CreatedAt string
+	AdminUser string
+	Action    string
+	TableName string
+	Details   string
+}
+
+func (a *Admin) auditPage(c *gin.Context) {
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	if page < 1 {
+		page = 1
+	}
+	offset := (page - 1) * pageSize
+
+	rows, err := a.pool.Query(c.Request.Context(),
+		`SELECT created_at, admin_user, action, COALESCE(table_name, ''), COALESCE(details, '')
+		 FROM admin_audit_log
+		 ORDER BY created_at DESC
+		 LIMIT $1 OFFSET $2`, pageSize+1, offset)
+	if err != nil {
+		c.String(500, "Error: %v", err)
+		return
+	}
+	defer rows.Close()
+
+	var entries []auditEntry
+	for rows.Next() {
+		var e auditEntry
+		var createdAt time.Time
+		if rows.Scan(&createdAt, &e.AdminUser, &e.Action, &e.TableName, &e.Details) == nil {
+			e.CreatedAt = createdAt.Format("2006-01-02 15:04:05")
+			entries = append(entries, e)
+		}
+	}
+
+	hasNext := len(entries) > pageSize
+	if hasNext {
+		entries = entries[:pageSize]
+	}
+
+	a.render(c, "audit.html", gin.H{
+		"Title":    "Audit Log",
+		"Active":   "audit",
+		"Entries":  entries,
+		"Page":     page,
+		"PrevPage": page - 1,
+		"NextPage": page + 1,
+		"HasNext":  hasNext,
+	})
+}
+
+// --- Search ---
+
+type searchUser struct {
+	ID        string
+	Username  string
+	Email     string
+	CreatedAt string
+}
+
+type searchGroup struct {
+	ID          string
+	Name        string
+	MemberCount int64
+	CreatedAt   string
+}
+
+type searchTx struct {
+	ID        string
+	UserEmail string
+	Type      string
+	Amount    string
+	Category  string
+	Date      string
+}
+
+func (a *Admin) searchPage(c *gin.Context) {
+	q := strings.TrimSpace(c.Query("q"))
+	if q == "" {
+		c.Redirect(http.StatusFound, "/admin/")
+		return
+	}
+	pattern := "%" + q + "%"
+
+	// Search users
+	var users []searchUser
+	uRows, err := a.pool.Query(c.Request.Context(),
+		`SELECT id, username, email, created_at FROM users
+		 WHERE email ILIKE $1 OR username ILIKE $1
+		 ORDER BY created_at DESC LIMIT 20`, pattern)
+	if err == nil {
+		defer uRows.Close()
+		for uRows.Next() {
+			var u searchUser
+			var id [16]byte
+			var createdAt time.Time
+			if uRows.Scan(&id, &u.Username, &u.Email, &createdAt) == nil {
+				u.ID = formatValue(id)
+				u.CreatedAt = createdAt.Format("2006-01-02")
+				users = append(users, u)
+			}
+		}
+	}
+
+	// Search groups
+	var groups []searchGroup
+	gRows, err := a.pool.Query(c.Request.Context(),
+		`SELECT g.id, g.name,
+		        (SELECT COUNT(*) FROM group_members WHERE group_id = g.id),
+		        g.created_at
+		 FROM groups g
+		 WHERE g.is_deleted = FALSE AND g.name ILIKE $1
+		 ORDER BY g.created_at DESC LIMIT 20`, pattern)
+	if err == nil {
+		defer gRows.Close()
+		for gRows.Next() {
+			var g searchGroup
+			var id [16]byte
+			var createdAt time.Time
+			if gRows.Scan(&id, &g.Name, &g.MemberCount, &createdAt) == nil {
+				g.ID = formatValue(id)
+				g.CreatedAt = createdAt.Format("2006-01-02")
+				groups = append(groups, g)
+			}
+		}
+	}
+
+	// Search transactions by ID or description
+	var transactions []searchTx
+	tRows, err := a.pool.Query(c.Request.Context(),
+		`SELECT t.id, u.email, t.type, t.amount, t.category, t.date
+		 FROM transactions t
+		 JOIN users u ON u.id = t.user_id
+		 WHERE t.is_deleted = FALSE
+		   AND (t.id::text ILIKE $1 OR COALESCE(t.description, '') ILIKE $1 OR t.category ILIKE $1)
+		 ORDER BY t.date DESC LIMIT 20`, pattern)
+	if err == nil {
+		defer tRows.Close()
+		for tRows.Next() {
+			var tx searchTx
+			var id [16]byte
+			var amount float64
+			var txDate time.Time
+			if tRows.Scan(&id, &tx.UserEmail, &tx.Type, &amount, &tx.Category, &txDate) == nil {
+				tx.ID = formatValue(id)
+				tx.Amount = fmt.Sprintf("%.2f", amount)
+				tx.Date = txDate.Format("2006-01-02")
+				transactions = append(transactions, tx)
+			}
+		}
+	}
+
+	a.render(c, "search.html", gin.H{
+		"Title":        "Search: " + q,
+		"Active":       "",
+		"Query":        q,
+		"Users":        users,
+		"Groups":       groups,
+		"Transactions": transactions,
 	})
 }
 
@@ -484,6 +1138,7 @@ func (a *Admin) rowDelete(c *gin.Context) {
 		c.Redirect(http.StatusFound, "/admin/tables/"+table+"?error="+url.QueryEscape(err.Error()))
 		return
 	}
+	a.logAudit(c, "delete", table, fmt.Sprintf("PK: %v = %v", pkCols, pkVals))
 	c.Redirect(http.StatusFound, "/admin/tables/"+table+"?success=Row+deleted")
 }
 
@@ -561,6 +1216,7 @@ func (a *Admin) rowCreateSubmit(c *gin.Context) {
 		c.Redirect(http.StatusFound, "/admin/tables/"+table+"/new?error="+url.QueryEscape(err.Error()))
 		return
 	}
+	a.logAudit(c, "create", table, fmt.Sprintf("Columns: %v", insertCols))
 	c.Redirect(http.StatusFound, "/admin/tables/"+table+"?success=Row+created")
 }
 
@@ -704,6 +1360,7 @@ func (a *Admin) rowEditSubmit(c *gin.Context) {
 		c.Redirect(http.StatusFound, editURL)
 		return
 	}
+	a.logAudit(c, "edit", table, fmt.Sprintf("PK: %v = %v", pkCols, pkVals))
 	c.Redirect(http.StatusFound, "/admin/tables/"+table+"?success=Row+updated")
 }
 
@@ -830,6 +1487,7 @@ func (a *Admin) sqlExec(c *gin.Context) {
 			data["Error"] = err.Error()
 		} else {
 			data["Success"] = fmt.Sprintf("Query executed successfully. Rows affected: %d", tag.RowsAffected())
+			a.logAudit(c, "sql_exec", "", query)
 		}
 	}
 

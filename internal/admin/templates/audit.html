@@ -1,0 +1,40 @@
+{{define "content"}}
+<h1>Audit Log</h1>
+
+<div class="card" style="overflow-x:auto;">
+    <table>
+        <thead>
+            <tr>
+                <th>Time</th>
+                <th>Admin</th>
+                <th>Action</th>
+                <th>Table</th>
+                <th>Details</th>
+            </tr>
+        </thead>
+        <tbody>
+            {{range .Entries}}
+            <tr>
+                <td style="white-space:nowrap;">{{.CreatedAt}}</td>
+                <td>{{.AdminUser}}</td>
+                <td><span class="badge {{if eq .Action "delete"}}badge-expense{{else if eq .Action "create"}}badge-income{{else}}badge-info{{end}}">{{.Action}}</span></td>
+                <td class="mono">{{.TableName}}</td>
+                <td style="max-width:400px;overflow:hidden;text-overflow:ellipsis;" title="{{.Details}}">{{.Details}}</td>
+            </tr>
+            {{else}}
+            <tr><td colspan="5" class="text-muted" style="text-align:center;padding:20px;">No audit entries yet.</td></tr>
+            {{end}}
+        </tbody>
+    </table>
+</div>
+
+<div class="pagination">
+    {{if gt .Page 1}}
+    <a href="/admin/audit?page={{.PrevPage}}" class="btn btn-sm">← Prev</a>
+    {{end}}
+    {{if .HasNext}}
+    <a href="/admin/audit?page={{.NextPage}}" class="btn btn-sm">Next →</a>
+    {{end}}
+    <span class="info">Page {{.Page}}</span>
+</div>
+{{end}}

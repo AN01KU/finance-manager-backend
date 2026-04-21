@@ -1,0 +1,41 @@
+{{define "content"}}
+<h1>Recurring Transactions <span class="badge badge-info">{{len .Rules}}</span></h1>
+
+<div class="card" style="overflow-x:auto;">
+    <table>
+        <thead>
+            <tr>
+                <th>User</th>
+                <th>Name</th>
+                <th>Type</th>
+                <th>Amount</th>
+                <th>Category</th>
+                <th>Frequency</th>
+                <th>Last Added</th>
+                <th>Status</th>
+            </tr>
+        </thead>
+        <tbody>
+            {{range .Rules}}
+            <tr{{if .IsOverdue}} style="background:rgba(231,76,60,0.08);"{{end}}>
+                <td>{{.UserEmail}}</td>
+                <td>{{.Name}}</td>
+                <td><span class="badge {{if eq .Type "income"}}badge-income{{else}}badge-expense{{end}}">{{.Type}}</span></td>
+                <td class="mono">{{.Amount}}</td>
+                <td>{{.Category}}</td>
+                <td>{{.Frequency}}</td>
+                <td>{{.LastAdded}}</td>
+                <td>
+                    {{if not .IsActive}}<span class="badge" style="background:rgba(139,143,163,0.2);color:var(--text2);">Inactive</span>
+                    {{else if .IsOverdue}}<span class="badge badge-expense">Overdue</span>
+                    {{else}}<span class="badge badge-income">Active</span>
+                    {{end}}
+                </td>
+            </tr>
+            {{else}}
+            <tr><td colspan="8" class="text-muted" style="text-align:center;padding:20px;">No recurring transactions found.</td></tr>
+            {{end}}
+        </tbody>
+    </table>
+</div>
+{{end}}

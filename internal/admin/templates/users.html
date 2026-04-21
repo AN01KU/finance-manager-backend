@@ -1,0 +1,35 @@
+{{define "content"}}
+<h1>Users <span class="badge badge-info">{{len .Users}}</span></h1>
+
+<div class="card" style="overflow-x:auto;">
+    <table>
+        <thead>
+            <tr>
+                <th>Username</th>
+                <th>Email</th>
+                <th>Transactions</th>
+                <th>Signed Up</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {{range .Users}}
+            <tr>
+                <td>{{.Username}}</td>
+                <td class="mono">{{.Email}}</td>
+                <td>{{.TxCount}}</td>
+                <td>{{.CreatedAt}}</td>
+                <td style="white-space:nowrap;">
+                    <a href="/admin/users/{{.ID}}" class="btn btn-sm">View</a>
+                    <form method="POST" action="/admin/users/{{.ID}}/delete" style="display:inline;" onsubmit="return confirm('Delete user {{.Email}}? This will cascade-delete all their data.');">
+                        <button type="submit" class="btn btn-danger btn-sm">Delete</button>
+                    </form>
+                </td>
+            </tr>
+            {{else}}
+            <tr><td colspan="5" class="text-muted" style="text-align:center;padding:20px;">No users found.</td></tr>
+            {{end}}
+        </tbody>
+    </table>
+</div>
+{{end}}

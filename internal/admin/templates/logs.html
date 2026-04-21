@@ -17,6 +17,7 @@
                 <option value="2xx" {{if eq .StatusFilter "2xx"}}selected{{end}}>2xx Success</option>
                 <option value="4xx" {{if eq .StatusFilter "4xx"}}selected{{end}}>4xx Client Error</option>
                 <option value="5xx" {{if eq .StatusFilter "5xx"}}selected{{end}}>5xx Server Error</option>
+                <option value="slow" {{if eq .StatusFilter "slow"}}selected{{end}}>Slow (&gt;500ms)</option>
             </select>
             <span class="text-muted" style="font-size:12px;">{{len .Logs}} entries (last 200)</span>
             <a href="/admin/logs" class="btn btn-sm" style="margin-left:auto;">↻ Reload</a>
@@ -27,12 +28,13 @@
     </div>
     {{if .Logs}}
     {{range .Logs}}
-    <div class="log-entry">
+    <div class="log-entry{{if eq .StatusClass "5xx"}} log-entry-error{{end}}{{if .IsSlow}} log-entry-slow{{end}}">
         <span class="log-time">{{.Time}}</span>
         <span class="log-method {{.Method}}">{{.Method}}</span>
         <span class="log-path">{{.Path}}</span>
         <span class="log-status s{{.StatusClass}}">{{.Status}}</span>
-        <span class="log-duration">{{.Duration}}</span>
+        <span class="log-duration{{if .IsSlow}} log-duration-slow{{end}}">{{.Duration}}</span>
+        {{if gt .BodySize 0}}<span class="log-body-size">{{.BodySize}}B</span>{{end}}
     </div>
     {{end}}
     {{else}}

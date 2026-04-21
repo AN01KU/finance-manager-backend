@@ -177,7 +177,7 @@ func ListRecurringTransactions(c *gin.Context, db *db.DB) {
 		}
 	}
 
-	query := `SELECT id, user_id, type, name, amount, category, frequency, day_of_month, days_of_week, start_date, end_date, is_active, last_added_date, notes, created_at, updated_at
+	query := `SELECT id, user_id, type, name, amount, category, frequency, day_of_month, days_of_week, start_date, end_date, is_active, last_added_date, notes, created_at, updated_at, COUNT(*) OVER() AS total_count
 		      FROM recurring_transactions
 		      WHERE user_id = $1`
 	args := []interface{}{userID}
@@ -197,13 +197,15 @@ func ListRecurringTransactions(c *gin.Context, db *db.DB) {
 	defer rows.Close()
 
 	var transactions []RecurringTransaction
+	var total int
 	for rows.Next() {
 		var rt RecurringTransaction
 		var rawStartDate, rawCreatedAt, rawUpdatedAt time.Time
 		var rawEndDate, rawLastAddedDate *time.Time
 		if err := rows.Scan(&rt.ID, &rt.UserID, &rt.Type, &rt.Name, &rt.Amount, &rt.Category,
 			&rt.Frequency, &rt.DayOfMonth, &rt.DaysOfWeek, &rawStartDate,
-			&rawEndDate, &rt.IsActive, &rawLastAddedDate, &rt.Notes, &rawCreatedAt, &rawUpdatedAt); err != nil {
+			&rawEndDate, &rt.IsActive, &rawLastAddedDate, &rt.Notes, &rawCreatedAt, &rawUpdatedAt,
+			&total); err != nil {
 			c.JSON(500, gin.H{"error": "failed to scan recurring transaction"})
 			return
 		}
@@ -228,6 +230,7 @@ func ListRecurringTransactions(c *gin.Context, db *db.DB) {
 		"pagination": gin.H{
 			"limit":  limit,
 			"offset": offset,
+			"total":  total,
 		},
 	})
 }

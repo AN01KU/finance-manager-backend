@@ -2,22 +2,62 @@
 <h1>Dashboard</h1>
 <div class="stats-grid">
     <div class="stat-card">
+        <div class="value">{{.Stats.Users}}</div>
+        <div class="label">Total Users</div>
+    </div>
+    <div class="stat-card">
+        <div class="value">{{.Stats.Groups}}</div>
+        <div class="label">Active Groups</div>
+    </div>
+    <div class="stat-card">
+        <div class="value">
+            {{.Stats.TxThisMonth}}
+            {{if eq .Stats.TxTrend "up"}}<span style="color:var(--success);font-size:14px;">▲</span>
+            {{else if eq .Stats.TxTrend "down"}}<span style="color:var(--danger);font-size:14px;">▼</span>
+            {{else}}<span style="color:var(--text2);font-size:14px;">—</span>{{end}}
+        </div>
+        <div class="label">Transactions This Month <span style="font-size:10px;">(vs {{.Stats.TxLastMonth}} last)</span></div>
+    </div>
+    <div class="stat-card">
+        <div class="value">{{.Stats.SpendThisMonth}}</div>
+        <div class="label">Spending This Month</div>
+    </div>
+    <div class="stat-card">
+        <div class="value">{{.Stats.ActiveUsers7d}} / {{.Stats.ActiveUsers30d}}</div>
+        <div class="label">Active Users (7d / 30d)</div>
+    </div>
+    <div class="stat-card">
+        <div class="value">{{.Stats.NewSignupsWeek}}</div>
+        <div class="label">New Signups (7d)</div>
+    </div>
+    <div class="stat-card">
         <div class="value">{{.Stats.Tables}}</div>
         <div class="label">Tables</div>
-    </div>
-    <div class="stat-card">
-        <div class="value">{{.Stats.TotalRows}}</div>
-        <div class="label">Total Rows</div>
-    </div>
-    <div class="stat-card">
-        <div class="value">{{.Stats.Users}}</div>
-        <div class="label">Users</div>
     </div>
     <div class="stat-card">
         <div class="value">{{.Stats.DBSize}}</div>
         <div class="label">DB Size</div>
     </div>
 </div>
+
+{{if .TopCategories}}
+<div class="card">
+    <h3>Top Categories This Month</h3>
+    <table>
+        <thead><tr><th>Category</th><th>Total Spent</th><th>Transactions</th></tr></thead>
+        <tbody>
+            {{range .TopCategories}}
+            <tr>
+                <td>{{.Name}}</td>
+                <td class="mono">{{.Total}}</td>
+                <td>{{.TxCount}}</td>
+            </tr>
+            {{end}}
+        </tbody>
+    </table>
+</div>
+{{end}}
+
 <div class="card">
     <h3>Tables Overview</h3>
     <table>
