@@ -310,7 +310,7 @@ func UpdateMe(c *gin.Context, service *AuthService) {
 	}
 
 	// Add updated_at and remove trailing comma, then add WHERE + RETURNING
-	query += fmt.Sprintf(` updated_at = NOW()`)
+	query += ` updated_at = NOW()`
 	query += fmt.Sprintf(` WHERE id = $%d RETURNING id, email, username, created_at`, n)
 	args = append(args, userID)
 
