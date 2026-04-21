@@ -181,6 +181,9 @@ func Login(c *gin.Context, service *AuthService) {
 		return
 	}
 
+	// Invalidate any existing active sessions before creating a new one
+	invalidateAllSessions(c.Request.Context(), database, u.ID, "new_login")
+
 	// Create sync session
 	syncSessionID, err := createSyncSession(c.Request.Context(), database, u.ID)
 	if err != nil {
@@ -214,15 +217,19 @@ func Logout(c *gin.Context, service *AuthService) {
 	}
 
 	if req.SyncSessionID != nil {
+		// Invalidate the specific session
 		_, err := service.DB.Pool.Exec(c.Request.Context(),
 			`UPDATE sync_sessions SET invalidated_at = now(), invalidation_reason = 'logout'
-			 WHERE id = $1 AND user_id = $2`,
+			 WHERE id = $1 AND user_id = $2 AND invalidated_at IS NULL`,
 			*req.SyncSessionID, userID,
 		)
 		if err != nil {
 			c.JSON(500, gin.H{"error": "failed to invalidate sync session"})
 			return
 		}
+	} else {
+		// No specific session provided — invalidate all active sessions
+		invalidateAllSessions(c.Request.Context(), service.DB, userID, "logout")
 	}
 
 	c.JSON(200, gin.H{"message": "logged out successfully"})
@@ -317,6 +324,11 @@ func UpdateMe(c *gin.Context, service *AuthService) {
 	}
 	u.CreatedAt = helpers.FromTime(rawCreatedAt)
 
+	// Password or email change — invalidate all sync sessions to force re-login
+	if req.Password != nil || req.Email != nil {
+		invalidateAllSessions(c.Request.Context(), service.DB, userID, "credentials_changed")
+	}
+
 	c.JSON(200, u)
 }
 
@@ -385,6 +397,14 @@ func DeleteMe(c *gin.Context, service *AuthService) {
 	}
 
 	c.JSON(200, gin.H{"message": "user deleted successfully"})
+}
+
+func invalidateAllSessions(ctx context.Context, database *db.DB, userID uuid.UUID, reason string) {
+	_, _ = database.Pool.Exec(ctx,
+		`UPDATE sync_sessions SET invalidated_at = now(), invalidation_reason = $1
+		 WHERE user_id = $2 AND invalidated_at IS NULL`,
+		reason, userID,
+	)
 }
 
 func createSyncSession(ctx context.Context, database *db.DB, userID uuid.UUID) (uuid.UUID, error) {
