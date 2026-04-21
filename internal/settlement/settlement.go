@@ -22,7 +22,9 @@ type Settlement struct {
 	ToUser    uuid.UUID           `json:"to_user"`
 	Amount    float64             `json:"amount"`
 	Notes     *string             `json:"notes,omitempty"`
+	IsDeleted bool                `json:"is_deleted"`
 	CreatedAt helpers.EpochMillis `json:"created_at"`
+	UpdatedAt helpers.EpochMillis `json:"updated_at"`
 }
 
 type CreateSettlementRequest struct {
@@ -99,15 +101,16 @@ func CreateSettlement(c *gin.Context, db *db.DB) {
 
 	// Insert settlement
 	var s Settlement
-	var rawCreatedAt time.Time
+	var rawCreatedAt, rawUpdatedAt time.Time
 	err = dbTx.QueryRow(c.Request.Context(),
-		"INSERT INTO settlements (group_id, from_user, to_user, amount, notes) VALUES ($1, $2, $3, $4, $5) RETURNING id, group_id, from_user, to_user, amount, notes, created_at",
-		groupID, req.FromUser, req.ToUser, amount, req.Notes).Scan(&s.ID, &s.GroupID, &s.FromUser, &s.ToUser, &s.Amount, &s.Notes, &rawCreatedAt)
+		"INSERT INTO settlements (group_id, from_user, to_user, amount, notes) VALUES ($1, $2, $3, $4, $5) RETURNING id, group_id, from_user, to_user, amount, notes, is_deleted, created_at, updated_at",
+		groupID, req.FromUser, req.ToUser, amount, req.Notes).Scan(&s.ID, &s.GroupID, &s.FromUser, &s.ToUser, &s.Amount, &s.Notes, &s.IsDeleted, &rawCreatedAt, &rawUpdatedAt)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "failed to create settlement"})
 		return
 	}
 	s.CreatedAt = helpers.FromTime(rawCreatedAt)
+	s.UpdatedAt = helpers.FromTime(rawUpdatedAt)
 
 	// Create income transaction for the to_user (they received money)
 	_, err = dbTx.Exec(c.Request.Context(),

@@ -286,7 +286,7 @@ func GetUserGroups(c *gin.Context, database *db.DB) {
 	// Fetch settlements
 	settRows, err := database.Pool.Query(c.Request.Context(),
 		`SELECT from_user, to_user, amount, group_id
-		 FROM settlements WHERE group_id = ANY($1)`, groupIDs)
+		 FROM settlements WHERE group_id = ANY($1) AND is_deleted = FALSE`, groupIDs)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "failed to get settlements"})
 		return
@@ -416,7 +416,7 @@ func GetGroup(c *gin.Context, database *db.DB) {
 	}
 
 	settRows, err := database.Pool.Query(c.Request.Context(),
-		`SELECT id, from_user, to_user, amount, notes, created_at FROM settlements WHERE group_id = $1 ORDER BY created_at DESC`, groupID)
+		`SELECT id, from_user, to_user, amount, notes, created_at FROM settlements WHERE group_id = $1 AND is_deleted = FALSE ORDER BY created_at DESC`, groupID)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "failed to get settlements"})
 		return
@@ -652,7 +652,7 @@ func GetBalances(c *gin.Context, database *db.DB) {
 	}
 
 	settRows, err := database.Pool.Query(c.Request.Context(),
-		"SELECT from_user, to_user, amount FROM settlements WHERE group_id = $1", groupID)
+		"SELECT from_user, to_user, amount FROM settlements WHERE group_id = $1 AND is_deleted = FALSE", groupID)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "failed to get settlements"})
 		return
@@ -710,14 +710,14 @@ func GetGroupSettlements(c *gin.Context, database *db.DB) {
 
 	var total int
 	if err := database.Pool.QueryRow(c.Request.Context(),
-		`SELECT COUNT(*) FROM settlements WHERE group_id = $1`, groupID).Scan(&total); err != nil {
+		`SELECT COUNT(*) FROM settlements WHERE group_id = $1 AND is_deleted = FALSE`, groupID).Scan(&total); err != nil {
 		c.JSON(500, gin.H{"error": "failed to get settlement count"})
 		return
 	}
 
 	rows, err := database.Pool.Query(c.Request.Context(),
 		`SELECT id, from_user, to_user, amount, notes, created_at
-		 FROM settlements WHERE group_id = $1
+		 FROM settlements WHERE group_id = $1 AND is_deleted = FALSE
 		 ORDER BY created_at DESC LIMIT $2 OFFSET $3`, groupID, limit, offset)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "failed to get settlements"})
@@ -1055,9 +1055,9 @@ func DeleteGroup(c *gin.Context, database *db.DB) {
 		return
 	}
 
-	// Hard-delete settlements (no is_deleted column on this table)
+	// Soft-delete settlements
 	_, err = tx.Exec(c.Request.Context(),
-		`DELETE FROM settlements WHERE group_id = $1`, groupID)
+		`UPDATE settlements SET is_deleted = true, updated_at = NOW() WHERE group_id = $1`, groupID)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "failed to delete settlements"})
 		return

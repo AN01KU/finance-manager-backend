@@ -60,7 +60,7 @@ func getUserGroupBalance(ctx context.Context, q Querier, groupID, userID uuid.UU
 	var settPaid decimal.NullDecimal
 	err = q.QueryRow(ctx,
 		`SELECT COALESCE(SUM(amount), 0) FROM settlements
-		 WHERE group_id = $1 AND from_user = $2`,
+		 WHERE group_id = $1 AND from_user = $2 AND is_deleted = FALSE`,
 		groupID, userID).Scan(&settPaid)
 	if err != nil {
 		return balance, err
@@ -72,7 +72,7 @@ func getUserGroupBalance(ctx context.Context, q Querier, groupID, userID uuid.UU
 	var settReceived decimal.NullDecimal
 	err = q.QueryRow(ctx,
 		`SELECT COALESCE(SUM(amount), 0) FROM settlements
-		 WHERE group_id = $1 AND to_user = $2`,
+		 WHERE group_id = $1 AND to_user = $2 AND is_deleted = FALSE`,
 		groupID, userID).Scan(&settReceived)
 	if err != nil {
 		return balance, err
