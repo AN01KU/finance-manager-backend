@@ -1,0 +1,81 @@
+{{define "content"}}
+<div class="page-header flex-between">
+    <div>
+        <h1>Transactions</h1>
+        <p>{{.Total}} total</p>
+    </div>
+    <a href="/dashboard/transactions/export" class="btn">&#8595; Export CSV</a>
+</div>
+
+<form method="GET" action="/dashboard/transactions">
+<div class="filter-bar">
+    <select name="type" onchange="this.form.submit()">
+        <option value="" {{if eq .FilterType ""}}selected{{end}}>All types</option>
+        <option value="expense" {{if eq .FilterType "expense"}}selected{{end}}>Expenses</option>
+        <option value="income" {{if eq .FilterType "income"}}selected{{end}}>Income</option>
+    </select>
+    <select name="category" onchange="this.form.submit()">
+        <option value="">All categories</option>
+        {{range .Categories}}
+        <option value="{{.}}" {{if eq . $.FilterCategory}}selected{{end}}>{{.}}</option>
+        {{end}}
+    </select>
+    <noscript><button type="submit" class="btn">Filter</button></noscript>
+</div>
+</form>
+
+<div class="card" style="padding:0;overflow:hidden;">
+    {{if .Transactions}}
+    <table>
+        <thead>
+            <tr>
+                <th>Date</th>
+                <th>Description</th>
+                <th>Category</th>
+                <th>Group</th>
+                <th>Type</th>
+                <th class="text-right">Amount</th>
+            </tr>
+        </thead>
+        <tbody>
+            {{range .Transactions}}
+            <tr>
+                <td class="text-muted mono" style="white-space:nowrap;">{{.Date}}</td>
+                <td>{{if .Description}}{{.Description}}{{else}}<span class="text-muted">—</span>{{end}}</td>
+                <td>{{.Category}}</td>
+                <td>
+                    {{if .GroupName}}
+                    <a href="/dashboard/groups/{{.GroupID}}">{{.GroupName}}</a>
+                    {{else}}<span class="text-muted">—</span>{{end}}
+                </td>
+                <td><span class="badge badge-{{.Type}}">{{.Type}}</span></td>
+                <td class="text-right mono">${{.Amount}}</td>
+            </tr>
+            {{end}}
+        </tbody>
+    </table>
+    {{else}}
+    <div class="empty">
+        <div class="empty-icon">&#128203;</div>
+        <p>No transactions found.</p>
+    </div>
+    {{end}}
+</div>
+
+{{if gt .TotalPages 1}}
+<div class="pagination">
+    {{if gt .Page 1}}
+    <a href="?page={{.PrevPage}}&type={{.FilterType}}&category={{.FilterCategory}}">&#8592; Prev</a>
+    {{else}}
+    <span class="disabled">&#8592; Prev</span>
+    {{end}}
+    <span class="current">{{.Page}}</span>
+    <span class="text-muted" style="font-size:12px;">of {{.TotalPages}}</span>
+    {{if lt .Page .TotalPages}}
+    <a href="?page={{.NextPage}}&type={{.FilterType}}&category={{.FilterCategory}}">Next &#8594;</a>
+    {{else}}
+    <span class="disabled">Next &#8594;</span>
+    {{end}}
+</div>
+{{end}}
+{{end}}

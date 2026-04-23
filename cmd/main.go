@@ -25,6 +25,7 @@ import (
 	"github.com/yanonymousV2/finance-manager-backend/internal/group"
 	"github.com/yanonymousV2/finance-manager-backend/internal/middleware"
 	"github.com/yanonymousV2/finance-manager-backend/internal/notify"
+	"github.com/yanonymousV2/finance-manager-backend/internal/portal"
 	"github.com/yanonymousV2/finance-manager-backend/internal/recurring"
 	"github.com/yanonymousV2/finance-manager-backend/internal/seed"
 	"github.com/yanonymousV2/finance-manager-backend/internal/settlement"
@@ -123,6 +124,10 @@ func main() {
 	r.Use(admin.LoggerMiddleware(logStore))
 	adminPanel := admin.New(database.Pool, cfg.AdminUsername, cfg.AdminPassword, logStore)
 	adminPanel.RegisterRoutes(r, middleware.RateLimiter())
+
+	// User-facing portal at /dashboard
+	portalApp := portal.New(database.Pool, cfg.JWTSecret)
+	portalApp.RegisterRoutes(r)
 
 	// Health check
 	r.GET("/health", func(c *gin.Context) {
