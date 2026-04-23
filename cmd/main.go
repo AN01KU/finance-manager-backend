@@ -206,6 +206,8 @@ func main() {
 		// Settlements
 		protected.POST("/settlements", func(c *gin.Context) { settlement.CreateSettlement(c, database) })
 		protected.GET("/settlements/:id", func(c *gin.Context) { settlement.GetSettlement(c, database) })
+		protected.DELETE("/settlements/:id", func(c *gin.Context) { settlement.DeleteSettlement(c, database) })
+		protected.PATCH("/settlements/:id", func(c *gin.Context) { settlement.UpdateSettlement(c, database) })
 
 		// Device tokens (push notifications)
 		protected.POST("/device-tokens", func(c *gin.Context) { notify.RegisterToken(c, database.Pool) })

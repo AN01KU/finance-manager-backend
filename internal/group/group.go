@@ -87,10 +87,12 @@ type CreateGroupTransactionRequest struct {
 }
 
 type UpdateGroupTransactionRequest struct {
-	Category    *string `json:"category,omitempty" validate:"omitempty,max=100"`
-	Date        *int64  `json:"date,omitempty"`
-	Description *string `json:"description,omitempty" validate:"omitempty,max=255"`
-	Notes       *string `json:"notes,omitempty"`
+	Category    *string      `json:"category,omitempty" validate:"omitempty,max=100"`
+	Date        *int64       `json:"date,omitempty"`
+	Description *string      `json:"description,omitempty" validate:"omitempty,max=255"`
+	Notes       *string      `json:"notes,omitempty"`
+	TotalAmount *float64     `json:"total_amount,omitempty"`
+	Splits      []SplitInput `json:"splits,omitempty" validate:"omitempty,min=1,dive"`
 }
 
 type CreateGroupRequest struct {

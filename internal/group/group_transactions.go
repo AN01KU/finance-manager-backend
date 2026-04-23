@@ -112,6 +112,7 @@ func CreateGroupTransaction(c *gin.Context, database *db.DB) {
 		   date = EXCLUDED.date,
 		   description = EXCLUDED.description,
 		   notes = EXCLUDED.notes,
+		   is_deleted = FALSE,
 		   updated_at = NOW()
 		 WHERE group_transactions.group_id = EXCLUDED.group_id
 		 RETURNING id, group_id, paid_by_user_id, total_amount, category, date, description, notes, is_deleted, created_at, updated_at`,
@@ -456,7 +457,70 @@ func UpdateGroupTransaction(c *gin.Context, database *db.DB) {
 		pn++
 	}
 
-	if n == 1 {
+	// Validate total_amount / splits combination
+	hasSplits := len(req.Splits) > 0
+	var newTotalAmount decimal.Decimal
+	var splitAmounts []decimal.Decimal
+
+	if req.TotalAmount != nil {
+		newTotalAmount = decimal.NewFromFloat(*req.TotalAmount)
+		if newTotalAmount.LessThanOrEqual(decimal.Zero) {
+			c.JSON(400, gin.H{"error": "invalid total_amount"})
+			return
+		}
+		if !hasSplits {
+			c.JSON(400, gin.H{"error": "splits must be provided when changing total_amount"})
+			return
+		}
+		gtQuery += fmt.Sprintf(", total_amount = $%d", n)
+		args = append(args, newTotalAmount)
+		n++
+	}
+
+	if hasSplits {
+		// If TotalAmount not provided, fetch the current one
+		if req.TotalAmount == nil {
+			var currentTotal float64
+			err = database.Pool.QueryRow(c.Request.Context(),
+				`SELECT total_amount FROM group_transactions WHERE id = $1 AND group_id = $2`,
+				txID, groupID,
+			).Scan(&currentTotal)
+			if err != nil {
+				c.JSON(404, gin.H{"error": "group transaction not found"})
+				return
+			}
+			newTotalAmount = decimal.NewFromFloat(currentTotal)
+		}
+
+		// Validate split amounts
+		splitAmounts = make([]decimal.Decimal, len(req.Splits))
+		splitSum := decimal.Zero
+		for i, s := range req.Splits {
+			amt := decimal.NewFromFloat(s.Amount)
+			if amt.LessThan(decimal.Zero) {
+				c.JSON(400, gin.H{"error": fmt.Sprintf("invalid amount for split %d", i)})
+				return
+			}
+			splitAmounts[i] = amt
+			splitSum = splitSum.Add(amt)
+		}
+
+		if !splitSum.Equal(newTotalAmount) {
+			c.JSON(400, gin.H{"error": fmt.Sprintf("splits sum (%s) must equal total_amount (%s)", splitSum, newTotalAmount)})
+			return
+		}
+
+		// Validate all split users are group members
+		for _, s := range req.Splits {
+			ok, err := helpers.IsGroupMember(c.Request.Context(), database, groupID, s.UserID)
+			if err != nil || !ok {
+				c.JSON(400, gin.H{"error": fmt.Sprintf("user %s is not a member of the group", s.UserID)})
+				return
+			}
+		}
+	}
+
+	if n == 1 && !hasSplits {
 		c.JSON(400, gin.H{"error": "no fields to update"})
 		return
 	}
@@ -477,22 +541,100 @@ func UpdateGroupTransaction(c *gin.Context, database *db.DB) {
 
 	var gt GroupTransaction
 	var rawDate, rawCreatedAt, rawUpdatedAt time.Time
-	err = dbTx.QueryRow(c.Request.Context(), gtQuery, args...).Scan(
-		&gt.ID, &gt.GroupID, &gt.PaidByUserID, &gt.TotalAmount, &gt.Category, &rawDate,
-		&gt.Description, &gt.Notes, &gt.IsDeleted, &rawCreatedAt, &rawUpdatedAt,
-	)
-	if err != nil {
-		c.JSON(500, gin.H{"error": "failed to update group transaction"})
-		return
+
+	if n > 1 {
+		// There are group_transaction fields to update
+		err = dbTx.QueryRow(c.Request.Context(), gtQuery, args...).Scan(
+			&gt.ID, &gt.GroupID, &gt.PaidByUserID, &gt.TotalAmount, &gt.Category, &rawDate,
+			&gt.Description, &gt.Notes, &gt.IsDeleted, &rawCreatedAt, &rawUpdatedAt,
+		)
+		if err != nil {
+			c.JSON(500, gin.H{"error": "failed to update group transaction"})
+			return
+		}
+	} else {
+		// Only splits changed, just fetch the current row
+		err = dbTx.QueryRow(c.Request.Context(),
+			`UPDATE group_transactions SET updated_at = NOW() WHERE id = $1
+			 RETURNING id, group_id, paid_by_user_id, total_amount, category, date, description, notes, is_deleted, created_at, updated_at`,
+			txID,
+		).Scan(
+			&gt.ID, &gt.GroupID, &gt.PaidByUserID, &gt.TotalAmount, &gt.Category, &rawDate,
+			&gt.Description, &gt.Notes, &gt.IsDeleted, &rawCreatedAt, &rawUpdatedAt,
+		)
+		if err != nil {
+			c.JSON(500, gin.H{"error": "failed to update group transaction"})
+			return
+		}
 	}
 	gt.Date = helpers.FromTime(rawDate)
 	gt.CreatedAt = helpers.FromTime(rawCreatedAt)
 	gt.UpdatedAt = helpers.FromTime(rawUpdatedAt)
 
-	// Sync the same field changes to linked personal transactions.
-	if _, err = dbTx.Exec(c.Request.Context(), personalQuery, personalArgs...); err != nil {
-		c.JSON(500, gin.H{"error": "failed to sync personal transactions"})
-		return
+	if hasSplits {
+		// Determine the category/date/description/notes for new personal transactions
+		// Use updated values from the group transaction row
+		gtDate := rawDate
+		gtCategory := gt.Category
+
+		// Soft-delete existing personal transactions linked to this group transaction
+		if _, err = dbTx.Exec(c.Request.Context(),
+			`UPDATE transactions SET is_deleted = TRUE, updated_at = NOW()
+			 WHERE group_transaction_id = $1 AND is_deleted = FALSE`, txID); err != nil {
+			c.JSON(500, gin.H{"error": "failed to soft-delete personal transactions"})
+			return
+		}
+
+		// Delete existing split rows
+		if _, err = dbTx.Exec(c.Request.Context(),
+			`DELETE FROM group_transaction_splits WHERE group_transaction_id = $1`, txID); err != nil {
+			c.JSON(500, gin.H{"error": "failed to delete splits"})
+			return
+		}
+
+		// Create new splits and personal transactions
+		var splits []SplitDetail
+		for i, s := range req.Splits {
+			txAmount := splitAmounts[i]
+			if s.UserID == paidByUserID {
+				txAmount = newTotalAmount
+			}
+
+			var memberTxID uuid.UUID
+			err = dbTx.QueryRow(c.Request.Context(),
+				`INSERT INTO transactions (user_id, type, amount, category, date, description, notes, group_transaction_id, updated_at)
+				 VALUES ($1, 'expense', $2, $3, $4, $5, $6, $7, NOW())
+				 RETURNING id`,
+				s.UserID, txAmount, gtCategory, gtDate, gt.Description, gt.Notes, gt.ID,
+			).Scan(&memberTxID)
+			if err != nil {
+				c.JSON(500, gin.H{"error": "failed to create personal transaction for member"})
+				return
+			}
+
+			var split SplitDetail
+			err = dbTx.QueryRow(c.Request.Context(),
+				`INSERT INTO group_transaction_splits (group_transaction_id, user_id, amount, transaction_id)
+				 VALUES ($1, $2, $3, $4)
+				 RETURNING id, user_id, amount, transaction_id`,
+				gt.ID, s.UserID, splitAmounts[i], memberTxID,
+			).Scan(&split.ID, &split.UserID, &split.Amount, &split.TransactionID)
+			if err != nil {
+				c.JSON(500, gin.H{"error": "failed to create split"})
+				return
+			}
+			splits = append(splits, split)
+		}
+
+		gt.Splits = splits
+	} else {
+		// Sync the same field changes to linked personal transactions.
+		if len(personalArgs) > 1 {
+			if _, err = dbTx.Exec(c.Request.Context(), personalQuery, personalArgs...); err != nil {
+				c.JSON(500, gin.H{"error": "failed to sync personal transactions"})
+				return
+			}
+		}
 	}
 
 	if err := dbTx.Commit(c.Request.Context()); err != nil {
@@ -500,27 +642,30 @@ func UpdateGroupTransaction(c *gin.Context, database *db.DB) {
 		return
 	}
 
-	splitRows, err := database.Pool.Query(c.Request.Context(),
-		`SELECT id, user_id, amount, transaction_id
-		 FROM group_transaction_splits WHERE group_transaction_id = $1`, gt.ID)
-	if err != nil {
-		c.JSON(500, gin.H{"error": "failed to get splits"})
-		return
-	}
-	defer splitRows.Close()
-
-	gt.Splits = []SplitDetail{}
-	for splitRows.Next() {
-		var s SplitDetail
-		if err := splitRows.Scan(&s.ID, &s.UserID, &s.Amount, &s.TransactionID); err != nil {
-			c.JSON(500, gin.H{"error": "failed to scan split"})
+	// If splits weren't replaced, fetch them
+	if !hasSplits {
+		splitRows, err := database.Pool.Query(c.Request.Context(),
+			`SELECT id, user_id, amount, transaction_id
+			 FROM group_transaction_splits WHERE group_transaction_id = $1`, gt.ID)
+		if err != nil {
+			c.JSON(500, gin.H{"error": "failed to get splits"})
 			return
 		}
-		gt.Splits = append(gt.Splits, s)
-	}
-	if err := splitRows.Err(); err != nil {
-		c.JSON(500, gin.H{"error": "database iteration failed"})
-		return
+		defer splitRows.Close()
+
+		gt.Splits = []SplitDetail{}
+		for splitRows.Next() {
+			var s SplitDetail
+			if err := splitRows.Scan(&s.ID, &s.UserID, &s.Amount, &s.TransactionID); err != nil {
+				c.JSON(500, gin.H{"error": "failed to scan split"})
+				return
+			}
+			gt.Splits = append(gt.Splits, s)
+		}
+		if err := splitRows.Err(); err != nil {
+			c.JSON(500, gin.H{"error": "database iteration failed"})
+			return
+		}
 	}
 
 	c.JSON(200, gt)
