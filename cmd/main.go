@@ -164,6 +164,7 @@ func main() {
 		// Transactions (personal expenses + income)
 		protected.POST("/transactions", syncGuard, func(c *gin.Context) { transaction.CreateTransaction(c, database) })
 		protected.GET("/transactions", func(c *gin.Context) { transaction.ListTransactions(c, database) })
+		protected.GET("/transactions/export", func(c *gin.Context) { transaction.ExportTransactionsCSV(c, database) })
 		protected.GET("/transactions/:id", func(c *gin.Context) { transaction.GetTransaction(c, database) })
 		protected.PATCH("/transactions/:id", func(c *gin.Context) { transaction.UpdateTransaction(c, database) })
 		protected.DELETE("/transactions/:id", func(c *gin.Context) { transaction.DeleteTransaction(c, database) })
