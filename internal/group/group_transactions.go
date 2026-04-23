@@ -114,7 +114,6 @@ func CreateGroupTransaction(c *gin.Context, database *db.DB) {
 		   notes = EXCLUDED.notes,
 		   is_deleted = FALSE,
 		   updated_at = NOW()
-		 WHERE group_transactions.group_id = EXCLUDED.group_id
 		 RETURNING id, group_id, paid_by_user_id, total_amount, category, date, description, notes, is_deleted, created_at, updated_at`,
 		gtID, groupID, req.PaidByUserID, totalAmount, req.Category, gtDate, req.Description, req.Notes,
 	).Scan(
