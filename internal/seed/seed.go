@@ -393,12 +393,9 @@ func Seed(ctx context.Context, database *db.DB) error {
 		}
 
 		// For each split: create a personal expense transaction and insert the split row.
-		// Payer gets full total amount; non-payers get their split amount.
+		// All members (including the payer) record their split share as the personal transaction amount.
 		for _, sp := range gt.splits {
 			txAmount := sp.amount
-			if sp.userID == gt.paidBy {
-				txAmount = gt.total
-			}
 
 			var memberTxID uuid.UUID
 			if err := database.Pool.QueryRow(ctx,

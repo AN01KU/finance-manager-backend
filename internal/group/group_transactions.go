@@ -133,13 +133,11 @@ func CreateGroupTransaction(c *gin.Context, database *db.DB) {
 	gt.UpdatedAt = helpers.FromTime(rawGTUpdatedAt)
 
 	// For each split: create a personal expense transaction and insert the split row.
-	// Payer gets full total_amount (reflects what they paid); non-payers get their split amount.
+	// All members (including the payer) get their split share as the personal transaction amount.
+	// The full amount the payer fronted is recorded in group_transactions.total_amount.
 	var splits []SplitDetail
 	for i, s := range req.Splits {
 		txAmount := splitAmounts[i]
-		if s.UserID == req.PaidByUserID {
-			txAmount = totalAmount
-		}
 
 		var memberTxID uuid.UUID
 		err = tx.QueryRow(c.Request.Context(),
@@ -595,9 +593,6 @@ func UpdateGroupTransaction(c *gin.Context, database *db.DB) {
 		var splits []SplitDetail
 		for i, s := range req.Splits {
 			txAmount := splitAmounts[i]
-			if s.UserID == paidByUserID {
-				txAmount = newTotalAmount
-			}
 
 			var memberTxID uuid.UUID
 			err = dbTx.QueryRow(c.Request.Context(),
