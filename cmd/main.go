@@ -13,6 +13,7 @@ import (
 	sentrygin "github.com/getsentry/sentry-go/gin"
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
+	"github.com/shopspring/decimal"
 
 	"github.com/yanonymousV2/finance-manager-backend/internal/admin"
 	"github.com/yanonymousV2/finance-manager-backend/internal/auth"
@@ -95,6 +96,12 @@ func main() {
 	if pushClient.Enabled() {
 		log.Println("✓ Push notifications enabled (Pushy)")
 	}
+
+	// Start settlement reminder background job
+	notify.StartSettlementReminders(ctx, database, pushClient, notify.ReminderConfig{
+		ThresholdAmount: decimal.NewFromFloat(cfg.ReminderThresholdAmount),
+		DaysOutstanding: cfg.ReminderDaysOutstanding,
+	})
 
 	// Setup Gin
 	r := gin.Default()
