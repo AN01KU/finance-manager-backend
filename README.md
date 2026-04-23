@@ -63,9 +63,14 @@ go run ./cmd/main.go
 | `DATABASE_URL` | Yes | `postgres://user:password@localhost:5432/finance_manager?sslmode=disable` | Must start with `postgres://` |
 | `JWT_SECRET` | Yes | — | Must be ≥ 32 characters |
 | `PORT` | No | `8080` | |
+| `INVITE_CODE` | No | *(empty)* | If set, signup requires this code |
+| `CORS_ORIGIN` | No | `*` | Set to frontend URL in production |
 | `RATE_LIMIT` | No | `10` | Max requests per window |
 | `RATE_WINDOW_SECONDS` | No | `60` | Rate limit window in seconds |
-| `GIN_MODE` | No | `debug` | Set to `release` in production to enable rate limiting |
+| `ADMIN_USERNAME` | No | `admin` | |
+| `ADMIN_PASSWORD` | Yes (for admin) | — | Admin login disabled if empty |
+| `GIN_MODE` | No | `debug` | Set to `release` in production |
+| `SYNC_SESSION_TTL_DAYS` | No | `90` | |
 
 ## Development
 
@@ -110,6 +115,7 @@ Response `201`:
 ```json
 {
   "token": "eyJhbGci...",
+  "sync_session_id": "a1b2c3d4-...",
   "user": {
     "id": "550e8400-e29b-41d4-a716-446655440000",
     "email": "user@example.com",
@@ -132,6 +138,16 @@ Automatically seeds 15 predefined categories for the new user.
 
 Response `200`: Same shape as signup.
 
+#### POST /auth/logout
+
+Invalidates sync session(s). If `sync_session_id` is provided, only that session is invalidated. Otherwise, all active sessions are invalidated.
+
+```json
+{ "sync_session_id": "optional-uuid" }
+```
+
+Response `200`: `{ "message": "logged out successfully" }`
+
 ---
 
 ### User
@@ -147,6 +163,20 @@ Response `200`:
   "created_at": 1748736000000
 }
 ```
+
+#### PATCH /me
+
+All fields optional (partial update).
+
+```json
+{
+  "username": "newname",
+  "email": "new@example.com",
+  "password": "newpassword"
+}
+```
+
+Response `200`: Updated user object.
 
 #### DELETE /me
 
@@ -281,7 +311,7 @@ Response `200`: `{ "data": [...] }`
 
 Response `200`: Single RecurringTransaction object.
 
-#### PUT /recurring-transactions/:id
+#### PATCH /recurring-transactions/:id
 
 All fields optional. Changing frequency requires the relevant fields (`day_of_month` or `days_of_week`).
 
@@ -338,7 +368,7 @@ Response `200`:
 }
 ```
 
-#### PUT /budgets/:id
+#### PATCH /budgets/:id
 
 ```json
 {
@@ -399,7 +429,7 @@ Response `200`:
 
 Predefined categories are returned first, then custom categories alphabetically.
 
-#### PUT /categories/:id
+#### PATCH /categories/:id
 
 ```json
 {
@@ -540,7 +570,7 @@ Response `200`:
 }
 ```
 
-#### POST /groups/:id/add-member
+#### POST /groups/:id/members
 
 ```json
 {
@@ -683,6 +713,12 @@ Response `201`:
 }
 ```
 
+#### GET /settlements/:id
+
+Returns a single settlement. Requires group membership.
+
+Response `200`: Settlement object.
+
 ---
 
 ### Health
@@ -709,6 +745,7 @@ Response `200`:
 | `username` | VARCHAR(100) | |
 | `password_hash` | VARCHAR(255) | bcrypt |
 | `created_at` | TIMESTAMPTZ | |
+| `updated_at` | TIMESTAMPTZ | |
 
 ### recurring_transactions
 | Column | Type | Notes |
@@ -738,8 +775,7 @@ Response `200`:
 | `type` | VARCHAR(10) | `expense` or `income` |
 | `amount` | DECIMAL(12,2) | > 0 |
 | `category` | VARCHAR(100) | |
-| `date` | DATE | |
-| `time` | TIMESTAMPTZ | Optional |
+| `date` | TIMESTAMPTZ | |
 | `description` | VARCHAR(255) | Optional |
 | `notes` | TEXT | Optional |
 | `recurring_transaction_id` | UUID | FK → recurring_transactions, optional |
@@ -785,6 +821,7 @@ Unique constraints: `(user_id, name)`, `(user_id, predefined_key) WHERE predefin
 | `id` | UUID | Primary key |
 | `name` | VARCHAR(255) | |
 | `created_by` | UUID | FK → users |
+| `is_deleted` | BOOLEAN | Soft delete |
 | `created_at` | TIMESTAMPTZ | |
 | `updated_at` | TIMESTAMPTZ | |
 
@@ -805,7 +842,7 @@ Primary key: `(group_id, user_id)`
 | `paid_by_user_id` | UUID | FK → users |
 | `total_amount` | DECIMAL(12,2) | > 0 |
 | `category` | VARCHAR(100) | |
-| `date` | DATE | |
+| `date` | TIMESTAMPTZ | |
 | `description` | VARCHAR(255) | Optional |
 | `notes` | TEXT | Optional |
 | `is_deleted` | BOOLEAN | Soft delete |
@@ -832,7 +869,9 @@ Unique constraint: `(group_transaction_id, user_id)`
 | `to_user` | UUID | FK → users |
 | `amount` | DECIMAL(12,2) | > 0 |
 | `notes` | TEXT | Optional |
+| `is_deleted` | BOOLEAN | Soft delete |
 | `created_at` | TIMESTAMPTZ | |
+| `updated_at` | TIMESTAMPTZ | |
 
 Constraint: `from_user != to_user`
 

@@ -9,6 +9,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/getsentry/sentry-go"
+	sentrygin "github.com/getsentry/sentry-go/gin"
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
 
@@ -21,6 +23,7 @@ import (
 	"github.com/yanonymousV2/finance-manager-backend/internal/db"
 	"github.com/yanonymousV2/finance-manager-backend/internal/group"
 	"github.com/yanonymousV2/finance-manager-backend/internal/middleware"
+	"github.com/yanonymousV2/finance-manager-backend/internal/notify"
 	"github.com/yanonymousV2/finance-manager-backend/internal/recurring"
 	"github.com/yanonymousV2/finance-manager-backend/internal/seed"
 	"github.com/yanonymousV2/finance-manager-backend/internal/settlement"
@@ -42,6 +45,20 @@ func main() {
 	log.Println("==============================================")
 	log.Println("Finance Manager Backend starting...")
 	log.Println("==============================================")
+
+	// Initialize Sentry for error tracking (optional — skipped if SENTRY_DSN is empty)
+	if cfg.SentryDSN != "" {
+		if err := sentry.Init(sentry.ClientOptions{
+			Dsn:              cfg.SentryDSN,
+			Environment:      gin.Mode(),
+			TracesSampleRate: 0.2,
+		}); err != nil {
+			log.Printf("Warning: Sentry initialization failed: %v", err)
+		} else {
+			defer sentry.Flush(2 * time.Second)
+			log.Println("✓ Sentry error tracking enabled")
+		}
+	}
 
 	ctx, ctxCancel := context.WithCancel(context.Background())
 
@@ -73,6 +90,12 @@ func main() {
 	sync.StartSessionCleanup(ctx, database, cfg.SyncSessionTTLDays)
 	recurring.StartBackgroundGeneration(ctx, database)
 
+	// Initialize push notification client (optional — disabled if PUSHY_API_KEY is empty)
+	pushClient := notify.New(cfg.PushyAPIKey, database.Pool)
+	if pushClient.Enabled() {
+		log.Println("✓ Push notifications enabled (Pushy)")
+	}
+
 	// Setup Gin
 	r := gin.Default()
 	// Disable trusted proxy headers unless explicitly configured.
@@ -82,6 +105,9 @@ func main() {
 	}
 	r.Use(middleware.BodyLimit(1 << 20)) // 1 MiB max request body
 	r.Use(middleware.SecurityHeaders())
+	if cfg.SentryDSN != "" {
+		r.Use(sentrygin.New(sentrygin.Options{Repanic: true}))
+	}
 	r.Use(middleware.RequestLogger())
 	r.Use(middleware.CORS(cfg.CORSOrigin))
 
@@ -180,6 +206,10 @@ func main() {
 		// Settlements
 		protected.POST("/settlements", func(c *gin.Context) { settlement.CreateSettlement(c, database) })
 		protected.GET("/settlements/:id", func(c *gin.Context) { settlement.GetSettlement(c, database) })
+
+		// Device tokens (push notifications)
+		protected.POST("/device-tokens", func(c *gin.Context) { notify.RegisterToken(c, database.Pool) })
+		protected.DELETE("/device-tokens", func(c *gin.Context) { notify.UnregisterToken(c, database.Pool) })
 
 		// Sync
 		protected.POST("/sync/preflight", func(c *gin.Context) { sync.Preflight(c, database) })
