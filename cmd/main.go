@@ -21,6 +21,7 @@ import (
 	"github.com/yanonymousV2/finance-manager-backend/internal/config"
 	"github.com/yanonymousV2/finance-manager-backend/internal/dashboard"
 	"github.com/yanonymousV2/finance-manager-backend/internal/db"
+	"github.com/yanonymousV2/finance-manager-backend/internal/email"
 	"github.com/yanonymousV2/finance-manager-backend/internal/group"
 	"github.com/yanonymousV2/finance-manager-backend/internal/middleware"
 	"github.com/yanonymousV2/finance-manager-backend/internal/notify"
@@ -126,11 +127,18 @@ func main() {
 		c.JSON(200, gin.H{"status": "healthy", "database": "connected"})
 	})
 
+	// Email client (optional — disabled if RESEND_API_KEY is empty)
+	emailClient := email.New(cfg.ResendAPIKey, cfg.FromEmail)
+	if emailClient.Enabled() {
+		log.Println("✓ Email delivery enabled (Resend)")
+	}
+
 	// Auth service
 	authService := &auth.AuthService{
-		DB:         database,
-		JWTSecret:  cfg.JWTSecret,
-		InviteCode: cfg.InviteCode,
+		DB:          database,
+		JWTSecret:   cfg.JWTSecret,
+		InviteCode:  cfg.InviteCode,
+		EmailClient: emailClient,
 	}
 
 	// Auth routes (rate limited)
@@ -148,6 +156,8 @@ func main() {
 	{
 		// Auth (protected)
 		protected.POST("/auth/logout", func(c *gin.Context) { auth.Logout(c, authService) })
+		protected.POST("/auth/verify-email", func(c *gin.Context) { auth.VerifyEmail(c, authService) })
+		protected.POST("/auth/resend-verification", func(c *gin.Context) { auth.ResendVerification(c, authService) })
 
 		// User profile
 		protected.GET("/me", func(c *gin.Context) { auth.GetMe(c, authService) })

@@ -18,6 +18,8 @@ type Config struct {
 	AdminPassword      string
 	SentryDSN          string
 	PushyAPIKey        string
+	ResendAPIKey       string
+	FromEmail          string
 	SyncSessionTTLDays int
 	DBMaxConns         int32
 	DBMinConns         int32
@@ -34,6 +36,8 @@ func Load() *Config {
 		AdminPassword:      getEnv("ADMIN_PASSWORD", ""),
 		SentryDSN:          getEnv("SENTRY_DSN", ""),
 		PushyAPIKey:        getEnv("PUSHY_API_KEY", ""),
+		ResendAPIKey:       getEnv("RESEND_API_KEY", ""),
+		FromEmail:          getEnv("FROM_EMAIL", "Finance Manager <noreply@example.com>"),
 		SyncSessionTTLDays: getEnvInt("SYNC_SESSION_TTL_DAYS", 90),
 		DBMaxConns:         int32(getEnvInt("DB_MAX_CONNS", 25)),
 		DBMinConns:         int32(getEnvInt("DB_MIN_CONNS", 5)),
