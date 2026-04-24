@@ -177,6 +177,185 @@ func TestDashboard_PersonalExpenseUnaffected(t *testing.T) {
 	assert.Equal(t, 2, count)
 }
 
+// ── Unified dashboard field tests ─────────────────────────────────────────────
+
+// insertSettlement records a settlement between two users in a group.
+func insertSettlement(t *testing.T, testDB *db.DB, groupID, fromUser, toUser uuid.UUID, amount decimal.Decimal) {
+	t.Helper()
+	_, err := testDB.Pool.Exec(context.Background(),
+		`INSERT INTO settlements (group_id, from_user, to_user, amount) VALUES ($1, $2, $3, $4)`,
+		groupID, fromUser, toUser, amount)
+	require.NoError(t, err)
+}
+
+// queryGroupExpensesTotal returns the sum of the user's group split shares for the given month.
+func queryGroupExpensesTotal(t *testing.T, testDB *db.DB, userID uuid.UUID, month, year int) decimal.Decimal {
+	t.Helper()
+	startDate := time.Date(year, time.Month(month), 1, 0, 0, 0, 0, time.UTC)
+	endDate := startDate.AddDate(0, 1, 0)
+
+	var total decimal.Decimal
+	err := testDB.Pool.QueryRow(context.Background(),
+		`SELECT COALESCE(SUM(gts.amount), 0)
+		 FROM group_transaction_splits gts
+		 JOIN group_transactions gt ON gts.group_transaction_id = gt.id
+		 WHERE gts.user_id = $1 AND gt.date >= $2 AND gt.date < $3 AND gt.is_deleted = FALSE`,
+		userID, startDate, endDate).Scan(&total)
+	require.NoError(t, err)
+	return total
+}
+
+// queryNetBalances returns (net_owed, net_owing) across all groups for the user.
+// net_owed = total others owe the user; net_owing = total the user owes others.
+func queryNetBalances(t *testing.T, testDB *db.DB, userID uuid.UUID) (decimal.Decimal, decimal.Decimal) {
+	t.Helper()
+
+	var paid, splitOwed, settPaid, settReceived decimal.Decimal
+
+	_ = testDB.Pool.QueryRow(context.Background(),
+		`SELECT COALESCE(SUM(gt.total_amount), 0)
+		 FROM group_transactions gt
+		 JOIN group_members gm ON gm.group_id = gt.group_id AND gm.user_id = $1
+		 WHERE gt.paid_by_user_id = $1 AND gt.is_deleted = FALSE`, userID).Scan(&paid)
+
+	_ = testDB.Pool.QueryRow(context.Background(),
+		`SELECT COALESCE(SUM(gts.amount), 0)
+		 FROM group_transaction_splits gts
+		 JOIN group_transactions gt ON gts.group_transaction_id = gt.id
+		 WHERE gts.user_id = $1 AND gt.is_deleted = FALSE`, userID).Scan(&splitOwed)
+
+	_ = testDB.Pool.QueryRow(context.Background(),
+		`SELECT COALESCE(SUM(amount), 0) FROM settlements WHERE from_user = $1 AND is_deleted = FALSE`, userID).Scan(&settPaid)
+
+	_ = testDB.Pool.QueryRow(context.Background(),
+		`SELECT COALESCE(SUM(amount), 0) FROM settlements WHERE to_user = $1 AND is_deleted = FALSE`, userID).Scan(&settReceived)
+
+	balance := paid.Sub(splitOwed).Add(settPaid).Sub(settReceived)
+
+	zero := decimal.Zero
+	if balance.GreaterThan(zero) {
+		return balance, zero
+	}
+	if balance.LessThan(zero) {
+		return zero, balance.Abs()
+	}
+	return zero, zero
+}
+
+func TestUnifiedDashboard_GroupExpensesTotal(t *testing.T) {
+	testDB := setupDashboardTestDB(t)
+	defer testDB.Close()
+
+	payer := insertUser(t, testDB, "unified-payer@example.com")
+	member := insertUser(t, testDB, "unified-member@example.com")
+	groupID := setupGroup(t, testDB, payer, member)
+
+	april := time.Date(2026, 4, 15, 0, 0, 0, 0, time.UTC)
+
+	// Group expense: $100 total, payer=$60, member=$40
+	insertGroupExpense(t, testDB, groupID, payer, decimal.NewFromFloat(100),
+		map[uuid.UUID]decimal.Decimal{
+			payer:  decimal.NewFromFloat(60),
+			member: decimal.NewFromFloat(40),
+		}, "Dining", april)
+
+	// Personal expense: $25 (should not appear in group_expenses_total)
+	insertPersonalExpense(t, testDB, payer, decimal.NewFromFloat(25), "Groceries", april)
+
+	groupTotal := queryGroupExpensesTotal(t, testDB, payer, 4, 2026)
+	assert.Equal(t, "60", groupTotal.String(),
+		"group_expenses_total should be payer's split share only, not including personal expenses")
+
+	memberGroupTotal := queryGroupExpensesTotal(t, testDB, member, 4, 2026)
+	assert.Equal(t, "40", memberGroupTotal.String(),
+		"member's group_expenses_total should be their split share")
+}
+
+func TestUnifiedDashboard_NetOwed(t *testing.T) {
+	testDB := setupDashboardTestDB(t)
+	defer testDB.Close()
+
+	payer := insertUser(t, testDB, "net-payer@example.com")
+	member := insertUser(t, testDB, "net-member@example.com")
+	groupID := setupGroup(t, testDB, payer, member)
+
+	april := time.Date(2026, 4, 15, 0, 0, 0, 0, time.UTC)
+
+	// Payer fronts $100, member owes $50
+	insertGroupExpense(t, testDB, groupID, payer, decimal.NewFromFloat(100),
+		map[uuid.UUID]decimal.Decimal{
+			payer:  decimal.NewFromFloat(50),
+			member: decimal.NewFromFloat(50),
+		}, "Rent", april)
+
+	netOwed, netOwing := queryNetBalances(t, testDB, payer)
+	assert.Equal(t, "50", netOwed.String(), "payer is owed $50 by member")
+	assert.Equal(t, "0", netOwing.String(), "payer owes nothing")
+
+	memberOwed, memberOwing := queryNetBalances(t, testDB, member)
+	assert.Equal(t, "0", memberOwed.String(), "member is owed nothing")
+	assert.Equal(t, "50", memberOwing.String(), "member owes $50 to payer")
+}
+
+func TestUnifiedDashboard_NetBalanceAfterSettlement(t *testing.T) {
+	testDB := setupDashboardTestDB(t)
+	defer testDB.Close()
+
+	payer := insertUser(t, testDB, "sett-payer@example.com")
+	member := insertUser(t, testDB, "sett-member@example.com")
+	groupID := setupGroup(t, testDB, payer, member)
+
+	april := time.Date(2026, 4, 15, 0, 0, 0, 0, time.UTC)
+
+	// Payer fronts $100, member owes $50
+	insertGroupExpense(t, testDB, groupID, payer, decimal.NewFromFloat(100),
+		map[uuid.UUID]decimal.Decimal{
+			payer:  decimal.NewFromFloat(50),
+			member: decimal.NewFromFloat(50),
+		}, "Rent", april)
+
+	// Member settles the full $50
+	insertSettlement(t, testDB, groupID, member, payer, decimal.NewFromFloat(50))
+
+	netOwed, netOwing := queryNetBalances(t, testDB, payer)
+	assert.Equal(t, "0", netOwed.String(), "after settlement payer is owed nothing")
+	assert.Equal(t, "0", netOwing.String())
+
+	memberOwed, memberOwing := queryNetBalances(t, testDB, member)
+	assert.Equal(t, "0", memberOwed.String())
+	assert.Equal(t, "0", memberOwing.String(), "after settlement member owes nothing")
+}
+
+func TestUnifiedDashboard_GroupExpensesTotalExcludesPreviousMonths(t *testing.T) {
+	testDB := setupDashboardTestDB(t)
+	defer testDB.Close()
+
+	payer := insertUser(t, testDB, "month-scope@example.com")
+	member := insertUser(t, testDB, "month-scope-member@example.com")
+	groupID := setupGroup(t, testDB, payer, member)
+
+	march := time.Date(2026, 3, 15, 0, 0, 0, 0, time.UTC)
+	april := time.Date(2026, 4, 15, 0, 0, 0, 0, time.UTC)
+
+	// March expense: $80
+	insertGroupExpense(t, testDB, groupID, payer, decimal.NewFromFloat(80),
+		map[uuid.UUID]decimal.Decimal{
+			payer:  decimal.NewFromFloat(40),
+			member: decimal.NewFromFloat(40),
+		}, "Dining", march)
+
+	// April expense: $100, payer's share = $60
+	insertGroupExpense(t, testDB, groupID, payer, decimal.NewFromFloat(100),
+		map[uuid.UUID]decimal.Decimal{
+			payer:  decimal.NewFromFloat(60),
+			member: decimal.NewFromFloat(40),
+		}, "Dining", april)
+
+	aprilTotal := queryGroupExpensesTotal(t, testDB, payer, 4, 2026)
+	assert.Equal(t, "60", aprilTotal.String(),
+		"group_expenses_total should only include April transactions, not March")
+}
+
 // TestDashboard_MixedPersonalAndGroupExpenses tests the combined scenario.
 func TestDashboard_MixedPersonalAndGroupExpenses(t *testing.T) {
 	testDB := setupDashboardTestDB(t)

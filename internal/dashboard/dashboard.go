@@ -18,19 +18,23 @@ type CategorySpending struct {
 }
 
 type MonthlyDashboard struct {
-	Month             int                `json:"month"`
-	Year              int                `json:"year"`
-	TotalExpenses     float64            `json:"total_expenses"`
-	ExpenseCount      int                `json:"expense_count"`
-	Budget            *float64           `json:"budget,omitempty"`
-	RemainingBudget   *float64           `json:"remaining_budget,omitempty"`
-	DaysInMonth       int                `json:"days_in_month"`
-	DaysElapsed       int                `json:"days_elapsed"`
-	DaysRemaining     int                `json:"days_remaining"`
-	DailyAverageSpent float64            `json:"daily_average_spent"`
-	ProjectedSpending *float64           `json:"projected_spending,omitempty"`
-	IsOverBudget      bool               `json:"is_over_budget"`
-	CategoryBreakdown []CategorySpending `json:"category_breakdown"`
+	Month              int                `json:"month"`
+	Year               int                `json:"year"`
+	TotalExpenses      float64            `json:"total_expenses"`
+	ExpenseCount       int                `json:"expense_count"`
+	Budget             *float64           `json:"budget,omitempty"`
+	RemainingBudget    *float64           `json:"remaining_budget,omitempty"`
+	DaysInMonth        int                `json:"days_in_month"`
+	DaysElapsed        int                `json:"days_elapsed"`
+	DaysRemaining      int                `json:"days_remaining"`
+	DailyAverageSpent  float64            `json:"daily_average_spent"`
+	ProjectedSpending  *float64           `json:"projected_spending,omitempty"`
+	IsOverBudget       bool               `json:"is_over_budget"`
+	CategoryBreakdown  []CategorySpending `json:"category_breakdown"`
+	GroupExpensesTotal float64            `json:"group_expenses_total"`
+	NetOwed            float64            `json:"net_owed"`
+	NetOwing           float64            `json:"net_owing"`
+	CombinedTotal      float64            `json:"combined_total"`
 }
 
 func GetMonthlyDashboard(c *gin.Context, db *db.DB) {
@@ -155,20 +159,58 @@ func GetMonthlyDashboard(c *gin.Context, db *db.DB) {
 		projectedSpending = &zero
 	}
 
+	// Group expenses total: sum of user's split shares for this month
+	var groupExpensesTotal decimal.Decimal
+	_ = db.Pool.QueryRow(c.Request.Context(),
+		`SELECT COALESCE(SUM(gts.amount), 0)
+		 FROM group_transaction_splits gts
+		 JOIN group_transactions gt ON gts.group_transaction_id = gt.id
+		 WHERE gts.user_id = $1 AND gt.date >= $2 AND gt.date < $3 AND gt.is_deleted = FALSE`,
+		userID, startDate, endDate).Scan(&groupExpensesTotal)
+
+	// Net balances across ALL groups (not month-scoped — running totals)
+	var paid, splitOwed, settPaid, settReceived decimal.Decimal
+	_ = db.Pool.QueryRow(c.Request.Context(),
+		`SELECT COALESCE(SUM(gt.total_amount), 0)
+		 FROM group_transactions gt
+		 JOIN group_members gm ON gm.group_id = gt.group_id AND gm.user_id = $1
+		 WHERE gt.paid_by_user_id = $1 AND gt.is_deleted = FALSE`, userID).Scan(&paid)
+	_ = db.Pool.QueryRow(c.Request.Context(),
+		`SELECT COALESCE(SUM(gts.amount), 0)
+		 FROM group_transaction_splits gts
+		 JOIN group_transactions gt ON gts.group_transaction_id = gt.id
+		 WHERE gts.user_id = $1 AND gt.is_deleted = FALSE`, userID).Scan(&splitOwed)
+	_ = db.Pool.QueryRow(c.Request.Context(),
+		`SELECT COALESCE(SUM(amount), 0) FROM settlements WHERE from_user = $1 AND is_deleted = FALSE`, userID).Scan(&settPaid)
+	_ = db.Pool.QueryRow(c.Request.Context(),
+		`SELECT COALESCE(SUM(amount), 0) FROM settlements WHERE to_user = $1 AND is_deleted = FALSE`, userID).Scan(&settReceived)
+
+	netBalance := paid.Sub(splitOwed).Add(settPaid).Sub(settReceived)
+	var netOwed, netOwing float64
+	if netBalance.IsPositive() {
+		netOwed = netBalance.InexactFloat64()
+	} else if netBalance.IsNegative() {
+		netOwing = netBalance.Abs().InexactFloat64()
+	}
+
 	dashboard := MonthlyDashboard{
-		Month:             month,
-		Year:              year,
-		TotalExpenses:     totalSpent.InexactFloat64(),
-		ExpenseCount:      expenseCount,
-		Budget:            budget,
-		RemainingBudget:   remainingBudget,
-		DaysInMonth:       daysInMonth,
-		DaysElapsed:       daysElapsed,
-		DaysRemaining:     daysRemaining,
-		DailyAverageSpent: dailyAverageSpent,
-		ProjectedSpending: projectedSpending,
-		IsOverBudget:      isOverBudget,
-		CategoryBreakdown: categoryBreakdown,
+		Month:              month,
+		Year:               year,
+		TotalExpenses:      totalSpent.InexactFloat64(),
+		ExpenseCount:       expenseCount,
+		Budget:             budget,
+		RemainingBudget:    remainingBudget,
+		DaysInMonth:        daysInMonth,
+		DaysElapsed:        daysElapsed,
+		DaysRemaining:      daysRemaining,
+		DailyAverageSpent:  dailyAverageSpent,
+		ProjectedSpending:  projectedSpending,
+		IsOverBudget:       isOverBudget,
+		CategoryBreakdown:  categoryBreakdown,
+		GroupExpensesTotal: groupExpensesTotal.InexactFloat64(),
+		NetOwed:            netOwed,
+		NetOwing:           netOwing,
+		CombinedTotal:      totalSpent.InexactFloat64(),
 	}
 
 	c.JSON(200, dashboard)
