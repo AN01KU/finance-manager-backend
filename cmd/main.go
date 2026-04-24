@@ -13,6 +13,7 @@ import (
 	sentrygin "github.com/getsentry/sentry-go/gin"
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
+	"github.com/shopspring/decimal"
 
 	"github.com/yanonymousV2/finance-manager-backend/internal/admin"
 	"github.com/yanonymousV2/finance-manager-backend/internal/auth"
@@ -25,6 +26,7 @@ import (
 	"github.com/yanonymousV2/finance-manager-backend/internal/group"
 	"github.com/yanonymousV2/finance-manager-backend/internal/middleware"
 	"github.com/yanonymousV2/finance-manager-backend/internal/notify"
+	"github.com/yanonymousV2/finance-manager-backend/internal/portal"
 	"github.com/yanonymousV2/finance-manager-backend/internal/recurring"
 	"github.com/yanonymousV2/finance-manager-backend/internal/seed"
 	"github.com/yanonymousV2/finance-manager-backend/internal/settlement"
@@ -97,6 +99,12 @@ func main() {
 		log.Println("✓ Push notifications enabled (Pushy)")
 	}
 
+	// Start settlement reminder background job
+	notify.StartSettlementReminders(ctx, database, pushClient, notify.ReminderConfig{
+		ThresholdAmount: decimal.NewFromFloat(cfg.ReminderThresholdAmount),
+		DaysOutstanding: cfg.ReminderDaysOutstanding,
+	})
+
 	// Setup Gin
 	r := gin.Default()
 	// Disable trusted proxy headers unless explicitly configured.
@@ -117,6 +125,10 @@ func main() {
 	r.Use(admin.LoggerMiddleware(logStore))
 	adminPanel := admin.New(database.Pool, cfg.AdminUsername, cfg.AdminPassword, logStore)
 	adminPanel.RegisterRoutes(r, middleware.RateLimiter())
+
+	// User-facing portal at /dashboard
+	portalApp := portal.New(database.Pool, cfg.JWTSecret)
+	portalApp.RegisterRoutes(r)
 
 	// Health check
 	r.GET("/health", func(c *gin.Context) {
@@ -167,6 +179,7 @@ func main() {
 		// Transactions (personal expenses + income)
 		protected.POST("/transactions", syncGuard, func(c *gin.Context) { transaction.CreateTransaction(c, database) })
 		protected.GET("/transactions", func(c *gin.Context) { transaction.ListTransactions(c, database) })
+		protected.GET("/transactions/export", func(c *gin.Context) { transaction.ExportTransactionsCSV(c, database) })
 		protected.GET("/transactions/:id", func(c *gin.Context) { transaction.GetTransaction(c, database) })
 		protected.PATCH("/transactions/:id", func(c *gin.Context) { transaction.UpdateTransaction(c, database) })
 		protected.DELETE("/transactions/:id", func(c *gin.Context) { transaction.DeleteTransaction(c, database) })

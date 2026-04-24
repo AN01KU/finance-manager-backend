@@ -1,0 +1,55 @@
+{{define "content"}}
+<div class="page-header">
+    <h1>Recurring Transactions</h1>
+    <p>{{.ActiveCount}} active &middot; {{.Total}} total</p>
+</div>
+
+{{if .Recurring}}
+<div class="card" style="padding:0;overflow:hidden;">
+    <table>
+        <thead>
+            <tr>
+                <th>Name</th>
+                <th>Type</th>
+                <th>Category</th>
+                <th>Frequency</th>
+                <th>Next</th>
+                <th>Status</th>
+                <th class="text-right">Amount</th>
+            </tr>
+        </thead>
+        <tbody>
+            {{range .Recurring}}
+            <tr>
+                <td>
+                    <div style="font-weight:500;">{{.Name}}</div>
+                    {{if .Notes}}<div class="text-muted" style="font-size:11px;margin-top:2px;">{{.Notes}}</div>{{end}}
+                </td>
+                <td><span class="badge badge-{{.Type}}">{{.Type}}</span></td>
+                <td class="text-muted">{{.Category}}</td>
+                <td style="text-transform:capitalize;">{{.Frequency}}</td>
+                <td class="text-muted mono" style="font-size:12px;">
+                    {{if .NextDate}}{{.NextDate}}{{else}}<span class="text-muted">—</span>{{end}}
+                </td>
+                <td>
+                    {{if .IsActive}}
+                    <span style="color:var(--accent);font-size:12px;font-weight:500;">Active</span>
+                    {{else}}
+                    <span class="text-muted" style="font-size:12px;">Paused</span>
+                    {{end}}
+                </td>
+                <td class="text-right mono">${{.Amount}}</td>
+            </tr>
+            {{end}}
+        </tbody>
+    </table>
+</div>
+{{else}}
+<div class="card">
+    <div class="empty">
+        <div class="empty-icon">&#8635;</div>
+        <p>No recurring transactions set up yet.<br>Create them from the iOS app.</p>
+    </div>
+</div>
+{{end}}
+{{end}}

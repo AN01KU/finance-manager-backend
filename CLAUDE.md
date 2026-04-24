@@ -59,6 +59,8 @@ docker-compose up --build
 | `ADMIN_PASSWORD` | Yes (for admin) | — | Admin dashboard login password; login disabled if empty |
 | `GIN_MODE` | No | `debug` | Set to `release` in production to enable rate limiting, secure cookies, disable SQL runner, and skip seed data |
 | `SYNC_SESSION_TTL_DAYS` | No | `90` | Days before inactive sync sessions are expired by background cleanup |
+| `REMINDER_THRESHOLD_AMOUNT` | No | `20.0` | Minimum outstanding balance (absolute value) before a settlement reminder is sent |
+| `REMINDER_DAYS_OUTSTANDING` | No | `7` | Minimum days since last group activity before a settlement reminder fires |
 
 Migrations run automatically on startup via `golang-migrate`. No manual migration step needed.
 
