@@ -14,8 +14,8 @@ type Config struct {
 	Port                    string
 	InviteCode              string
 	CORSOrigin              string
-	AdminUsername            string
-	AdminPassword            string
+	AdminUsername           string
+	AdminPassword           string
 	SentryDSN               string
 	PushyAPIKey             string
 	ResendAPIKey            string
@@ -34,8 +34,8 @@ func Load() *Config {
 		Port:                    getEnv("PORT", "8080"),
 		InviteCode:              getEnv("INVITE_CODE", ""),
 		CORSOrigin:              getEnv("CORS_ORIGIN", "*"),
-		AdminUsername:            getEnv("ADMIN_USERNAME", "admin"),
-		AdminPassword:            getEnv("ADMIN_PASSWORD", ""),
+		AdminUsername:           getEnv("ADMIN_USERNAME", "admin"),
+		AdminPassword:           getEnv("ADMIN_PASSWORD", ""),
 		SentryDSN:               getEnv("SENTRY_DSN", ""),
 		PushyAPIKey:             getEnv("PUSHY_API_KEY", ""),
 		ResendAPIKey:            getEnv("RESEND_API_KEY", ""),
