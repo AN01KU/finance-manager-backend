@@ -39,7 +39,7 @@ func New(pool *pgxpool.Pool, jwtSecret string) *Portal {
 	dir := filepath.Join("internal", "portal", "templates")
 	layout := filepath.Join(dir, "layout.html")
 
-	pages := []string{"dashboard", "transactions", "groups", "group_detail"}
+	pages := []string{"dashboard", "transactions", "groups", "group_detail", "categories", "recurring", "budgets", "profile"}
 	tmpls := make(map[string]*template.Template, len(pages)+1)
 	for _, page := range pages {
 		tmpls[page] = template.Must(template.ParseFiles(layout, filepath.Join(dir, page+".html")))
@@ -64,6 +64,10 @@ func (p *Portal) RegisterRoutes(r *gin.Engine) {
 		auth.GET("/transactions/export", p.transactionsExport)
 		auth.GET("/groups", p.groupsPage)
 		auth.GET("/groups/:id", p.groupDetailPage)
+		auth.GET("/categories", p.categoriesPage)
+		auth.GET("/recurring", p.recurringPage)
+		auth.GET("/budgets", p.budgetsPage)
+		auth.GET("/profile", p.profilePage)
 		auth.GET("/logout", p.logout)
 	}
 }
@@ -718,6 +722,315 @@ func (p *Portal) groupDetailPage(c *gin.Context) {
 		"Transactions": transactions,
 		"Settlements":  settlements,
 	})
+}
+
+// ── Categories ────────────────────────────────────────────────────────────────
+
+type portalCategory struct {
+	Name         string
+	Icon         string
+	Color        string
+	IsPredefined bool
+	IsHidden     bool
+	TxCount      int
+	TotalSpent   string
+}
+
+func (p *Portal) categoriesPage(c *gin.Context) {
+	userID, username, email := p.currentUser(c)
+
+	rows, err := p.pool.Query(c.Request.Context(),
+		`SELECT cc.name, cc.icon, cc.color, cc.is_predefined, cc.is_hidden,
+		        COUNT(t.id) AS tx_count,
+		        COALESCE(SUM(CASE WHEN t.type='expense' THEN t.amount ELSE 0 END), 0) AS total_spent
+		 FROM custom_categories cc
+		 LEFT JOIN transactions t ON t.user_id=cc.user_id AND t.category=cc.name AND t.is_deleted=FALSE
+		 WHERE cc.user_id=$1
+		 GROUP BY cc.name, cc.icon, cc.color, cc.is_predefined, cc.is_hidden
+		 ORDER BY cc.is_predefined ASC, cc.name ASC`, userID)
+	if err != nil {
+		log.Printf("[PORTAL] categoriesPage: %v", err)
+		p.render(c, "categories", gin.H{"Title": "Categories", "Active": "categories", "Username": username, "Email": email})
+		return
+	}
+	defer rows.Close()
+
+	var categories []portalCategory
+	customCount := 0
+	for rows.Next() {
+		var r portalCategory
+		var totalSpent float64
+		if rows.Scan(&r.Name, &r.Icon, &r.Color, &r.IsPredefined, &r.IsHidden, &r.TxCount, &totalSpent) == nil {
+			if totalSpent > 0 {
+				r.TotalSpent = fmt.Sprintf("%.2f", totalSpent)
+			}
+			if !r.IsPredefined {
+				customCount++
+			}
+			categories = append(categories, r)
+		}
+	}
+
+	p.render(c, "categories", gin.H{
+		"Title":       "Categories",
+		"Active":      "categories",
+		"Username":    username,
+		"Email":       email,
+		"Categories":  categories,
+		"Total":       len(categories),
+		"CustomCount": customCount,
+	})
+}
+
+// ── Recurring ─────────────────────────────────────────────────────────────────
+
+type portalRecurring struct {
+	Name      string
+	Type      string
+	Category  string
+	Frequency string
+	Amount    string
+	Notes     string
+	IsActive  bool
+	NextDate  string
+}
+
+func (p *Portal) recurringPage(c *gin.Context) {
+	userID, username, email := p.currentUser(c)
+
+	rows, err := p.pool.Query(c.Request.Context(),
+		`SELECT name, type, category, frequency, amount, COALESCE(notes,''), is_active,
+		        last_added_date, start_date, end_date
+		 FROM recurring_transactions WHERE user_id=$1 ORDER BY is_active DESC, name ASC`, userID)
+	if err != nil {
+		log.Printf("[PORTAL] recurringPage: %v", err)
+		p.render(c, "recurring", gin.H{"Title": "Recurring", "Active": "recurring", "Username": username, "Email": email})
+		return
+	}
+	defer rows.Close()
+
+	var recurring []portalRecurring
+	activeCount := 0
+	for rows.Next() {
+		var r portalRecurring
+		var amount float64
+		var lastAdded *time.Time
+		var startDate time.Time
+		var endDate *time.Time
+		if rows.Scan(&r.Name, &r.Type, &r.Category, &r.Frequency, &amount, &r.Notes, &r.IsActive, &lastAdded, &startDate, &endDate) == nil {
+			r.Amount = fmt.Sprintf("%.2f", amount)
+			if r.IsActive {
+				activeCount++
+				// Compute approximate next date based on frequency and last_added_date
+				base := startDate
+				if lastAdded != nil {
+					base = *lastAdded
+				}
+				next := nextOccurrence(base, r.Frequency)
+				if endDate == nil || next.Before(*endDate) {
+					r.NextDate = next.Format("Jan 2, 2006")
+				}
+			}
+			recurring = append(recurring, r)
+		}
+	}
+
+	p.render(c, "recurring", gin.H{
+		"Title":       "Recurring",
+		"Active":      "recurring",
+		"Username":    username,
+		"Email":       email,
+		"Recurring":   recurring,
+		"Total":       len(recurring),
+		"ActiveCount": activeCount,
+	})
+}
+
+// nextOccurrence returns the approximate next occurrence date for a recurring transaction.
+func nextOccurrence(base time.Time, frequency string) time.Time {
+	switch frequency {
+	case "daily":
+		return base.AddDate(0, 0, 1)
+	case "weekly":
+		return base.AddDate(0, 0, 7)
+	case "monthly":
+		return base.AddDate(0, 1, 0)
+	case "yearly":
+		return base.AddDate(1, 0, 0)
+	default:
+		return base.AddDate(0, 1, 0)
+	}
+}
+
+// ── Budgets ───────────────────────────────────────────────────────────────────
+
+type portalBudget struct {
+	MonthName   string
+	Year        int
+	BudgetLimit string
+	Spent       string
+	Remaining   string
+	Pct         int
+	IsOver      bool
+}
+
+func (p *Portal) budgetsPage(c *gin.Context) {
+	userID, username, email := p.currentUser(c)
+
+	rows, err := p.pool.Query(c.Request.Context(),
+		`SELECT mb.year, mb.month, mb.budget_limit,
+		        COALESCE((SELECT SUM(t.amount) FROM transactions t
+		                  WHERE t.user_id=mb.user_id AND t.type='expense'
+		                    AND EXTRACT(YEAR FROM t.date)=mb.year
+		                    AND EXTRACT(MONTH FROM t.date)=mb.month
+		                    AND t.is_deleted=FALSE), 0) AS spent
+		 FROM monthly_budgets mb
+		 WHERE mb.user_id=$1
+		 ORDER BY mb.year DESC, mb.month DESC`, userID)
+	if err != nil {
+		log.Printf("[PORTAL] budgetsPage: %v", err)
+		p.render(c, "budgets", gin.H{"Title": "Budgets", "Active": "budgets", "Username": username, "Email": email})
+		return
+	}
+	defer rows.Close()
+
+	monthNames := [...]string{"", "January", "February", "March", "April", "May", "June",
+		"July", "August", "September", "October", "November", "December"}
+
+	var budgets []portalBudget
+	for rows.Next() {
+		var year, month int
+		var limit, spent float64
+		if rows.Scan(&year, &month, &limit, &spent) != nil {
+			continue
+		}
+		remaining := limit - spent
+		isOver := spent > limit
+		pct := 0
+		if limit > 0 {
+			p := (spent / limit) * 100
+			if p > 100 {
+				p = 100
+			}
+			pct = int(p)
+		}
+		budgets = append(budgets, portalBudget{
+			MonthName:   monthNames[month],
+			Year:        year,
+			BudgetLimit: fmt.Sprintf("%.2f", limit),
+			Spent:       fmt.Sprintf("%.2f", spent),
+			Remaining:   fmt.Sprintf("%.2f", math.Abs(remaining)),
+			Pct:         pct,
+			IsOver:      isOver,
+		})
+	}
+
+	p.render(c, "budgets", gin.H{
+		"Title":    "Budgets",
+		"Active":   "budgets",
+		"Username": username,
+		"Email":    email,
+		"Budgets":  budgets,
+	})
+}
+
+// ── Profile ───────────────────────────────────────────────────────────────────
+
+type profileTopCategory struct {
+	Category   string
+	TxCount    int
+	TotalSpent string
+}
+
+func (p *Portal) profilePage(c *gin.Context) {
+	userID, username, email := p.currentUser(c)
+
+	// Account creation date
+	var createdAt time.Time
+	_ = p.pool.QueryRow(c.Request.Context(),
+		`SELECT created_at FROM users WHERE id=$1`, userID).Scan(&createdAt)
+
+	accountAge := formatDuration(time.Since(createdAt))
+
+	// Lifetime stats
+	var totalTx int
+	var totalExpenses, totalIncome float64
+	_ = p.pool.QueryRow(c.Request.Context(),
+		`SELECT COUNT(*),
+		        COALESCE(SUM(CASE WHEN type='expense' THEN amount ELSE 0 END),0),
+		        COALESCE(SUM(CASE WHEN type='income' THEN amount ELSE 0 END),0)
+		 FROM transactions WHERE user_id=$1 AND is_deleted=FALSE`, userID,
+	).Scan(&totalTx, &totalExpenses, &totalIncome)
+
+	var groupCount int
+	_ = p.pool.QueryRow(c.Request.Context(),
+		`SELECT COUNT(*) FROM group_members gm JOIN groups g ON g.id=gm.group_id WHERE gm.user_id=$1 AND g.is_deleted=FALSE`, userID,
+	).Scan(&groupCount)
+
+	var recurringCount int
+	_ = p.pool.QueryRow(c.Request.Context(),
+		`SELECT COUNT(*) FROM recurring_transactions WHERE user_id=$1 AND is_active=TRUE`, userID,
+	).Scan(&recurringCount)
+
+	var customCategoryCount int
+	_ = p.pool.QueryRow(c.Request.Context(),
+		`SELECT COUNT(*) FROM custom_categories WHERE user_id=$1 AND is_predefined=FALSE`, userID,
+	).Scan(&customCategoryCount)
+
+	// All-time top categories
+	catRows, _ := p.pool.Query(c.Request.Context(),
+		`SELECT category, COUNT(*), COALESCE(SUM(amount),0)
+		 FROM transactions WHERE user_id=$1 AND type='expense' AND is_deleted=FALSE
+		 GROUP BY category ORDER BY SUM(amount) DESC LIMIT 10`, userID)
+	var topCategories []profileTopCategory
+	if catRows != nil {
+		defer catRows.Close()
+		for catRows.Next() {
+			var r profileTopCategory
+			var spent float64
+			if catRows.Scan(&r.Category, &r.TxCount, &spent) == nil {
+				r.TotalSpent = fmt.Sprintf("%.2f", spent)
+				topCategories = append(topCategories, r)
+			}
+		}
+	}
+
+	p.render(c, "profile", gin.H{
+		"Title":               "Profile",
+		"Active":              "profile",
+		"Username":            username,
+		"Email":               email,
+		"UserID":              userID.String(),
+		"MemberSince":         createdAt.Format("January 2, 2006"),
+		"AccountAge":          accountAge,
+		"TotalTx":             totalTx,
+		"TotalExpenses":       fmt.Sprintf("%.2f", totalExpenses),
+		"TotalIncome":         fmt.Sprintf("%.2f", totalIncome),
+		"GroupCount":          groupCount,
+		"RecurringCount":      recurringCount,
+		"CustomCategoryCount": customCategoryCount,
+		"TopCategories":       topCategories,
+	})
+}
+
+func formatDuration(d time.Duration) string {
+	days := int(d.Hours() / 24)
+	if days < 1 {
+		return "less than a day"
+	}
+	if days < 30 {
+		return fmt.Sprintf("%d days", days)
+	}
+	months := days / 30
+	if months < 12 {
+		return fmt.Sprintf("%d months", months)
+	}
+	years := months / 12
+	rem := months % 12
+	if rem == 0 {
+		return fmt.Sprintf("%d years", years)
+	}
+	return fmt.Sprintf("%d years, %d months", years, rem)
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

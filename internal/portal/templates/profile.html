@@ -1,0 +1,92 @@
+{{define "content"}}
+<div class="page-header">
+    <h1>Profile</h1>
+    <p>Your account details</p>
+</div>
+
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;">
+    <!-- Account info -->
+    <div class="card">
+        <div class="card-title">Account</div>
+        <div style="display:flex;align-items:center;gap:16px;margin-bottom:20px;">
+            <div style="width:56px;height:56px;border-radius:50%;background:var(--accent-light);color:var(--accent-dark);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:22px;flex-shrink:0;">
+                {{slice .Username 0 1}}
+            </div>
+            <div>
+                <div style="font-size:16px;font-weight:600;">{{.Username}}</div>
+                <div style="font-size:13px;color:var(--text2);">{{.Email}}</div>
+            </div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:12px;">
+            <div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);">
+                <span class="text-muted" style="font-size:13px;">Member since</span>
+                <span style="font-size:13px;font-weight:500;">{{.MemberSince}}</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);">
+                <span class="text-muted" style="font-size:13px;">Account age</span>
+                <span style="font-size:13px;font-weight:500;">{{.AccountAge}}</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;padding:10px 0;">
+                <span class="text-muted" style="font-size:13px;">User ID</span>
+                <span class="mono text-muted" style="font-size:11px;">{{.UserID}}</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Activity summary -->
+    <div class="card">
+        <div class="card-title">Activity Summary</div>
+        <div style="display:flex;flex-direction:column;gap:4px;">
+            <div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);">
+                <span class="text-muted" style="font-size:13px;">Total transactions</span>
+                <span style="font-size:13px;font-weight:600;">{{.TotalTx}}</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);">
+                <span class="text-muted" style="font-size:13px;">Total expenses</span>
+                <span style="font-size:13px;font-weight:600;color:var(--danger);">${{.TotalExpenses}}</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);">
+                <span class="text-muted" style="font-size:13px;">Total income</span>
+                <span style="font-size:13px;font-weight:600;color:var(--income);">${{.TotalIncome}}</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);">
+                <span class="text-muted" style="font-size:13px;">Groups joined</span>
+                <span style="font-size:13px;font-weight:600;">{{.GroupCount}}</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);">
+                <span class="text-muted" style="font-size:13px;">Recurring rules</span>
+                <span style="font-size:13px;font-weight:600;">{{.RecurringCount}}</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;padding:10px 0;">
+                <span class="text-muted" style="font-size:13px;">Custom categories</span>
+                <span style="font-size:13px;font-weight:600;">{{.CustomCategoryCount}}</span>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Top categories all time -->
+{{if .TopCategories}}
+<div class="card">
+    <div class="card-title">All-Time Top Categories</div>
+    <table>
+        <thead>
+            <tr>
+                <th>Category</th>
+                <th class="text-right">Transactions</th>
+                <th class="text-right">Total Spent</th>
+            </tr>
+        </thead>
+        <tbody>
+            {{range .TopCategories}}
+            <tr>
+                <td style="font-weight:500;">{{.Category}}</td>
+                <td class="text-right text-muted">{{.TxCount}}</td>
+                <td class="text-right mono">${{.TotalSpent}}</td>
+            </tr>
+            {{end}}
+        </tbody>
+    </table>
+</div>
+{{end}}
+{{end}}

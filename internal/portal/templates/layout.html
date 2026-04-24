@@ -164,6 +164,18 @@
             <a href="/dashboard/groups" {{if eq .Active "groups"}}class="active"{{end}}>
                 <span class="nav-icon">&#9825;</span> Groups
             </a>
+            <a href="/dashboard/recurring" {{if eq .Active "recurring"}}class="active"{{end}}>
+                <span class="nav-icon">&#8635;</span> Recurring
+            </a>
+            <a href="/dashboard/budgets" {{if eq .Active "budgets"}}class="active"{{end}}>
+                <span class="nav-icon">&#127880;</span> Budgets
+            </a>
+            <a href="/dashboard/categories" {{if eq .Active "categories"}}class="active"{{end}}>
+                <span class="nav-icon">&#9965;</span> Categories
+            </a>
+            <a href="/dashboard/profile" {{if eq .Active "profile"}}class="active"{{end}}>
+                <span class="nav-icon">&#9998;</span> Profile
+            </a>
         </nav>
         {{if .Username}}
         <div class="sidebar-user">
