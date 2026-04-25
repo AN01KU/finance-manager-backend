@@ -113,8 +113,10 @@ func Signup(c *gin.Context, service *AuthService) {
 	// Email verification flow:
 	// - If no email client is configured (e.g. dev/debug mode with no Resend key),
 	//   auto-verify the user so they aren't stuck unable to receive a code.
+	// - Test accounts (@test.com) are auto-verified to avoid wasting email quota.
 	// - Otherwise, send the verification code; user must call /auth/verify-email.
-	if service.EmailClient == nil || !service.EmailClient.Enabled() {
+	isTestEmail := strings.HasSuffix(strings.ToLower(u.Email), "@test.com")
+	if service.EmailClient == nil || !service.EmailClient.Enabled() || isTestEmail {
 		if _, err := database.Pool.Exec(c.Request.Context(),
 			`UPDATE users SET email_verified = TRUE, updated_at = NOW() WHERE id = $1`, u.ID); err != nil {
 			fmt.Printf("[AUTH] failed to auto-verify user %s: %v\n", u.ID, err)
