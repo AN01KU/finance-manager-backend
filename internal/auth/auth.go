@@ -92,8 +92,8 @@ func Signup(c *gin.Context, service *AuthService) {
 	var u user.User
 	var rawCreatedAt time.Time
 	err = database.Pool.QueryRow(c.Request.Context(),
-		"INSERT INTO users (email, username, password_hash) VALUES ($1, $2, $3) RETURNING id, email, username, email_verified, created_at",
-		req.Email, req.Username, string(hash)).Scan(&u.ID, &u.Email, &u.Username, &u.EmailVerified, &rawCreatedAt)
+		"INSERT INTO users (email, username, password_hash) VALUES ($1, $2, $3) RETURNING id, email, username, currency, email_verified, created_at",
+		req.Email, req.Username, string(hash)).Scan(&u.ID, &u.Email, &u.Username, &u.Currency, &u.EmailVerified, &rawCreatedAt)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "failed to create user"})
 		return
@@ -140,8 +140,8 @@ func GetMe(c *gin.Context, service *AuthService) {
 	var u user.User
 	var rawCreatedAt time.Time
 	err := service.DB.Pool.QueryRow(c.Request.Context(),
-		"SELECT id, email, username, email_verified, created_at FROM users WHERE id = $1", userID).Scan(
-		&u.ID, &u.Email, &u.Username, &u.EmailVerified, &rawCreatedAt)
+		"SELECT id, email, username, currency, email_verified, created_at FROM users WHERE id = $1", userID).Scan(
+		&u.ID, &u.Email, &u.Username, &u.Currency, &u.EmailVerified, &rawCreatedAt)
 	if err != nil {
 		c.JSON(404, gin.H{"error": "user not found"})
 		return
@@ -168,8 +168,8 @@ func Login(c *gin.Context, service *AuthService) {
 	var u user.User
 	var rawCreatedAt time.Time
 	err := database.Pool.QueryRow(c.Request.Context(),
-		"SELECT id, email, username, password_hash, email_verified, created_at FROM users WHERE email = $1", req.Email).Scan(
-		&u.ID, &u.Email, &u.Username, &u.PasswordHash, &u.EmailVerified, &rawCreatedAt)
+		"SELECT id, email, username, password_hash, currency, email_verified, created_at FROM users WHERE email = $1", req.Email).Scan(
+		&u.ID, &u.Email, &u.Username, &u.PasswordHash, &u.Currency, &u.EmailVerified, &rawCreatedAt)
 	if err != nil {
 		c.JSON(401, gin.H{"error": "invalid credentials"})
 		return
@@ -247,6 +247,7 @@ type UpdateMeRequest struct {
 	Username *string `json:"username,omitempty" validate:"omitempty,min=3"`
 	Email    *string `json:"email,omitempty" validate:"omitempty,email"`
 	Password *string `json:"password,omitempty" validate:"omitempty,min=6"`
+	Currency *string `json:"currency,omitempty" validate:"omitempty,len=3"`
 }
 
 func UpdateMe(c *gin.Context, service *AuthService) {
@@ -272,7 +273,7 @@ func UpdateMe(c *gin.Context, service *AuthService) {
 		return
 	}
 
-	if req.Username == nil && req.Email == nil && req.Password == nil {
+	if req.Username == nil && req.Email == nil && req.Password == nil && req.Currency == nil {
 		c.JSON(400, gin.H{"error": "no fields to update"})
 		return
 	}
@@ -317,15 +318,21 @@ func UpdateMe(c *gin.Context, service *AuthService) {
 		n++
 	}
 
+	if req.Currency != nil {
+		query += fmt.Sprintf(` currency = $%d,`, n)
+		args = append(args, *req.Currency)
+		n++
+	}
+
 	// Add updated_at and remove trailing comma, then add WHERE + RETURNING
 	query += ` updated_at = NOW()`
-	query += fmt.Sprintf(` WHERE id = $%d RETURNING id, email, username, email_verified, created_at`, n)
+	query += fmt.Sprintf(` WHERE id = $%d RETURNING id, email, username, currency, email_verified, created_at`, n)
 	args = append(args, userID)
 
 	var u user.User
 	var rawCreatedAt time.Time
 	err := service.DB.Pool.QueryRow(c.Request.Context(), query, args...).Scan(
-		&u.ID, &u.Email, &u.Username, &u.EmailVerified, &rawCreatedAt)
+		&u.ID, &u.Email, &u.Username, &u.Currency, &u.EmailVerified, &rawCreatedAt)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "failed to update user"})
 		return

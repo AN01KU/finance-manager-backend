@@ -43,11 +43,11 @@
             </div>
             <div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);">
                 <span class="text-muted" style="font-size:13px;">Total expenses</span>
-                <span style="font-size:13px;font-weight:600;color:var(--danger);">${{.TotalExpenses}}</span>
+                <span style="font-size:13px;font-weight:600;color:var(--danger);">{{$.CurrencySymbol}}{{.TotalExpenses}}</span>
             </div>
             <div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);">
                 <span class="text-muted" style="font-size:13px;">Total income</span>
-                <span style="font-size:13px;font-weight:600;color:var(--income);">${{.TotalIncome}}</span>
+                <span style="font-size:13px;font-weight:600;color:var(--income);">{{$.CurrencySymbol}}{{.TotalIncome}}</span>
             </div>
             <div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);">
                 <span class="text-muted" style="font-size:13px;">Groups joined</span>
@@ -82,7 +82,7 @@
             <tr>
                 <td style="font-weight:500;">{{.Category}}</td>
                 <td class="text-right text-muted">{{.TxCount}}</td>
-                <td class="text-right mono">${{.TotalSpent}}</td>
+                <td class="text-right mono">{{$.CurrencySymbol}}{{.TotalSpent}}</td>
             </tr>
             {{end}}
         </tbody>

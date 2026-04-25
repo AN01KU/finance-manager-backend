@@ -127,6 +127,13 @@ func (p *Portal) logout(c *gin.Context) {
 	c.Redirect(http.StatusFound, "/dashboard/login")
 }
 
+type portalUser struct {
+	ID             uuid.UUID
+	Username       string
+	Email          string
+	CurrencySymbol string
+}
+
 func (p *Portal) authMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		tok, err := c.Cookie(cookieName)
@@ -141,7 +148,14 @@ func (p *Portal) authMiddleware() gin.HandlerFunc {
 			c.Abort()
 			return
 		}
-		c.Set("portal_user_id", userID)
+		var u portalUser
+		u.ID = userID
+		var currency string
+		_ = p.pool.QueryRow(c.Request.Context(),
+			`SELECT username, email, currency FROM users WHERE id = $1`, u.ID,
+		).Scan(&u.Username, &u.Email, &currency)
+		u.CurrencySymbol = currencySymbol(currency)
+		c.Set("portal_user", u)
 		c.Next()
 	}
 }
@@ -176,16 +190,40 @@ func (p *Portal) validateJWT(tokenStr string) uuid.UUID {
 	return claims.UserID
 }
 
-func (p *Portal) currentUser(c *gin.Context) (uuid.UUID, string, string) {
-	uid, _ := c.Get("portal_user_id")
-	userID, _ := uid.(uuid.UUID)
+func (p *Portal) currentUser(c *gin.Context) portalUser {
+	u, _ := c.Get("portal_user")
+	pu, _ := u.(portalUser)
+	return pu
+}
 
-	var username, email string
-	_ = p.pool.QueryRow(c.Request.Context(),
-		`SELECT username, email FROM users WHERE id = $1`, userID,
-	).Scan(&username, &email)
-
-	return userID, username, email
+func currencySymbol(code string) string {
+	switch code {
+	case "USD":
+		return "$"
+	case "EUR":
+		return "€"
+	case "GBP":
+		return "£"
+	case "JPY":
+		return "¥"
+	case "INR":
+		return "₹"
+	case "AUD":
+		return "A$"
+	case "CAD":
+		return "C$"
+	case "CHF":
+		return "Fr"
+	case "CNY":
+		return "¥"
+	case "SGD":
+		return "S$"
+	default:
+		if code == "" {
+			return "₹"
+		}
+		return code
+	}
 }
 
 // ── Dashboard ────────────────────────────────────────────────────────────────
@@ -214,7 +252,7 @@ type dashRecentTx struct {
 }
 
 func (p *Portal) dashboardPage(c *gin.Context) {
-	userID, username, email := p.currentUser(c)
+	u := p.currentUser(c)
 	now := time.Now()
 	monthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
 	monthEnd := monthStart.AddDate(0, 1, 0)
@@ -225,21 +263,21 @@ func (p *Portal) dashboardPage(c *gin.Context) {
 	_ = p.pool.QueryRow(c.Request.Context(),
 		`SELECT COALESCE(SUM(amount),0), COUNT(*) FROM transactions
 		 WHERE user_id=$1 AND type='expense' AND date>=$2 AND date<$3 AND is_deleted=FALSE`,
-		userID, monthStart, monthEnd).Scan(&totalExpenses, &expenseCount)
+		u.ID, monthStart, monthEnd).Scan(&totalExpenses, &expenseCount)
 
 	// Total income this month
 	var totalIncome float64
 	_ = p.pool.QueryRow(c.Request.Context(),
 		`SELECT COALESCE(SUM(amount),0) FROM transactions
 		 WHERE user_id=$1 AND type='income' AND date>=$2 AND date<$3 AND is_deleted=FALSE`,
-		userID, monthStart, monthEnd).Scan(&totalIncome)
+		u.ID, monthStart, monthEnd).Scan(&totalIncome)
 
 	// Budget
 	var budgetLimit float64
 	hasBudget := false
 	err := p.pool.QueryRow(c.Request.Context(),
 		`SELECT budget_limit FROM monthly_budgets WHERE user_id=$1 AND month=$2 AND year=$3`,
-		userID, int(now.Month()), now.Year()).Scan(&budgetLimit)
+		u.ID, int(now.Month()), now.Year()).Scan(&budgetLimit)
 	if err == nil {
 		hasBudget = true
 	}
@@ -260,7 +298,7 @@ func (p *Portal) dashboardPage(c *gin.Context) {
 		`SELECT category, COALESCE(SUM(amount),0), COUNT(*) FROM transactions
 		 WHERE user_id=$1 AND type='expense' AND date>=$2 AND date<$3 AND is_deleted=FALSE
 		 GROUP BY category ORDER BY SUM(amount) DESC LIMIT 8`,
-		userID, monthStart, monthEnd)
+		u.ID, monthStart, monthEnd)
 	var categories []dashCategoryRow
 	if catRows != nil {
 		defer catRows.Close()
@@ -281,7 +319,7 @@ func (p *Portal) dashboardPage(c *gin.Context) {
 		 FROM groups g
 		 JOIN group_members gm ON gm.group_id=g.id
 		 WHERE gm.user_id=$1 AND g.is_deleted=FALSE
-		 ORDER BY g.created_at DESC`, userID)
+		 ORDER BY g.created_at DESC`, u.ID)
 	var groupBalances []dashGroupBalance
 	var netOwed, netOwing float64
 	if groupRows != nil {
@@ -293,7 +331,7 @@ func (p *Portal) dashboardPage(c *gin.Context) {
 			if groupRows.Scan(&gid, &gname, &memberCount) != nil {
 				continue
 			}
-			balance := p.computeGroupBalance(c, gid, userID)
+			balance := p.computeGroupBalance(c, gid, u.ID)
 			gb := dashGroupBalance{
 				GroupID:     gid.String(),
 				GroupName:   gname,
@@ -315,7 +353,7 @@ func (p *Portal) dashboardPage(c *gin.Context) {
 	txRows, _ := p.pool.Query(c.Request.Context(),
 		`SELECT type, COALESCE(amount,0), category, COALESCE(description,''), date FROM transactions
 		 WHERE user_id=$1 AND is_deleted=FALSE
-		 ORDER BY date DESC, created_at DESC LIMIT 8`, userID)
+		 ORDER BY date DESC, created_at DESC LIMIT 8`, u.ID)
 	var recentTxs []dashRecentTx
 	if txRows != nil {
 		defer txRows.Close()
@@ -334,8 +372,6 @@ func (p *Portal) dashboardPage(c *gin.Context) {
 	p.render(c, "dashboard", gin.H{
 		"Title":              "Dashboard",
 		"Active":             "dashboard",
-		"Username":           username,
-		"Email":              email,
 		"MonthName":          now.Month().String(),
 		"Year":               now.Year(),
 		"TotalExpenses":      fmt.Sprintf("%.2f", totalExpenses),
@@ -366,7 +402,7 @@ type portalTx struct {
 }
 
 func (p *Portal) transactionsPage(c *gin.Context) {
-	userID, username, email := p.currentUser(c)
+	u := p.currentUser(c)
 
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	if page < 1 {
@@ -376,14 +412,14 @@ func (p *Portal) transactionsPage(c *gin.Context) {
 	filterCategory := c.Query("category")
 
 	query := `SELECT t.type, COALESCE(t.amount,0), t.category, COALESCE(t.description,''), t.date,
-	                 COALESCE(g1.id, g2.id)::text, COALESCE(g1.name, g2.name, ''),
+	                 COALESCE(g1.id::text, g2.id::text, ''), COALESCE(g1.name, g2.name, ''),
 	                 COUNT(*) OVER() AS total
 	          FROM transactions t
 	          LEFT JOIN group_transactions gt ON t.group_transaction_id = gt.id
 	          LEFT JOIN groups g1 ON gt.group_id = g1.id
 	          LEFT JOIN groups g2 ON t.group_id = g2.id
 	          WHERE t.user_id = $1 AND t.is_deleted = FALSE`
-	args := []interface{}{userID}
+	args := []interface{}{u.ID}
 	n := 2
 
 	if filterType != "" {
@@ -418,7 +454,7 @@ func (p *Portal) transactionsPage(c *gin.Context) {
 
 	// Fetch distinct categories for filter dropdown
 	catRows, _ := p.pool.Query(c.Request.Context(),
-		`SELECT DISTINCT category FROM transactions WHERE user_id=$1 AND is_deleted=FALSE ORDER BY category`, userID)
+		`SELECT DISTINCT category FROM transactions WHERE user_id=$1 AND is_deleted=FALSE ORDER BY category`, u.ID)
 	var categories []string
 	if catRows != nil {
 		defer catRows.Close()
@@ -438,8 +474,6 @@ func (p *Portal) transactionsPage(c *gin.Context) {
 	p.render(c, "transactions", gin.H{
 		"Title":          "Transactions",
 		"Active":         "transactions",
-		"Username":       username,
-		"Email":          email,
 		"Transactions":   txs,
 		"Total":          total,
 		"Page":           page,
@@ -455,7 +489,7 @@ func (p *Portal) transactionsPage(c *gin.Context) {
 func (p *Portal) transactionsExport(c *gin.Context) {
 	// Proxy through to the existing CSV export endpoint using the same JWT.
 	// Re-issue the JWT as a Bearer token, then redirect — or just serve the CSV directly.
-	userID, _, _ := p.currentUser(c)
+	u := p.currentUser(c)
 
 	rows, err := p.pool.Query(c.Request.Context(),
 		`SELECT t.type, t.amount, t.category, t.date, COALESCE(t.description,''), COALESCE(t.notes,''),
@@ -465,7 +499,7 @@ func (p *Portal) transactionsExport(c *gin.Context) {
 		 LEFT JOIN groups g1 ON gt.group_id = g1.id
 		 LEFT JOIN groups g2 ON t.group_id = g2.id
 		 WHERE t.user_id=$1 AND t.is_deleted=FALSE
-		 ORDER BY t.date DESC, t.created_at DESC`, userID)
+		 ORDER BY t.date DESC, t.created_at DESC`, u.ID)
 	if err != nil {
 		c.String(500, "export failed")
 		return
@@ -508,7 +542,7 @@ type portalGroup struct {
 }
 
 func (p *Portal) groupsPage(c *gin.Context) {
-	userID, username, email := p.currentUser(c)
+	u := p.currentUser(c)
 
 	rows, err := p.pool.Query(c.Request.Context(),
 		`SELECT g.id, g.name, g.created_at,
@@ -516,10 +550,10 @@ func (p *Portal) groupsPage(c *gin.Context) {
 		 FROM groups g
 		 JOIN group_members gm ON gm.group_id=g.id
 		 WHERE gm.user_id=$1 AND g.is_deleted=FALSE
-		 ORDER BY g.created_at DESC`, userID)
+		 ORDER BY g.created_at DESC`, u.ID)
 	if err != nil {
 		log.Printf("[PORTAL] groupsPage: %v", err)
-		p.render(c, "groups", gin.H{"Title": "Groups", "Active": "groups", "Username": username, "Email": email})
+		p.render(c, "groups", gin.H{"Title": "Groups", "Active": "groups"})
 		return
 	}
 	defer rows.Close()
@@ -548,7 +582,7 @@ func (p *Portal) groupsPage(c *gin.Context) {
 			mRows.Close()
 		}
 
-		balance := p.computeGroupBalance(c, gid, userID)
+		balance := p.computeGroupBalance(c, gid, u.ID)
 		groups = append(groups, portalGroup{
 			GroupID:    gid.String(),
 			Name:       name,
@@ -562,11 +596,9 @@ func (p *Portal) groupsPage(c *gin.Context) {
 	}
 
 	p.render(c, "groups", gin.H{
-		"Title":    "Groups",
-		"Active":   "groups",
-		"Username": username,
-		"Email":    email,
-		"Groups":   groups,
+		"Title":  "Groups",
+		"Active": "groups",
+		"Groups": groups,
 	})
 }
 
@@ -603,7 +635,7 @@ type groupDetailSettlement struct {
 }
 
 func (p *Portal) groupDetailPage(c *gin.Context) {
-	userID, username, email := p.currentUser(c)
+	u := p.currentUser(c)
 
 	gidStr := c.Param("id")
 	gid, err := uuid.Parse(gidStr)
@@ -615,7 +647,7 @@ func (p *Portal) groupDetailPage(c *gin.Context) {
 	// Verify membership
 	var isMember bool
 	_ = p.pool.QueryRow(c.Request.Context(),
-		`SELECT EXISTS(SELECT 1 FROM group_members WHERE group_id=$1 AND user_id=$2)`, gid, userID).Scan(&isMember)
+		`SELECT EXISTS(SELECT 1 FROM group_members WHERE group_id=$1 AND user_id=$2)`, gid, u.ID).Scan(&isMember)
 	if !isMember {
 		c.Redirect(http.StatusFound, "/dashboard/groups")
 		return
@@ -640,7 +672,7 @@ func (p *Portal) groupDetailPage(c *gin.Context) {
 			var mid uuid.UUID
 			var m groupDetailMember
 			if mRows.Scan(&mid, &m.Username, &m.Email) == nil {
-				m.IsCurrentUser = mid == userID
+				m.IsCurrentUser = mid == u.ID
 				members = append(members, m)
 				memberIDs = append(memberIDs, mid)
 			}
@@ -656,7 +688,7 @@ func (p *Portal) groupDetailPage(c *gin.Context) {
 			AmountAbs:     fmt.Sprintf("%.2f", math.Abs(bal)),
 			IsPositive:    bal > 0.005,
 			IsNegative:    bal < -0.005,
-			IsCurrentUser: mid == userID,
+			IsCurrentUser: mid == u.ID,
 		})
 	}
 
@@ -668,7 +700,7 @@ func (p *Portal) groupDetailPage(c *gin.Context) {
 		 FROM group_transactions gt
 		 JOIN users u ON u.id=gt.paid_by_user_id
 		 WHERE gt.group_id=$1 AND gt.is_deleted=FALSE
-		 ORDER BY gt.date DESC LIMIT 30`, gid, userID)
+		 ORDER BY gt.date DESC LIMIT 30`, gid, u.ID)
 	var transactions []groupDetailTx
 	if txRows != nil {
 		defer txRows.Close()
@@ -712,8 +744,6 @@ func (p *Portal) groupDetailPage(c *gin.Context) {
 	p.render(c, "group_detail", gin.H{
 		"Title":        groupName,
 		"Active":       "groups",
-		"Username":     username,
-		"Email":        email,
 		"GroupName":    groupName,
 		"MemberCount":  memberCount,
 		"CreatedAt":    createdAt.Format("Jan 2, 2006"),
@@ -737,7 +767,7 @@ type portalCategory struct {
 }
 
 func (p *Portal) categoriesPage(c *gin.Context) {
-	userID, username, email := p.currentUser(c)
+	u := p.currentUser(c)
 
 	rows, err := p.pool.Query(c.Request.Context(),
 		`SELECT cc.name, cc.icon, cc.color, cc.is_predefined, cc.is_hidden,
@@ -747,10 +777,10 @@ func (p *Portal) categoriesPage(c *gin.Context) {
 		 LEFT JOIN transactions t ON t.user_id=cc.user_id AND t.category=cc.name AND t.is_deleted=FALSE
 		 WHERE cc.user_id=$1
 		 GROUP BY cc.name, cc.icon, cc.color, cc.is_predefined, cc.is_hidden
-		 ORDER BY cc.is_predefined ASC, cc.name ASC`, userID)
+		 ORDER BY cc.is_predefined ASC, cc.name ASC`, u.ID)
 	if err != nil {
 		log.Printf("[PORTAL] categoriesPage: %v", err)
-		p.render(c, "categories", gin.H{"Title": "Categories", "Active": "categories", "Username": username, "Email": email})
+		p.render(c, "categories", gin.H{"Title": "Categories", "Active": "categories"})
 		return
 	}
 	defer rows.Close()
@@ -774,8 +804,6 @@ func (p *Portal) categoriesPage(c *gin.Context) {
 	p.render(c, "categories", gin.H{
 		"Title":       "Categories",
 		"Active":      "categories",
-		"Username":    username,
-		"Email":       email,
 		"Categories":  categories,
 		"Total":       len(categories),
 		"CustomCount": customCount,
@@ -796,15 +824,15 @@ type portalRecurring struct {
 }
 
 func (p *Portal) recurringPage(c *gin.Context) {
-	userID, username, email := p.currentUser(c)
+	u := p.currentUser(c)
 
 	rows, err := p.pool.Query(c.Request.Context(),
 		`SELECT name, type, category, frequency, amount, COALESCE(notes,''), is_active,
 		        last_added_date, start_date, end_date
-		 FROM recurring_transactions WHERE user_id=$1 ORDER BY is_active DESC, name ASC`, userID)
+		 FROM recurring_transactions WHERE user_id=$1 ORDER BY is_active DESC, name ASC`, u.ID)
 	if err != nil {
 		log.Printf("[PORTAL] recurringPage: %v", err)
-		p.render(c, "recurring", gin.H{"Title": "Recurring", "Active": "recurring", "Username": username, "Email": email})
+		p.render(c, "recurring", gin.H{"Title": "Recurring", "Active": "recurring"})
 		return
 	}
 	defer rows.Close()
@@ -838,8 +866,6 @@ func (p *Portal) recurringPage(c *gin.Context) {
 	p.render(c, "recurring", gin.H{
 		"Title":       "Recurring",
 		"Active":      "recurring",
-		"Username":    username,
-		"Email":       email,
 		"Recurring":   recurring,
 		"Total":       len(recurring),
 		"ActiveCount": activeCount,
@@ -875,7 +901,7 @@ type portalBudget struct {
 }
 
 func (p *Portal) budgetsPage(c *gin.Context) {
-	userID, username, email := p.currentUser(c)
+	u := p.currentUser(c)
 
 	rows, err := p.pool.Query(c.Request.Context(),
 		`SELECT mb.year, mb.month, mb.budget_limit,
@@ -886,10 +912,10 @@ func (p *Portal) budgetsPage(c *gin.Context) {
 		                    AND t.is_deleted=FALSE), 0) AS spent
 		 FROM monthly_budgets mb
 		 WHERE mb.user_id=$1
-		 ORDER BY mb.year DESC, mb.month DESC`, userID)
+		 ORDER BY mb.year DESC, mb.month DESC`, u.ID)
 	if err != nil {
 		log.Printf("[PORTAL] budgetsPage: %v", err)
-		p.render(c, "budgets", gin.H{"Title": "Budgets", "Active": "budgets", "Username": username, "Email": email})
+		p.render(c, "budgets", gin.H{"Title": "Budgets", "Active": "budgets"})
 		return
 	}
 	defer rows.Close()
@@ -926,11 +952,9 @@ func (p *Portal) budgetsPage(c *gin.Context) {
 	}
 
 	p.render(c, "budgets", gin.H{
-		"Title":    "Budgets",
-		"Active":   "budgets",
-		"Username": username,
-		"Email":    email,
-		"Budgets":  budgets,
+		"Title":   "Budgets",
+		"Active":  "budgets",
+		"Budgets": budgets,
 	})
 }
 
@@ -943,12 +967,12 @@ type profileTopCategory struct {
 }
 
 func (p *Portal) profilePage(c *gin.Context) {
-	userID, username, email := p.currentUser(c)
+	u := p.currentUser(c)
 
 	// Account creation date
 	var createdAt time.Time
 	_ = p.pool.QueryRow(c.Request.Context(),
-		`SELECT created_at FROM users WHERE id=$1`, userID).Scan(&createdAt)
+		`SELECT created_at FROM users WHERE id=$1`, u.ID).Scan(&createdAt)
 
 	accountAge := formatDuration(time.Since(createdAt))
 
@@ -959,29 +983,29 @@ func (p *Portal) profilePage(c *gin.Context) {
 		`SELECT COUNT(*),
 		        COALESCE(SUM(CASE WHEN type='expense' THEN amount ELSE 0 END),0),
 		        COALESCE(SUM(CASE WHEN type='income' THEN amount ELSE 0 END),0)
-		 FROM transactions WHERE user_id=$1 AND is_deleted=FALSE`, userID,
+		 FROM transactions WHERE user_id=$1 AND is_deleted=FALSE`, u.ID,
 	).Scan(&totalTx, &totalExpenses, &totalIncome)
 
 	var groupCount int
 	_ = p.pool.QueryRow(c.Request.Context(),
-		`SELECT COUNT(*) FROM group_members gm JOIN groups g ON g.id=gm.group_id WHERE gm.user_id=$1 AND g.is_deleted=FALSE`, userID,
+		`SELECT COUNT(*) FROM group_members gm JOIN groups g ON g.id=gm.group_id WHERE gm.user_id=$1 AND g.is_deleted=FALSE`, u.ID,
 	).Scan(&groupCount)
 
 	var recurringCount int
 	_ = p.pool.QueryRow(c.Request.Context(),
-		`SELECT COUNT(*) FROM recurring_transactions WHERE user_id=$1 AND is_active=TRUE`, userID,
+		`SELECT COUNT(*) FROM recurring_transactions WHERE user_id=$1 AND is_active=TRUE`, u.ID,
 	).Scan(&recurringCount)
 
 	var customCategoryCount int
 	_ = p.pool.QueryRow(c.Request.Context(),
-		`SELECT COUNT(*) FROM custom_categories WHERE user_id=$1 AND is_predefined=FALSE`, userID,
+		`SELECT COUNT(*) FROM custom_categories WHERE user_id=$1 AND is_predefined=FALSE`, u.ID,
 	).Scan(&customCategoryCount)
 
 	// All-time top categories
 	catRows, _ := p.pool.Query(c.Request.Context(),
 		`SELECT category, COUNT(*), COALESCE(SUM(amount),0)
 		 FROM transactions WHERE user_id=$1 AND type='expense' AND is_deleted=FALSE
-		 GROUP BY category ORDER BY SUM(amount) DESC LIMIT 10`, userID)
+		 GROUP BY category ORDER BY SUM(amount) DESC LIMIT 10`, u.ID)
 	var topCategories []profileTopCategory
 	if catRows != nil {
 		defer catRows.Close()
@@ -998,9 +1022,7 @@ func (p *Portal) profilePage(c *gin.Context) {
 	p.render(c, "profile", gin.H{
 		"Title":               "Profile",
 		"Active":              "profile",
-		"Username":            username,
-		"Email":               email,
-		"UserID":              userID.String(),
+		"UserID":              u.ID.String(),
 		"MemberSince":         createdAt.Format("January 2, 2006"),
 		"AccountAge":          accountAge,
 		"TotalTx":             totalTx,
@@ -1074,6 +1096,10 @@ func (p *Portal) render(c *gin.Context, name string, data gin.H) {
 		c.String(500, "Unknown template: %s", name)
 		return
 	}
+	u := p.currentUser(c)
+	data["Username"] = u.Username
+	data["Email"] = u.Email
+	data["CurrencySymbol"] = u.CurrencySymbol
 	if err := tmpl.ExecuteTemplate(c.Writer, "layout", data); err != nil {
 		log.Printf("[PORTAL] template error (%s): %v", name, err)
 		c.String(500, "Template error: %v", err)

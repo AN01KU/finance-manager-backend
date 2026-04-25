@@ -20,7 +20,7 @@
                     {{if .IsCurrentUser}}<div style="font-size:11px;color:var(--accent);">you</div>{{end}}
                 </div>
                 <div class="balance-amount {{if .IsPositive}}positive{{else if .IsNegative}}negative{{else}}zero{{end}}">
-                    {{if .IsPositive}}+{{end}}${{.AmountAbs}}
+                    {{if .IsPositive}}+{{end}}{{$.CurrencySymbol}}{{.AmountAbs}}
                 </div>
             </div>
             {{end}}
@@ -73,8 +73,8 @@
                 <td>{{if .Description}}{{.Description}}{{else}}<span class="text-muted">—</span>{{end}}</td>
                 <td>{{.Category}}</td>
                 <td>{{.PaidBy}}</td>
-                <td class="mono">${{.YourShare}}</td>
-                <td class="text-right mono">${{.TotalAmount}}</td>
+                <td class="mono">{{$.CurrencySymbol}}{{.YourShare}}</td>
+                <td class="text-right mono">{{$.CurrencySymbol}}{{.TotalAmount}}</td>
             </tr>
             {{end}}
         </tbody>
@@ -106,7 +106,7 @@
                 <td class="text-muted mono">{{.Date}}</td>
                 <td>{{.FromUser}}</td>
                 <td>{{.ToUser}}</td>
-                <td class="text-right mono">${{.Amount}}</td>
+                <td class="text-right mono">{{$.CurrencySymbol}}{{.Amount}}</td>
             </tr>
             {{end}}
         </tbody>

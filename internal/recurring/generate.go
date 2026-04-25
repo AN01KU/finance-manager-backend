@@ -88,7 +88,7 @@ func GenerateDueTransactions(ctx context.Context, userID uuid.UUID, database *db
 		_, err = tx.Exec(ctx,
 			`INSERT INTO transactions (id, user_id, type, amount, category, date, description, notes, recurring_transaction_id, updated_at)
 			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
-			 ON CONFLICT ON CONSTRAINT uq_transactions_recurring_occurrence DO NOTHING`,
+			 ON CONFLICT (user_id, recurring_transaction_id, date) WHERE recurring_transaction_id IS NOT NULL DO NOTHING`,
 			txID, userID, r.txType, r.amount, r.category, *next, r.name, nil, r.id,
 		)
 		if err != nil {

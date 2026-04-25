@@ -7,7 +7,12 @@ RUN go mod download
 
 COPY . .
 
-RUN CGO_ENABLED=0 GOOS=linux go build -tags release -o finance-manager ./cmd/main.go
+ARG BUILD_TAGS=release
+RUN if [ -n "${BUILD_TAGS}" ]; then \
+      CGO_ENABLED=0 GOOS=linux go build -tags ${BUILD_TAGS} -o finance-manager ./cmd/main.go; \
+    else \
+      CGO_ENABLED=0 GOOS=linux go build -o finance-manager ./cmd/main.go; \
+    fi
 
 FROM debian:bookworm-slim
 

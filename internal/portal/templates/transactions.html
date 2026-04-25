@@ -49,7 +49,7 @@
                     {{else}}<span class="text-muted">—</span>{{end}}
                 </td>
                 <td><span class="badge badge-{{.Type}}">{{.Type}}</span></td>
-                <td class="text-right mono">${{.Amount}}</td>
+                <td class="text-right mono">{{$.CurrencySymbol}}{{.Amount}}</td>
             </tr>
             {{end}}
         </tbody>

@@ -22,7 +22,7 @@
             <tr>
                 <td>
                     <div style="display:flex;align-items:center;gap:10px;">
-                        <div style="width:28px;height:28px;border-radius:6px;background:{{.Color}};display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0;">{{.Icon}}</div>
+                        <div style="width:12px;height:12px;border-radius:3px;background:{{.Color}};flex-shrink:0;"></div>
                         <span style="font-weight:500;">{{.Name}}</span>
                     </div>
                 </td>
@@ -41,7 +41,7 @@
                 </td>
                 <td class="text-right mono">{{.TxCount}}</td>
                 <td class="text-right mono">
-                    {{if .TotalSpent}}${{.TotalSpent}}{{else}}<span class="text-muted">—</span>{{end}}
+                    {{if .TotalSpent}}{{$.CurrencySymbol}}{{.TotalSpent}}{{else}}<span class="text-muted">—</span>{{end}}
                 </td>
                 <td>
                     {{if .IsHidden}}

@@ -20,7 +20,7 @@
             </div>
             <div style="text-align:right;flex-shrink:0;margin-left:16px;">
                 <div class="balance-amount {{if .IsPositive}}positive{{else if .IsNegative}}negative{{else}}zero{{end}}" style="font-size:18px;">
-                    {{if .IsPositive}}+{{end}}${{.AmountAbs}}
+                    {{if .IsPositive}}+{{end}}{{$.CurrencySymbol}}{{.AmountAbs}}
                 </div>
                 <div style="font-size:11px;color:var(--text2);margin-top:2px;">
                     {{if .IsPositive}}owed to you{{else if .IsNegative}}you owe{{else}}all settled{{end}}

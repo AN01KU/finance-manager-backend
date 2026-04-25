@@ -38,7 +38,7 @@
                     <span class="text-muted" style="font-size:12px;">Paused</span>
                     {{end}}
                 </td>
-                <td class="text-right mono">${{.Amount}}</td>
+                <td class="text-right mono">{{$.CurrencySymbol}}{{.Amount}}</td>
             </tr>
             {{end}}
         </tbody>

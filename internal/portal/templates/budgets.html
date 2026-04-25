@@ -20,9 +20,9 @@
             {{range .Budgets}}
             <tr>
                 <td style="font-weight:500;">{{.MonthName}} {{.Year}}</td>
-                <td class="mono">${{.BudgetLimit}}</td>
-                <td class="mono {{if .IsOver}}" style="color:var(--danger);"{{else}}"{{end}}>${{.Spent}}</td>
-                <td class="mono {{if .IsOver}}" style="color:var(--danger);"{{else}}" style="color:var(--accent);"{{end}}>${{.Remaining}}</td>
+                <td class="mono">{{$.CurrencySymbol}}{{.BudgetLimit}}</td>
+                <td class="mono {{if .IsOver}}" style="color:var(--danger);"{{else}}"{{end}}>{{$.CurrencySymbol}}{{.Spent}}</td>
+                <td class="mono {{if .IsOver}}" style="color:var(--danger);"{{else}}" style="color:var(--accent);"{{end}}>{{$.CurrencySymbol}}{{.Remaining}}</td>
                 <td style="min-width:140px;">
                     <div style="display:flex;align-items:center;gap:8px;">
                         <div style="flex:1;background:var(--surface2);border-radius:4px;height:6px;overflow:hidden;">
