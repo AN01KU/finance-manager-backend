@@ -1,13 +1,39 @@
+-- ============================================================================
 -- Users
+-- ============================================================================
 CREATE TABLE users (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     email VARCHAR(255) UNIQUE NOT NULL,
     username VARCHAR(100) NOT NULL,
     password_hash VARCHAR(255) NOT NULL,
-    created_at TIMESTAMPTZ DEFAULT NOW()
+    currency VARCHAR(3) NOT NULL DEFAULT 'INR',
+    email_verified BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- Case-insensitive email uniqueness (defense-in-depth alongside app-level normalization).
+CREATE UNIQUE INDEX users_email_lower_idx ON users (LOWER(email));
+
+-- ============================================================================
+-- Email verification codes
+-- ============================================================================
+CREATE TABLE email_verifications (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    code VARCHAR(6) NOT NULL,
+    expires_at TIMESTAMPTZ NOT NULL,
+    used_at TIMESTAMPTZ,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_email_verifications_user_id ON email_verifications(user_id);
+CREATE INDEX idx_email_verifications_lookup ON email_verifications(user_id, code) WHERE used_at IS NULL;
+
+-- ============================================================================
 -- Recurring transactions (must come before transactions due to FK)
+-- ============================================================================
 CREATE TABLE recurring_transactions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -30,7 +56,9 @@ CREATE TABLE recurring_transactions (
 CREATE INDEX idx_recurring_transactions_user_id ON recurring_transactions(user_id);
 CREATE INDEX idx_recurring_transactions_active ON recurring_transactions(user_id, is_active) WHERE is_active = TRUE;
 
+-- ============================================================================
 -- Personal transactions (expenses + income)
+-- ============================================================================
 CREATE TABLE transactions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -55,8 +83,17 @@ CREATE INDEX idx_transactions_type ON transactions(user_id, type);
 CREATE INDEX idx_transactions_not_deleted ON transactions(user_id, is_deleted) WHERE is_deleted = FALSE;
 CREATE INDEX idx_transactions_settlement ON transactions(settlement_id) WHERE settlement_id IS NOT NULL;
 CREATE INDEX idx_transactions_group_tx_id ON transactions(group_transaction_id) WHERE group_transaction_id IS NOT NULL;
+CREATE INDEX idx_transactions_recurring_tx_id ON transactions(recurring_transaction_id) WHERE recurring_transaction_id IS NOT NULL;
+CREATE INDEX idx_transactions_group_id ON transactions(group_id) WHERE group_id IS NOT NULL;
 
+-- Deduplicate recurring transaction instances
+CREATE UNIQUE INDEX uq_transactions_recurring_occurrence
+    ON transactions (user_id, recurring_transaction_id, date)
+    WHERE recurring_transaction_id IS NOT NULL;
+
+-- ============================================================================
 -- Monthly budgets
+-- ============================================================================
 CREATE TABLE monthly_budgets (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -68,7 +105,9 @@ CREATE TABLE monthly_budgets (
     UNIQUE(user_id, year, month)
 );
 
+-- ============================================================================
 -- Custom categories
+-- ============================================================================
 CREATE TABLE custom_categories (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -86,14 +125,20 @@ CREATE TABLE custom_categories (
 CREATE INDEX idx_custom_categories_user_id ON custom_categories(user_id);
 CREATE UNIQUE INDEX idx_custom_categories_user_predefined_key ON custom_categories(user_id, predefined_key) WHERE predefined_key IS NOT NULL;
 
+-- ============================================================================
 -- Groups
+-- ============================================================================
 CREATE TABLE groups (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name VARCHAR(255) NOT NULL,
     created_by UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+CREATE INDEX idx_groups_not_deleted ON groups(is_deleted) WHERE is_deleted = FALSE;
+CREATE INDEX idx_groups_created_by_not_deleted ON groups(created_by, is_deleted) WHERE is_deleted = FALSE;
 
 CREATE TABLE group_members (
     group_id UUID NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
@@ -102,7 +147,11 @@ CREATE TABLE group_members (
     PRIMARY KEY (group_id, user_id)
 );
 
+CREATE INDEX idx_group_members_user_id ON group_members(user_id);
+
+-- ============================================================================
 -- Group transactions (master record: who paid, full amount)
+-- ============================================================================
 CREATE TABLE group_transactions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     group_id UUID NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
@@ -119,6 +168,7 @@ CREATE TABLE group_transactions (
 
 CREATE INDEX idx_group_transactions_group ON group_transactions(group_id);
 CREATE INDEX idx_group_transactions_not_deleted ON group_transactions(group_id, is_deleted) WHERE is_deleted = FALSE;
+CREATE INDEX idx_group_transactions_paid_by ON group_transactions(paid_by_user_id);
 
 -- Group transaction splits (each member's share)
 CREATE TABLE group_transaction_splits (
@@ -133,17 +183,18 @@ CREATE TABLE group_transaction_splits (
 CREATE INDEX idx_group_splits_group_tx ON group_transaction_splits(group_transaction_id);
 CREATE INDEX idx_group_splits_user ON group_transaction_splits(user_id);
 
--- FK from transactions back to groups
+-- FKs from transactions back to groups / group_transactions
 ALTER TABLE transactions
     ADD CONSTRAINT fk_transactions_group
     FOREIGN KEY (group_id) REFERENCES groups(id) ON DELETE SET NULL;
 
--- FK from transactions back to group_transactions
 ALTER TABLE transactions
     ADD CONSTRAINT fk_transactions_group_tx
     FOREIGN KEY (group_transaction_id) REFERENCES group_transactions(id) ON DELETE SET NULL;
 
+-- ============================================================================
 -- Settlements
+-- ============================================================================
 CREATE TABLE settlements (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     group_id UUID NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
@@ -151,18 +202,24 @@ CREATE TABLE settlements (
     to_user UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     amount DECIMAL(12,2) NOT NULL CHECK (amount > 0),
     notes TEXT,
+    is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
     CHECK (from_user != to_user)
 );
 
 CREATE INDEX idx_settlements_group ON settlements(group_id);
+CREATE INDEX idx_settlements_not_deleted ON settlements(group_id, is_deleted) WHERE is_deleted = FALSE;
+CREATE INDEX idx_settlements_from_user ON settlements(from_user);
+CREATE INDEX idx_settlements_to_user ON settlements(to_user);
 
--- FK from transactions back to settlements
 ALTER TABLE transactions
     ADD CONSTRAINT fk_transactions_settlement
     FOREIGN KEY (settlement_id) REFERENCES settlements(id) ON DELETE SET NULL;
 
+-- ============================================================================
 -- Sync sessions (offline-first sync support)
+-- ============================================================================
 CREATE TABLE sync_sessions (
     id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id             UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -174,15 +231,32 @@ CREATE TABLE sync_sessions (
 
 CREATE INDEX idx_sync_sessions_user_id ON sync_sessions(user_id);
 
--- FK indexes for performance
-CREATE INDEX idx_group_members_user_id ON group_members(user_id);
-CREATE INDEX idx_transactions_recurring_tx_id ON transactions(recurring_transaction_id) WHERE recurring_transaction_id IS NOT NULL;
-CREATE INDEX idx_transactions_group_id ON transactions(group_id) WHERE group_id IS NOT NULL;
-CREATE INDEX idx_settlements_from_user ON settlements(from_user);
-CREATE INDEX idx_settlements_to_user ON settlements(to_user);
-CREATE INDEX idx_group_transactions_paid_by ON group_transactions(paid_by_user_id);
+-- ============================================================================
+-- Device tokens (push notifications)
+-- ============================================================================
+CREATE TABLE device_tokens (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    token TEXT NOT NULL,
+    platform VARCHAR(10) NOT NULL CHECK (platform IN ('ios', 'android', 'web')),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(user_id, token)
+);
 
--- Unique constraint to deduplicate recurring transaction instances
-CREATE UNIQUE INDEX uq_transactions_recurring_occurrence
-    ON transactions (user_id, recurring_transaction_id, date)
-    WHERE recurring_transaction_id IS NOT NULL;
+CREATE INDEX idx_device_tokens_user_id ON device_tokens(user_id);
+CREATE UNIQUE INDEX idx_device_tokens_token ON device_tokens(token);
+
+-- ============================================================================
+-- Admin audit log
+-- ============================================================================
+CREATE TABLE admin_audit_log (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    action TEXT NOT NULL,
+    table_name TEXT,
+    details TEXT,
+    admin_user TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_admin_audit_log_created_at ON admin_audit_log(created_at DESC);

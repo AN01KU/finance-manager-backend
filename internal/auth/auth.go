@@ -3,14 +3,17 @@ package auth
 import (
 	"context"
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"math/big"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/go-playground/validator/v10"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/yanonymousV2/finance-manager-backend/internal/db"
@@ -21,6 +24,12 @@ import (
 )
 
 var validate = validator.New()
+
+// normalizeEmail lowercases and trims an email address so equality / uniqueness
+// checks are case-insensitive and whitespace-insensitive.
+func normalizeEmail(s string) string {
+	return strings.ToLower(strings.TrimSpace(s))
+}
 
 type SignupRequest struct {
 	Email      string `json:"email" validate:"required,email"`
@@ -56,6 +65,8 @@ func Signup(c *gin.Context, service *AuthService) {
 		return
 	}
 
+	req.Email = normalizeEmail(req.Email)
+
 	if err := validate.Struct(req); err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
@@ -69,18 +80,6 @@ func Signup(c *gin.Context, service *AuthService) {
 		}
 	}
 
-	// Check if user exists
-	var count int
-	err := database.Pool.QueryRow(c.Request.Context(), "SELECT COUNT(*) FROM users WHERE email = $1", req.Email).Scan(&count)
-	if err != nil {
-		c.JSON(500, gin.H{"error": "database error"})
-		return
-	}
-	if count > 0 {
-		c.JSON(400, gin.H{"error": "user already exists"})
-		return
-	}
-
 	// Hash password
 	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 	if err != nil {
@@ -88,12 +87,18 @@ func Signup(c *gin.Context, service *AuthService) {
 		return
 	}
 
-	// Insert user
+	// Insert user — rely on the unique constraint to prevent duplicates atomically.
 	var u user.User
 	var rawCreatedAt time.Time
 	err = database.Pool.QueryRow(c.Request.Context(),
-		"INSERT INTO users (email, username, password_hash) VALUES ($1, $2, $3) RETURNING id, email, username, currency, email_verified, created_at",
+		`INSERT INTO users (email, username, password_hash) VALUES ($1, $2, $3)
+		 ON CONFLICT (email) DO NOTHING
+		 RETURNING id, email, username, currency, email_verified, created_at`,
 		req.Email, req.Username, string(hash)).Scan(&u.ID, &u.Email, &u.Username, &u.Currency, &u.EmailVerified, &rawCreatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		c.JSON(400, gin.H{"error": "user already exists"})
+		return
+	}
 	if err != nil {
 		c.JSON(500, gin.H{"error": "failed to create user"})
 		return
@@ -105,8 +110,20 @@ func Signup(c *gin.Context, service *AuthService) {
 		service.OnSignup(c.Request.Context(), u.ID)
 	}
 
-	// Send verification email
-	sendVerificationEmail(c.Request.Context(), service, u.ID, u.Email)
+	// Email verification flow:
+	// - If no email client is configured (e.g. dev/debug mode with no Resend key),
+	//   auto-verify the user so they aren't stuck unable to receive a code.
+	// - Otherwise, send the verification code; user must call /auth/verify-email.
+	if service.EmailClient == nil || !service.EmailClient.Enabled() {
+		if _, err := database.Pool.Exec(c.Request.Context(),
+			`UPDATE users SET email_verified = TRUE, updated_at = NOW() WHERE id = $1`, u.ID); err != nil {
+			fmt.Printf("[AUTH] failed to auto-verify user %s: %v\n", u.ID, err)
+		} else {
+			u.EmailVerified = true
+		}
+	} else {
+		sendVerificationEmail(c.Request.Context(), service, u.ID, u.Email)
+	}
 
 	// Generate token
 	token, err := generateToken(u.ID, u.Email, service.JWTSecret)
@@ -158,6 +175,8 @@ func Login(c *gin.Context, service *AuthService) {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
+
+	req.Email = normalizeEmail(req.Email)
 
 	if err := validate.Struct(req); err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
@@ -289,11 +308,13 @@ func UpdateMe(c *gin.Context, service *AuthService) {
 	}
 
 	if req.Email != nil {
+		normalized := normalizeEmail(*req.Email)
+		req.Email = &normalized
 		// Check email uniqueness
 		var count int
 		err := service.DB.Pool.QueryRow(c.Request.Context(),
 			"SELECT COUNT(*) FROM users WHERE email = $1 AND id != $2",
-			*req.Email, userID).Scan(&count)
+			normalized, userID).Scan(&count)
 		if err != nil {
 			c.JSON(500, gin.H{"error": "database error"})
 			return
@@ -302,8 +323,8 @@ func UpdateMe(c *gin.Context, service *AuthService) {
 			c.JSON(409, gin.H{"error": "email already in use"})
 			return
 		}
-		query += fmt.Sprintf(` email = $%d,`, n)
-		args = append(args, *req.Email)
+		query += fmt.Sprintf(` email = $%d, email_verified = FALSE,`, n)
+		args = append(args, normalized)
 		n++
 	}
 
@@ -451,7 +472,10 @@ func generateToken(userID uuid.UUID, email string, jwtSecret string) (string, er
 // Email Verification
 // ---------------------------------------------------------------------------
 
-const verificationCodeExpiry = 10 * time.Minute
+const (
+	verificationCodeExpiry      = 10 * time.Minute
+	maxVerificationCodeAttempts = 5
+)
 
 type VerifyEmailRequest struct {
 	Code string `json:"code" validate:"required,len=6"`
@@ -467,10 +491,19 @@ func generateCode() (string, error) {
 }
 
 // sendVerificationEmail creates a code and sends it. Best-effort — errors are logged, not returned.
+// Any prior unused codes for this user are invalidated so only the most recent code is valid.
 func sendVerificationEmail(ctx context.Context, service *AuthService, userID uuid.UUID, emailAddr string) {
 	code, err := generateCode()
 	if err != nil {
 		fmt.Printf("[AUTH] failed to generate verification code: %v\n", err)
+		return
+	}
+
+	// Invalidate any older unused codes so only one code is ever live per user.
+	if _, err := service.DB.Pool.Exec(ctx,
+		`UPDATE email_verifications SET used_at = NOW()
+		 WHERE user_id = $1 AND used_at IS NULL`, userID); err != nil {
+		fmt.Printf("[AUTH] failed to invalidate prior verification codes: %v\n", err)
 		return
 	}
 
@@ -522,15 +555,44 @@ func VerifyEmail(c *gin.Context, service *AuthService) {
 		return
 	}
 
-	// Find valid, unused code
-	var codeID uuid.UUID
+	// Look up the most recent live code for this user (regardless of whether
+	// the submitted code matches) so we can enforce per-code attempt limits.
+	var (
+		codeID       uuid.UUID
+		storedCode   string
+		codeAttempts int
+	)
 	err = service.DB.Pool.QueryRow(c.Request.Context(),
-		`SELECT id FROM email_verifications
-		 WHERE user_id = $1 AND code = $2 AND used_at IS NULL AND expires_at > NOW()
+		`SELECT id, code, attempts FROM email_verifications
+		 WHERE user_id = $1 AND used_at IS NULL AND expires_at > NOW()
 		 ORDER BY created_at DESC LIMIT 1`,
-		userID, req.Code,
-	).Scan(&codeID)
+		userID,
+	).Scan(&codeID, &storedCode, &codeAttempts)
 	if err != nil {
+		c.JSON(400, gin.H{"error": "invalid or expired verification code"})
+		return
+	}
+
+	// Already at the attempt cap — invalidate and force the user to request a new code.
+	if codeAttempts >= maxVerificationCodeAttempts {
+		_, _ = service.DB.Pool.Exec(c.Request.Context(),
+			`UPDATE email_verifications SET used_at = NOW() WHERE id = $1`, codeID)
+		c.JSON(429, gin.H{"error": "too many failed attempts; please request a new verification code"})
+		return
+	}
+
+	// Wrong code — record the attempt; if this push hits the cap, invalidate the code.
+	if storedCode != req.Code {
+		newAttempts := codeAttempts + 1
+		if newAttempts >= maxVerificationCodeAttempts {
+			_, _ = service.DB.Pool.Exec(c.Request.Context(),
+				`UPDATE email_verifications SET attempts = $1, used_at = NOW() WHERE id = $2`,
+				newAttempts, codeID)
+			c.JSON(429, gin.H{"error": "too many failed attempts; please request a new verification code"})
+			return
+		}
+		_, _ = service.DB.Pool.Exec(c.Request.Context(),
+			`UPDATE email_verifications SET attempts = $1 WHERE id = $2`, newAttempts, codeID)
 		c.JSON(400, gin.H{"error": "invalid or expired verification code"})
 		return
 	}
