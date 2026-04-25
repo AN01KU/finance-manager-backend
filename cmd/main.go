@@ -9,8 +9,11 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/getsentry/sentry-go"
+	sentrygin "github.com/getsentry/sentry-go/gin"
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
+	"github.com/shopspring/decimal"
 
 	"github.com/yanonymousV2/finance-manager-backend/internal/admin"
 	"github.com/yanonymousV2/finance-manager-backend/internal/auth"
@@ -19,8 +22,11 @@ import (
 	"github.com/yanonymousV2/finance-manager-backend/internal/config"
 	"github.com/yanonymousV2/finance-manager-backend/internal/dashboard"
 	"github.com/yanonymousV2/finance-manager-backend/internal/db"
+	"github.com/yanonymousV2/finance-manager-backend/internal/email"
 	"github.com/yanonymousV2/finance-manager-backend/internal/group"
 	"github.com/yanonymousV2/finance-manager-backend/internal/middleware"
+	"github.com/yanonymousV2/finance-manager-backend/internal/notify"
+	"github.com/yanonymousV2/finance-manager-backend/internal/portal"
 	"github.com/yanonymousV2/finance-manager-backend/internal/recurring"
 	"github.com/yanonymousV2/finance-manager-backend/internal/seed"
 	"github.com/yanonymousV2/finance-manager-backend/internal/settlement"
@@ -42,6 +48,20 @@ func main() {
 	log.Println("==============================================")
 	log.Println("Finance Manager Backend starting...")
 	log.Println("==============================================")
+
+	// Initialize Sentry for error tracking (optional — skipped if SENTRY_DSN is empty)
+	if cfg.SentryDSN != "" {
+		if err := sentry.Init(sentry.ClientOptions{
+			Dsn:              cfg.SentryDSN,
+			Environment:      gin.Mode(),
+			TracesSampleRate: 0.2,
+		}); err != nil {
+			log.Printf("Warning: Sentry initialization failed: %v", err)
+		} else {
+			defer sentry.Flush(2 * time.Second)
+			log.Println("✓ Sentry error tracking enabled")
+		}
+	}
 
 	ctx, ctxCancel := context.WithCancel(context.Background())
 
@@ -73,6 +93,18 @@ func main() {
 	sync.StartSessionCleanup(ctx, database, cfg.SyncSessionTTLDays)
 	recurring.StartBackgroundGeneration(ctx, database)
 
+	// Initialize push notification client (optional — disabled if PUSHY_API_KEY is empty)
+	pushClient := notify.New(cfg.PushyAPIKey, database.Pool)
+	if pushClient.Enabled() {
+		log.Println("✓ Push notifications enabled (Pushy)")
+	}
+
+	// Start settlement reminder background job
+	notify.StartSettlementReminders(ctx, database, pushClient, notify.ReminderConfig{
+		ThresholdAmount: decimal.NewFromFloat(cfg.ReminderThresholdAmount),
+		DaysOutstanding: cfg.ReminderDaysOutstanding,
+	})
+
 	// Setup Gin
 	r := gin.Default()
 	// Disable trusted proxy headers unless explicitly configured.
@@ -82,6 +114,9 @@ func main() {
 	}
 	r.Use(middleware.BodyLimit(1 << 20)) // 1 MiB max request body
 	r.Use(middleware.SecurityHeaders())
+	if cfg.SentryDSN != "" {
+		r.Use(sentrygin.New(sentrygin.Options{Repanic: true}))
+	}
 	r.Use(middleware.RequestLogger())
 	r.Use(middleware.CORS(cfg.CORSOrigin))
 
@@ -90,6 +125,10 @@ func main() {
 	r.Use(admin.LoggerMiddleware(logStore))
 	adminPanel := admin.New(database.Pool, cfg.AdminUsername, cfg.AdminPassword, logStore)
 	adminPanel.RegisterRoutes(r, middleware.RateLimiter())
+
+	// User-facing portal at /dashboard
+	portalApp := portal.New(database.Pool, cfg.JWTSecret)
+	portalApp.RegisterRoutes(r)
 
 	// Health check
 	r.GET("/health", func(c *gin.Context) {
@@ -100,11 +139,18 @@ func main() {
 		c.JSON(200, gin.H{"status": "healthy", "database": "connected"})
 	})
 
+	// Email client (optional — disabled if RESEND_API_KEY is empty)
+	emailClient := email.New(cfg.ResendAPIKey, cfg.FromEmail)
+	if emailClient.Enabled() {
+		log.Println("✓ Email delivery enabled (Resend)")
+	}
+
 	// Auth service
 	authService := &auth.AuthService{
-		DB:         database,
-		JWTSecret:  cfg.JWTSecret,
-		InviteCode: cfg.InviteCode,
+		DB:          database,
+		JWTSecret:   cfg.JWTSecret,
+		InviteCode:  cfg.InviteCode,
+		EmailClient: emailClient,
 	}
 
 	// Auth routes (rate limited)
@@ -122,6 +168,8 @@ func main() {
 	{
 		// Auth (protected)
 		protected.POST("/auth/logout", func(c *gin.Context) { auth.Logout(c, authService) })
+		protected.POST("/auth/verify-email", func(c *gin.Context) { auth.VerifyEmail(c, authService) })
+		protected.POST("/auth/resend-verification", func(c *gin.Context) { auth.ResendVerification(c, authService) })
 
 		// User profile
 		protected.GET("/me", func(c *gin.Context) { auth.GetMe(c, authService) })
@@ -131,6 +179,7 @@ func main() {
 		// Transactions (personal expenses + income)
 		protected.POST("/transactions", syncGuard, func(c *gin.Context) { transaction.CreateTransaction(c, database) })
 		protected.GET("/transactions", func(c *gin.Context) { transaction.ListTransactions(c, database) })
+		protected.GET("/transactions/export", func(c *gin.Context) { transaction.ExportTransactionsCSV(c, database) })
 		protected.GET("/transactions/:id", func(c *gin.Context) { transaction.GetTransaction(c, database) })
 		protected.PATCH("/transactions/:id", func(c *gin.Context) { transaction.UpdateTransaction(c, database) })
 		protected.DELETE("/transactions/:id", func(c *gin.Context) { transaction.DeleteTransaction(c, database) })
@@ -180,6 +229,12 @@ func main() {
 		// Settlements
 		protected.POST("/settlements", func(c *gin.Context) { settlement.CreateSettlement(c, database) })
 		protected.GET("/settlements/:id", func(c *gin.Context) { settlement.GetSettlement(c, database) })
+		protected.DELETE("/settlements/:id", func(c *gin.Context) { settlement.DeleteSettlement(c, database) })
+		protected.PATCH("/settlements/:id", func(c *gin.Context) { settlement.UpdateSettlement(c, database) })
+
+		// Device tokens (push notifications)
+		protected.POST("/device-tokens", func(c *gin.Context) { notify.RegisterToken(c, database.Pool) })
+		protected.DELETE("/device-tokens", func(c *gin.Context) { notify.UnregisterToken(c, database.Pool) })
 
 		// Sync
 		protected.POST("/sync/preflight", func(c *gin.Context) { sync.Preflight(c, database) })

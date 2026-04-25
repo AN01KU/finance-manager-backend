@@ -234,6 +234,14 @@ func ListTransactions(c *gin.Context, database *db.DB) {
 		}
 	}
 
+	if c.Query("exclude_group") == "true" {
+		query += " AND t.group_transaction_id IS NULL"
+	}
+
+	if c.Query("exclude_settlement") == "true" {
+		query += " AND t.settlement_id IS NULL"
+	}
+
 	query += fmt.Sprintf(" ORDER BY t.date DESC, t.created_at DESC LIMIT $%d OFFSET $%d", n, n+1)
 	args = append(args, limit, offset)
 

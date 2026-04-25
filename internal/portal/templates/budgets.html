@@ -1,0 +1,47 @@
+{{define "content"}}
+<div class="page-header">
+    <h1>Budgets</h1>
+    <p>Monthly spending limits</p>
+</div>
+
+{{if .Budgets}}
+<div class="card" style="padding:0;overflow:hidden;">
+    <table>
+        <thead>
+            <tr>
+                <th>Month</th>
+                <th>Budget</th>
+                <th>Spent</th>
+                <th>Remaining</th>
+                <th>Progress</th>
+            </tr>
+        </thead>
+        <tbody>
+            {{range .Budgets}}
+            <tr>
+                <td style="font-weight:500;">{{.MonthName}} {{.Year}}</td>
+                <td class="mono">{{$.CurrencySymbol}}{{.BudgetLimit}}</td>
+                <td class="mono {{if .IsOver}}" style="color:var(--danger);"{{else}}"{{end}}>{{$.CurrencySymbol}}{{.Spent}}</td>
+                <td class="mono {{if .IsOver}}" style="color:var(--danger);"{{else}}" style="color:var(--accent);"{{end}}>{{$.CurrencySymbol}}{{.Remaining}}</td>
+                <td style="min-width:140px;">
+                    <div style="display:flex;align-items:center;gap:8px;">
+                        <div style="flex:1;background:var(--surface2);border-radius:4px;height:6px;overflow:hidden;">
+                            <div style="height:100%;border-radius:4px;width:{{.Pct}}%;background:{{if .IsOver}}var(--danger){{else}}var(--accent){{end}};"></div>
+                        </div>
+                        <span class="text-muted mono" style="font-size:11px;width:34px;text-align:right;">{{.Pct}}%</span>
+                    </div>
+                </td>
+            </tr>
+            {{end}}
+        </tbody>
+    </table>
+</div>
+{{else}}
+<div class="card">
+    <div class="empty">
+        <div class="empty-icon">&#127880;</div>
+        <p>No budgets set yet.<br>Set a monthly budget from the iOS app.</p>
+    </div>
+</div>
+{{end}}
+{{end}}

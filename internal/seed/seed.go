@@ -75,8 +75,8 @@ func Seed(ctx context.Context, database *db.DB) error {
 			return fmt.Errorf("bcrypt error: %w", err)
 		}
 		_, err = database.Pool.Exec(ctx,
-			`INSERT INTO users (id, email, username, password_hash)
-			 VALUES ($1, $2, $3, $4)
+			`INSERT INTO users (id, email, username, password_hash, email_verified)
+			 VALUES ($1, $2, $3, $4, TRUE)
 			 ON CONFLICT (id) DO NOTHING`,
 			u.id, u.email, u.username, string(hash))
 		if err != nil {
@@ -282,7 +282,7 @@ func Seed(ctx context.Context, database *db.DB) error {
 		createdBy uuid.UUID
 	}{
 		{GroupRoommatesID, "Roommates", UserAnkushID},
-		{GroupTripGoaID, "Goa Trip 2024", UserAnkushID},
+		{GroupTripGoaID, "Goa Trip 2026", UserAnkushID},
 		{GroupOldTripID, "Manali Trip", UserPriyaID},
 	} {
 		if _, err := database.Pool.Exec(ctx,
@@ -393,12 +393,9 @@ func Seed(ctx context.Context, database *db.DB) error {
 		}
 
 		// For each split: create a personal expense transaction and insert the split row.
-		// Payer gets full total amount; non-payers get their split amount.
+		// All members (including the payer) record their split share as the personal transaction amount.
 		for _, sp := range gt.splits {
 			txAmount := sp.amount
-			if sp.userID == gt.paidBy {
-				txAmount = gt.total
-			}
 
 			var memberTxID uuid.UUID
 			if err := database.Pool.QueryRow(ctx,

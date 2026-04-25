@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sign in — Finance</title>
+    <style>
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+        :root {
+            --bg: #f5f6fa; --surface: #ffffff; --border: #e2e4ec;
+            --text: #1a1d2e; --text2: #6b7080;
+            --accent: #00b894; --accent-dark: #00876e; --accent-light: #e8f8f5;
+            --danger: #e17055; --danger-light: #fdf0ec;
+        }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; display: flex; align-items: center; justify-content: center; }
+        .login-wrap { width: 100%; max-width: 380px; padding: 16px; }
+        .login-logo { text-align: center; margin-bottom: 28px; }
+        .login-logo .wordmark { font-size: 26px; font-weight: 800; color: var(--accent); letter-spacing: -0.5px; }
+        .login-logo .sub { font-size: 13px; color: var(--text2); margin-top: 4px; }
+        .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 28px; }
+        .card h2 { font-size: 17px; font-weight: 700; margin-bottom: 20px; }
+        .field { margin-bottom: 14px; }
+        .field label { display: block; font-size: 12px; font-weight: 600; color: var(--text2); text-transform: uppercase; letter-spacing: 0.4px; margin-bottom: 5px; }
+        .field input { width: 100%; padding: 10px 12px; border: 1px solid var(--border); border-radius: 7px; font-size: 14px; font-family: inherit; color: var(--text); background: var(--bg); transition: border-color 0.15s; }
+        .field input:focus { outline: none; border-color: var(--accent); background: #fff; }
+        .btn { width: 100%; padding: 11px; border-radius: 7px; font-size: 14px; font-weight: 600; cursor: pointer; border: none; background: var(--accent); color: #fff; margin-top: 6px; transition: background 0.15s; }
+        .btn:hover { background: var(--accent-dark); }
+        .alert { padding: 10px 14px; border-radius: 7px; margin-bottom: 16px; font-size: 13px; background: var(--danger-light); color: var(--danger); border: 1px solid #f5c6b8; }
+    </style>
+</head>
+<body>
+<div class="login-wrap">
+    <div class="login-logo">
+        <div class="wordmark">Finance</div>
+        <div class="sub">Your money, clearly.</div>
+    </div>
+    <div class="card">
+        <h2>Sign in</h2>
+        {{if .Error}}<div class="alert">{{.Error}}</div>{{end}}
+        <form method="POST" action="/dashboard/login">
+            <div class="field">
+                <label for="email">Email</label>
+                <input type="email" id="email" name="email" placeholder="you@example.com" required autofocus>
+            </div>
+            <div class="field">
+                <label for="password">Password</label>
+                <input type="password" id="password" name="password" placeholder="••••••••" required>
+            </div>
+            <button type="submit" class="btn">Sign in</button>
+        </form>
+    </div>
+</div>
+</body>
+</html>

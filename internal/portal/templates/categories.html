@@ -1,0 +1,66 @@
+{{define "content"}}
+<div class="page-header">
+    <h1>Categories</h1>
+    <p>{{.Total}} categories &middot; {{.CustomCount}} custom</p>
+</div>
+
+{{if .Categories}}
+<div class="card" style="padding:0;overflow:hidden;">
+    <table>
+        <thead>
+            <tr>
+                <th>Name</th>
+                <th>Type</th>
+                <th>Color</th>
+                <th class="text-right">Transactions</th>
+                <th class="text-right">Total Spent</th>
+                <th>Visible</th>
+            </tr>
+        </thead>
+        <tbody>
+            {{range .Categories}}
+            <tr>
+                <td>
+                    <div style="display:flex;align-items:center;gap:10px;">
+                        <div style="width:12px;height:12px;border-radius:3px;background:{{.Color}};flex-shrink:0;"></div>
+                        <span style="font-weight:500;">{{.Name}}</span>
+                    </div>
+                </td>
+                <td>
+                    {{if .IsPredefined}}
+                    <span class="badge" style="background:var(--surface2);color:var(--text2);">predefined</span>
+                    {{else}}
+                    <span class="badge" style="background:var(--accent-light);color:var(--accent-dark);">custom</span>
+                    {{end}}
+                </td>
+                <td>
+                    <div style="display:flex;align-items:center;gap:6px;">
+                        <div style="width:14px;height:14px;border-radius:3px;background:{{.Color}};border:1px solid rgba(0,0,0,0.1);"></div>
+                        <span class="text-muted mono" style="font-size:12px;">{{.Color}}</span>
+                    </div>
+                </td>
+                <td class="text-right mono">{{.TxCount}}</td>
+                <td class="text-right mono">
+                    {{if .TotalSpent}}{{$.CurrencySymbol}}{{.TotalSpent}}{{else}}<span class="text-muted">—</span>{{end}}
+                </td>
+                <td>
+                    {{if .IsHidden}}
+                    <span class="text-muted" style="font-size:12px;">Hidden</span>
+                    {{else}}
+                    <span style="color:var(--accent);font-size:12px;">Visible</span>
+                    {{end}}
+                </td>
+            </tr>
+            {{end}}
+        </tbody>
+    </table>
+</div>
+{{else}}
+<div class="card">
+    <div class="empty">
+        <div class="empty-icon">&#9965;</div>
+        <p>No categories yet.</p>
+    </div>
+</div>
+{{end}}
+{{end}}

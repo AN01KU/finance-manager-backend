@@ -1,0 +1,133 @@
+{{define "content"}}
+<div class="page-header">
+    <h1>Dashboard</h1>
+    <p>{{.MonthName}} {{.Year}}</p>
+</div>
+
+<div class="stats-row">
+    <div class="stat-card">
+        <div class="stat-value {{if .IsOverBudget}}red{{else}}green{{end}}">{{$.CurrencySymbol}}{{.TotalExpenses}}</div>
+        <div class="stat-label">Spent this month</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value blue">{{$.CurrencySymbol}}{{.TotalIncome}}</div>
+        <div class="stat-label">Income this month</div>
+    </div>
+    {{if .HasBudget}}
+    <div class="stat-card">
+        <div class="stat-value {{if .IsOverBudget}}red{{else}}{{end}}">{{$.CurrencySymbol}}{{.RemainingBudget}}</div>
+        <div class="stat-label">Budget remaining</div>
+        <div class="budget-bar-wrap">
+            <div class="budget-bar {{if .IsOverBudget}}over{{end}}" style="width: {{.BudgetPct}}%"></div>
+        </div>
+    </div>
+    {{end}}
+    <div class="stat-card">
+        <div class="stat-value {{if .NetOwed}}green{{else if .NetOwing}}red{{else}}{{end}}">
+            {{if .NetOwed}}+{{$.CurrencySymbol}}{{.NetOwed}}{{else if .NetOwing}}-{{$.CurrencySymbol}}{{.NetOwing}}{{else}}{{$.CurrencySymbol}}0{{end}}
+        </div>
+        <div class="stat-label">{{if .NetOwed}}You are owed{{else if .NetOwing}}You owe{{else}}All settled{{end}}</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value">{{.ExpenseCount}}</div>
+        <div class="stat-label">Transactions</div>
+    </div>
+</div>
+
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;">
+    <!-- Category breakdown -->
+    <div class="card">
+        <div class="card-title">Spending by Category</div>
+        {{if .CategoryBreakdown}}
+        <table>
+            <thead>
+                <tr>
+                    <th>Category</th>
+                    <th class="text-right">Amount</th>
+                    <th class="text-right">Txns</th>
+                </tr>
+            </thead>
+            <tbody>
+                {{range .CategoryBreakdown}}
+                <tr>
+                    <td>{{.Category}}</td>
+                    <td class="text-right mono">{{$.CurrencySymbol}}{{.TotalAmount}}</td>
+                    <td class="text-right text-muted">{{.ExpenseCount}}</td>
+                </tr>
+                {{end}}
+            </tbody>
+        </table>
+        {{else}}
+        <div class="empty">
+            <div class="empty-icon">&#128176;</div>
+            <p>No expenses recorded this month.</p>
+        </div>
+        {{end}}
+    </div>
+
+    <!-- Group balances -->
+    <div class="card">
+        <div class="card-title">Group Balances</div>
+        {{if .GroupBalances}}
+        <div class="balance-list">
+            {{range .GroupBalances}}
+            <div class="balance-row">
+                <div>
+                    <div class="balance-name"><a href="/dashboard/groups/{{.GroupID}}">{{.GroupName}}</a></div>
+                    <div class="text-muted" style="font-size:11px;">{{.MemberCount}} members</div>
+                </div>
+                <div class="balance-amount {{if .IsPositive}}positive{{else if .IsNegative}}negative{{else}}zero{{end}}">
+                    {{if .IsPositive}}+{{end}}{{$.CurrencySymbol}}{{.AmountAbs}}
+                    <div style="font-size:10px;font-weight:400;color:var(--text2);text-align:right;">
+                        {{if .IsPositive}}owed to you{{else if .IsNegative}}you owe{{else}}settled{{end}}
+                    </div>
+                </div>
+            </div>
+            {{end}}
+        </div>
+        {{else}}
+        <div class="empty">
+            <div class="empty-icon">&#128101;</div>
+            <p>You're not in any groups yet.</p>
+        </div>
+        {{end}}
+    </div>
+</div>
+
+<!-- Recent transactions -->
+<div class="card">
+    <div class="flex-between" style="margin-bottom:14px;">
+        <div class="card-title" style="margin-bottom:0;">Recent Transactions</div>
+        <a href="/dashboard/transactions" class="btn" style="font-size:12px;padding:4px 12px;">View all</a>
+    </div>
+    {{if .RecentTransactions}}
+    <table>
+        <thead>
+            <tr>
+                <th>Date</th>
+                <th>Description</th>
+                <th>Category</th>
+                <th>Type</th>
+                <th class="text-right">Amount</th>
+            </tr>
+        </thead>
+        <tbody>
+            {{range .RecentTransactions}}
+            <tr>
+                <td class="text-muted">{{.Date}}</td>
+                <td>{{if .Description}}{{.Description}}{{else}}<span class="text-muted">—</span>{{end}}</td>
+                <td>{{.Category}}</td>
+                <td><span class="badge badge-{{.Type}}">{{.Type}}</span></td>
+                <td class="text-right mono">{{$.CurrencySymbol}}{{.Amount}}</td>
+            </tr>
+            {{end}}
+        </tbody>
+    </table>
+    {{else}}
+    <div class="empty">
+        <div class="empty-icon">&#128203;</div>
+        <p>No recent transactions.</p>
+    </div>
+    {{end}}
+</div>
+{{end}}

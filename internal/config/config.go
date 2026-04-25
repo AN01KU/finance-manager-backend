@@ -9,30 +9,42 @@ import (
 )
 
 type Config struct {
-	DBURL              string
-	JWTSecret          string
-	Port               string
-	InviteCode         string
-	CORSOrigin         string
-	AdminUsername      string
-	AdminPassword      string
-	SyncSessionTTLDays int
-	DBMaxConns         int32
-	DBMinConns         int32
+	DBURL                   string
+	JWTSecret               string
+	Port                    string
+	InviteCode              string
+	CORSOrigin              string
+	AdminUsername           string
+	AdminPassword           string
+	SentryDSN               string
+	PushyAPIKey             string
+	ResendAPIKey            string
+	FromEmail               string
+	SyncSessionTTLDays      int
+	DBMaxConns              int32
+	DBMinConns              int32
+	ReminderThresholdAmount float64
+	ReminderDaysOutstanding int
 }
 
 func Load() *Config {
 	cfg := &Config{
-		DBURL:              getEnv("DATABASE_URL", "postgres://user:password@localhost:5432/finance_manager?sslmode=disable"),
-		JWTSecret:          getEnvRequired("JWT_SECRET"),
-		Port:               getEnv("PORT", "8080"),
-		InviteCode:         getEnv("INVITE_CODE", ""),
-		CORSOrigin:         getEnv("CORS_ORIGIN", "*"),
-		AdminUsername:      getEnv("ADMIN_USERNAME", "admin"),
-		AdminPassword:      getEnv("ADMIN_PASSWORD", ""),
-		SyncSessionTTLDays: getEnvInt("SYNC_SESSION_TTL_DAYS", 90),
-		DBMaxConns:         int32(getEnvInt("DB_MAX_CONNS", 25)),
-		DBMinConns:         int32(getEnvInt("DB_MIN_CONNS", 5)),
+		DBURL:                   getEnv("DATABASE_URL", "postgres://user:password@localhost:5432/finance_manager?sslmode=disable"),
+		JWTSecret:               getEnvRequired("JWT_SECRET"),
+		Port:                    getEnv("PORT", "8080"),
+		InviteCode:              getEnv("INVITE_CODE", ""),
+		CORSOrigin:              getEnv("CORS_ORIGIN", "*"),
+		AdminUsername:           getEnv("ADMIN_USERNAME", "admin"),
+		AdminPassword:           getEnv("ADMIN_PASSWORD", ""),
+		SentryDSN:               getEnv("SENTRY_DSN", ""),
+		PushyAPIKey:             getEnv("PUSHY_API_KEY", ""),
+		ResendAPIKey:            getEnv("RESEND_API_KEY", ""),
+		FromEmail:               getEnv("FROM_EMAIL", "Finance Manager <noreply@example.com>"),
+		SyncSessionTTLDays:      getEnvInt("SYNC_SESSION_TTL_DAYS", 90),
+		DBMaxConns:              int32(getEnvInt("DB_MAX_CONNS", 25)),
+		DBMinConns:              int32(getEnvInt("DB_MIN_CONNS", 5)),
+		ReminderThresholdAmount: getEnvFloat("REMINDER_THRESHOLD_AMOUNT", 20.0),
+		ReminderDaysOutstanding: getEnvInt("REMINDER_DAYS_OUTSTANDING", 7),
 	}
 
 	// Validate JWT secret strength
@@ -87,6 +99,16 @@ func getEnvInt(key string, defaultValue int) int {
 			return n
 		}
 		log.Printf("Warning: invalid integer for %s, using default %d", key, defaultValue)
+	}
+	return defaultValue
+}
+
+func getEnvFloat(key string, defaultValue float64) float64 {
+	if value := os.Getenv(key); value != "" {
+		if f, err := strconv.ParseFloat(value, 64); err == nil {
+			return f
+		}
+		log.Printf("Warning: invalid float for %s, using default %g", key, defaultValue)
 	}
 	return defaultValue
 }

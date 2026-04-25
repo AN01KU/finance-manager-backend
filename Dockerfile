@@ -1,4 +1,4 @@
-FROM golang:1.24.2 AS builder
+FROM golang:1.26.2 AS builder
 
 WORKDIR /app
 
@@ -7,7 +7,12 @@ RUN go mod download
 
 COPY . .
 
-RUN CGO_ENABLED=0 GOOS=linux go build -tags release -o finance-manager ./cmd/main.go
+ARG BUILD_TAGS=release
+RUN if [ -n "${BUILD_TAGS}" ]; then \
+      CGO_ENABLED=0 GOOS=linux go build -tags ${BUILD_TAGS} -o finance-manager ./cmd/main.go; \
+    else \
+      CGO_ENABLED=0 GOOS=linux go build -o finance-manager ./cmd/main.go; \
+    fi
 
 FROM debian:bookworm-slim
 
@@ -18,6 +23,7 @@ WORKDIR /root/
 COPY --from=builder /app/finance-manager .
 COPY --from=builder /app/internal/db/migrations ./internal/db/migrations
 COPY --from=builder /app/internal/admin/templates ./internal/admin/templates
+COPY --from=builder /app/internal/portal/templates ./internal/portal/templates
 
 EXPOSE 8080
 

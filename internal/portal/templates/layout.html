@@ -1,0 +1,199 @@
+{{define "layout"}}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{.Title}} — Finance</title>
+    <style>
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+        :root {
+            --bg: #f5f6fa;
+            --surface: #ffffff;
+            --surface2: #f0f1f5;
+            --border: #e2e4ec;
+            --text: #1a1d2e;
+            --text2: #6b7080;
+            --accent: #00b894;
+            --accent-dark: #00876e;
+            --accent-light: #e8f8f5;
+            --danger: #e17055;
+            --danger-light: #fdf0ec;
+            --income: #0984e3;
+            --income-light: #e8f4fd;
+            --warn: #fdcb6e;
+        }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--text); line-height: 1.5; font-size: 14px; }
+        a { color: var(--accent-dark); text-decoration: none; }
+        a:hover { text-decoration: underline; }
+
+        /* Layout */
+        .app { display: flex; min-height: 100vh; }
+
+        /* Sidebar */
+        .sidebar { width: 220px; background: var(--surface); border-right: 1px solid var(--border); display: flex; flex-direction: column; flex-shrink: 0; }
+        .sidebar-brand { padding: 20px; border-bottom: 1px solid var(--border); }
+        .sidebar-brand .logo { font-size: 18px; font-weight: 700; color: var(--accent); letter-spacing: -0.3px; }
+        .sidebar-brand .tagline { font-size: 11px; color: var(--text2); margin-top: 2px; }
+        .sidebar nav { flex: 1; padding: 8px 0; }
+        .sidebar nav a { display: flex; align-items: center; gap: 10px; padding: 9px 20px; color: var(--text2); font-size: 13px; font-weight: 500; transition: background 0.1s, color 0.1s; }
+        .sidebar nav a:hover { background: var(--surface2); color: var(--text); text-decoration: none; }
+        .sidebar nav a.active { background: var(--accent-light); color: var(--accent-dark); }
+        .sidebar nav a.active .nav-icon { color: var(--accent); }
+        .nav-icon { font-size: 16px; width: 20px; text-align: center; }
+        .sidebar-user { padding: 14px 20px; border-top: 1px solid var(--border); display: flex; align-items: center; gap: 10px; }
+        .sidebar-user .avatar { width: 32px; height: 32px; border-radius: 50%; background: var(--accent-light); color: var(--accent-dark); display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 13px; flex-shrink: 0; }
+        .sidebar-user .user-info { min-width: 0; }
+        .sidebar-user .user-name { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .sidebar-user .user-email { font-size: 11px; color: var(--text2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .sidebar-footer { padding: 12px 20px; border-top: 1px solid var(--border); }
+        .sidebar-footer a { font-size: 12px; color: var(--text2); }
+        .sidebar-footer a:hover { color: var(--danger); text-decoration: none; }
+
+        /* Main */
+        .main { flex: 1; padding: 28px 32px; overflow-x: auto; max-width: 1100px; }
+        .page-header { margin-bottom: 24px; }
+        .page-header h1 { font-size: 20px; font-weight: 700; color: var(--text); }
+        .page-header p { font-size: 13px; color: var(--text2); margin-top: 3px; }
+
+        /* Cards */
+        .card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 20px; margin-bottom: 20px; }
+        .card-title { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.6px; color: var(--text2); margin-bottom: 14px; }
+
+        /* Stats row */
+        .stats-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 14px; margin-bottom: 24px; }
+        .stat-card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 18px 20px; }
+        .stat-value { font-size: 26px; font-weight: 700; color: var(--text); line-height: 1; }
+        .stat-value.green { color: var(--accent); }
+        .stat-value.red { color: var(--danger); }
+        .stat-value.blue { color: var(--income); }
+        .stat-label { font-size: 11px; color: var(--text2); text-transform: uppercase; letter-spacing: 0.5px; margin-top: 6px; }
+
+        /* Table */
+        table { width: 100%; border-collapse: collapse; font-size: 13px; }
+        th { text-align: left; padding: 9px 12px; color: var(--text2); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid var(--border); }
+        td { padding: 11px 12px; border-bottom: 1px solid var(--border); color: var(--text); }
+        tr:last-child td { border-bottom: none; }
+        tr:hover td { background: var(--surface2); }
+
+        /* Badges */
+        .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; line-height: 1.6; }
+        .badge-expense { background: var(--danger-light); color: var(--danger); }
+        .badge-income { background: var(--income-light); color: var(--income); }
+        .badge-owed { background: var(--accent-light); color: var(--accent-dark); }
+        .badge-owing { background: var(--danger-light); color: var(--danger); }
+        .badge-settled { background: var(--surface2); color: var(--text2); }
+
+        /* Budget bar */
+        .budget-bar-wrap { background: var(--surface2); border-radius: 4px; height: 6px; margin-top: 10px; overflow: hidden; }
+        .budget-bar { height: 100%; border-radius: 4px; background: var(--accent); transition: width 0.3s; }
+        .budget-bar.over { background: var(--danger); }
+
+        /* Pagination */
+        .pagination { display: flex; gap: 8px; margin-top: 16px; align-items: center; }
+        .pagination a, .pagination span { padding: 5px 12px; border: 1px solid var(--border); border-radius: 6px; font-size: 12px; color: var(--text2); background: var(--surface); }
+        .pagination a:hover { background: var(--surface2); text-decoration: none; color: var(--text); }
+        .pagination .current { background: var(--accent); border-color: var(--accent); color: #fff; }
+        .pagination .disabled { opacity: 0.4; pointer-events: none; }
+
+        /* Filter bar */
+        .filter-bar { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; align-items: center; }
+        .filter-bar select, .filter-bar input { padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text); font-size: 13px; font-family: inherit; }
+        .filter-bar select:focus, .filter-bar input:focus { outline: none; border-color: var(--accent); }
+        .filter-bar .btn { padding: 6px 14px; }
+
+        /* Buttons */
+        .btn { display: inline-block; padding: 7px 16px; border-radius: 6px; font-size: 13px; font-weight: 500; cursor: pointer; border: 1px solid var(--border); background: var(--surface); color: var(--text); transition: background 0.1s; text-decoration: none; }
+        .btn:hover { background: var(--surface2); text-decoration: none; }
+        .btn-primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+        .btn-primary:hover { background: var(--accent-dark); }
+
+        /* Alert */
+        .alert { padding: 12px 16px; border-radius: 8px; margin-bottom: 16px; font-size: 13px; }
+        .alert-error { background: var(--danger-light); color: var(--danger); border: 1px solid #f5c6b8; }
+
+        /* Empty state */
+        .empty { text-align: center; padding: 48px 20px; color: var(--text2); }
+        .empty .empty-icon { font-size: 36px; margin-bottom: 12px; }
+        .empty p { font-size: 14px; }
+
+        /* Group member chip */
+        .member-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+        .member-chip { background: var(--surface2); border: 1px solid var(--border); border-radius: 20px; padding: 3px 10px; font-size: 12px; color: var(--text2); }
+
+        /* Balance list */
+        .balance-list { display: flex; flex-direction: column; gap: 10px; }
+        .balance-row { display: flex; align-items: center; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid var(--border); }
+        .balance-row:last-child { border-bottom: none; }
+        .balance-name { font-size: 13px; font-weight: 500; }
+        .balance-amount { font-size: 14px; font-weight: 700; }
+        .balance-amount.positive { color: var(--accent); }
+        .balance-amount.negative { color: var(--danger); }
+        .balance-amount.zero { color: var(--text2); }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .sidebar { display: none; }
+            .main { padding: 16px; }
+            .stats-row { grid-template-columns: 1fr 1fr; }
+        }
+
+        .mono { font-family: 'SF Mono', 'Fira Code', monospace; }
+        .text-muted { color: var(--text2); }
+        .text-right { text-align: right; }
+        .mt-1 { margin-top: 4px; }
+        .mt-2 { margin-top: 8px; }
+        .flex { display: flex; }
+        .flex-between { display: flex; justify-content: space-between; align-items: center; }
+    </style>
+</head>
+<body>
+<div class="app">
+    <div class="sidebar">
+        <div class="sidebar-brand">
+            <div class="logo">Finance</div>
+            <div class="tagline">Your money, clearly.</div>
+        </div>
+        <nav>
+            <a href="/dashboard/" {{if eq .Active "dashboard"}}class="active"{{end}}>
+                <span class="nav-icon">&#9783;</span> Dashboard
+            </a>
+            <a href="/dashboard/transactions" {{if eq .Active "transactions"}}class="active"{{end}}>
+                <span class="nav-icon">&#8645;</span> Transactions
+            </a>
+            <a href="/dashboard/groups" {{if eq .Active "groups"}}class="active"{{end}}>
+                <span class="nav-icon">&#9825;</span> Groups
+            </a>
+            <a href="/dashboard/recurring" {{if eq .Active "recurring"}}class="active"{{end}}>
+                <span class="nav-icon">&#8635;</span> Recurring
+            </a>
+            <a href="/dashboard/budgets" {{if eq .Active "budgets"}}class="active"{{end}}>
+                <span class="nav-icon">&#127880;</span> Budgets
+            </a>
+            <a href="/dashboard/categories" {{if eq .Active "categories"}}class="active"{{end}}>
+                <span class="nav-icon">&#9965;</span> Categories
+            </a>
+            <a href="/dashboard/profile" {{if eq .Active "profile"}}class="active"{{end}}>
+                <span class="nav-icon">&#9998;</span> Profile
+            </a>
+        </nav>
+        {{if .Username}}
+        <div class="sidebar-user">
+            <div class="avatar">{{slice .Username 0 1}}</div>
+            <div class="user-info">
+                <div class="user-name">{{.Username}}</div>
+                <div class="user-email">{{.Email}}</div>
+            </div>
+        </div>
+        {{end}}
+        <div class="sidebar-footer">
+            <a href="/dashboard/logout">Sign out</a>
+        </div>
+    </div>
+    <div class="main">
+        {{template "content" .}}
+    </div>
+</div>
+</body>
+</html>
+{{end}}

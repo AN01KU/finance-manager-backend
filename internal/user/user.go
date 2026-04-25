@@ -7,11 +7,13 @@ import (
 )
 
 type User struct {
-	ID           uuid.UUID           `json:"id" db:"id"`
-	Email        string              `json:"email" db:"email"`
-	Username     string              `json:"username" db:"username"`
-	PasswordHash string              `json:"-" db:"password_hash"`
-	CreatedAt    helpers.EpochMillis `json:"created_at" db:"created_at"`
+	ID            uuid.UUID           `json:"id" db:"id"`
+	Email         string              `json:"email" db:"email"`
+	Username      string              `json:"username" db:"username"`
+	PasswordHash  string              `json:"-" db:"password_hash"`
+	Currency      string              `json:"currency" db:"currency"`
+	EmailVerified bool                `json:"email_verified" db:"email_verified"`
+	CreatedAt     helpers.EpochMillis `json:"created_at" db:"created_at"`
 }
 
 // Claims holds JWT token claims for authenticated users.

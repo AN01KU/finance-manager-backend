@@ -1,0 +1,45 @@
+{{define "content"}}
+<div class="page-header">
+    <h1>Groups</h1>
+    <p>Groups you're a member of</p>
+</div>
+
+{{if .Groups}}
+<div style="display:flex;flex-direction:column;gap:14px;">
+    {{range .Groups}}
+    <a href="/dashboard/groups/{{.GroupID}}" style="text-decoration:none;display:block;">
+    <div class="card" style="margin-bottom:0;cursor:pointer;transition:border-color 0.15s;" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
+        <div class="flex-between">
+            <div>
+                <div style="font-size:15px;font-weight:600;color:var(--text);">{{.Name}}</div>
+                <div class="member-chips">
+                    {{range .Members}}
+                    <span class="member-chip">{{.}}</span>
+                    {{end}}
+                </div>
+            </div>
+            <div style="text-align:right;flex-shrink:0;margin-left:16px;">
+                <div class="balance-amount {{if .IsPositive}}positive{{else if .IsNegative}}negative{{else}}zero{{end}}" style="font-size:18px;">
+                    {{if .IsPositive}}+{{end}}{{$.CurrencySymbol}}{{.AmountAbs}}
+                </div>
+                <div style="font-size:11px;color:var(--text2);margin-top:2px;">
+                    {{if .IsPositive}}owed to you{{else if .IsNegative}}you owe{{else}}all settled{{end}}
+                </div>
+            </div>
+        </div>
+        <div style="margin-top:10px;font-size:12px;color:var(--text2);">
+            {{.TxCount}} expense{{if ne .TxCount 1}}s{{end}} &middot; created {{.CreatedAt}}
+        </div>
+    </div>
+    </a>
+    {{end}}
+</div>
+{{else}}
+<div class="card">
+    <div class="empty">
+        <div class="empty-icon">&#128101;</div>
+        <p>You're not in any groups yet.<br>Create one from the iOS app to get started.</p>
+    </div>
+</div>
+{{end}}
+{{end}}
