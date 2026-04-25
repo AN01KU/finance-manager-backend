@@ -70,6 +70,45 @@ func TestNextOccurrence(t *testing.T) {
 			want:       timePtr(date(2026, 4, 10)),
 		},
 		{
+			// Regression: startDate after this month's dayOfMonth — first valid
+			// occurrence is in the future, so nothing is due.
+			name:       "monthly — startDate Apr 25, day 23, today Apr 25 → nil",
+			startDate:  date(2026, 4, 25),
+			frequency:  "monthly",
+			dayOfMonth: intPtr(23),
+			today:      date(2026, 4, 25),
+			want:       nil,
+		},
+		{
+			// Regression: startDate before this month's dayOfMonth — must snap
+			// to dayOfMonth, not return startDate itself.
+			name:       "monthly — startDate Apr 1, day 23, today Apr 25 → Apr 23",
+			startDate:  date(2026, 4, 1),
+			frequency:  "monthly",
+			dayOfMonth: intPtr(23),
+			today:      date(2026, 4, 25),
+			want:       timePtr(date(2026, 4, 23)),
+		},
+		{
+			// Regression: startDate after dayOfMonth in start month — first
+			// valid occurrence is dayOfMonth of the next month.
+			name:       "monthly — startDate Apr 24, day 23, today May 24 → May 23",
+			startDate:  date(2026, 4, 24),
+			frequency:  "monthly",
+			dayOfMonth: intPtr(23),
+			today:      date(2026, 5, 24),
+			want:       timePtr(date(2026, 5, 23)),
+		},
+		{
+			// Crossing year boundary while snapping forward.
+			name:       "monthly — startDate Dec 25, day 5, today Jan 10 → Jan 5",
+			startDate:  date(2025, 12, 25),
+			frequency:  "monthly",
+			dayOfMonth: intPtr(5),
+			today:      date(2026, 1, 10),
+			want:       timePtr(date(2026, 1, 5)),
+		},
+		{
 			name:      "weekly — no daysOfWeek, advances by 7",
 			startDate: date(2026, 1, 6), // Tuesday
 			frequency: "weekly",
@@ -160,6 +199,26 @@ func TestNextFutureOccurrence(t *testing.T) {
 			dayOfMonth: intPtr(1),
 			today:      date(2026, 4, 2),
 			want:       timePtr(date(2026, 5, 1)),
+		},
+		{
+			// Regression: startDate before this month's dayOfMonth and dayOfMonth
+			// itself is still in the future today — must return this month, not next.
+			name:       "monthly — startDate Apr 1, day 23, today Apr 20 → Apr 23",
+			startDate:  date(2026, 4, 1),
+			frequency:  "monthly",
+			dayOfMonth: intPtr(23),
+			today:      date(2026, 4, 20),
+			want:       timePtr(date(2026, 4, 23)),
+		},
+		{
+			// Regression: startDate after this month's dayOfMonth — must skip to
+			// next month's dayOfMonth.
+			name:       "monthly — startDate Apr 25, day 23, today Apr 25 → May 23",
+			startDate:  date(2026, 4, 25),
+			frequency:  "monthly",
+			dayOfMonth: intPtr(23),
+			today:      date(2026, 4, 25),
+			want:       timePtr(date(2026, 5, 23)),
 		},
 		{
 			name:      "yearly — next year",

@@ -169,6 +169,22 @@ func nextOccurrence(startDate time.Time, frequency string, dayOfMonth *int, days
 			if day > 28 {
 				day = 28
 			}
+			// Snap `next` to the first day-of-month occurrence on or after startDate.
+			y, m, _ := next.Date()
+			candidate := time.Date(y, m, day, 0, 0, 0, 0, time.UTC)
+			if candidate.Before(next) {
+				m++
+				if m > 12 {
+					m = 1
+					y++
+				}
+				candidate = time.Date(y, m, day, 0, 0, 0, 0, time.UTC)
+			}
+			next = candidate
+			// If even the first valid occurrence is in the future, nothing is due yet.
+			if next.After(today) {
+				return nil
+			}
 			// Find the latest month where day_of_month falls on or before today.
 			for {
 				y, m, _ := next.Date()
@@ -233,6 +249,19 @@ func nextFutureOccurrence(startDate time.Time, frequency string, dayOfMonth *int
 			if day > 28 {
 				day = 28
 			}
+			// Snap `next` to the first day-of-month occurrence on or after startDate.
+			y, m, _ := next.Date()
+			candidate := time.Date(y, m, day, 0, 0, 0, 0, time.UTC)
+			if candidate.Before(next) {
+				m++
+				if m > 12 {
+					m = 1
+					y++
+				}
+				candidate = time.Date(y, m, day, 0, 0, 0, 0, time.UTC)
+			}
+			next = candidate
+			// Advance by whole months until strictly after today.
 			for !next.After(today) {
 				y, m, _ := next.Date()
 				m++
