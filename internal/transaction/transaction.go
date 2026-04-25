@@ -470,9 +470,10 @@ func DeleteTransaction(c *gin.Context, database *db.DB) {
 
 	var ownerID uuid.UUID
 	var groupTxID *uuid.UUID
+	var recurringTxID *uuid.UUID
 	err = database.Pool.QueryRow(c.Request.Context(),
-		`SELECT user_id, group_transaction_id FROM transactions WHERE id = $1`, id,
-	).Scan(&ownerID, &groupTxID)
+		`SELECT user_id, group_transaction_id, recurring_transaction_id FROM transactions WHERE id = $1`, id,
+	).Scan(&ownerID, &groupTxID, &recurringTxID)
 	if err != nil {
 		c.JSON(404, gin.H{"error": "transaction not found"})
 		return
@@ -486,8 +487,10 @@ func DeleteTransaction(c *gin.Context, database *db.DB) {
 		return
 	}
 
+	// Hard delete plain and recurring-linked transactions immediately.
+	// Only group-linked transactions use soft delete (handled above via the group endpoint).
 	_, err = database.Pool.Exec(c.Request.Context(),
-		`UPDATE transactions SET is_deleted = true, updated_at = NOW() WHERE id = $1 AND user_id = $2`, id, userID)
+		`DELETE FROM transactions WHERE id = $1 AND user_id = $2`, id, userID)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "failed to delete transaction"})
 		return
