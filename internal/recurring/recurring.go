@@ -214,6 +214,7 @@ func ListRecurringTransactions(c *gin.Context, db *db.DB) {
 		rt.LastAddedDate = helpers.FromTimePtr(rawLastAddedDate)
 		rt.CreatedAt = helpers.FromTime(rawCreatedAt)
 		rt.UpdatedAt = helpers.FromTime(rawUpdatedAt)
+		rt.NextOccurrence = computeNextOccurrence(&rt)
 		transactions = append(transactions, rt)
 	}
 	if err := rows.Err(); err != nil {
