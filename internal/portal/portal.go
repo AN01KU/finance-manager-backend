@@ -18,6 +18,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/crypto/bcrypt"
 
+	"github.com/yanonymousV2/finance-manager-backend/internal/recurring"
 	"github.com/yanonymousV2/finance-manager-backend/internal/user"
 )
 
@@ -828,7 +829,7 @@ func (p *Portal) recurringPage(c *gin.Context) {
 
 	rows, err := p.pool.Query(c.Request.Context(),
 		`SELECT name, type, category, frequency, amount, COALESCE(notes,''), is_active,
-		        last_added_date, start_date, end_date
+		        last_added_date, start_date, end_date, day_of_month, days_of_week
 		 FROM recurring_transactions WHERE user_id=$1 ORDER BY is_active DESC, name ASC`, u.ID)
 	if err != nil {
 		log.Printf("[PORTAL] recurringPage: %v", err)
@@ -837,7 +838,7 @@ func (p *Portal) recurringPage(c *gin.Context) {
 	}
 	defer rows.Close()
 
-	var recurring []portalRecurring
+	var recs []portalRecurring
 	activeCount := 0
 	for rows.Next() {
 		var r portalRecurring
@@ -845,47 +846,37 @@ func (p *Portal) recurringPage(c *gin.Context) {
 		var lastAdded *time.Time
 		var startDate time.Time
 		var endDate *time.Time
-		if rows.Scan(&r.Name, &r.Type, &r.Category, &r.Frequency, &amount, &r.Notes, &r.IsActive, &lastAdded, &startDate, &endDate) == nil {
+		var dayOfMonth *int
+		var daysOfWeekRaw []int32
+		if rows.Scan(&r.Name, &r.Type, &r.Category, &r.Frequency, &amount, &r.Notes, &r.IsActive, &lastAdded, &startDate, &endDate, &dayOfMonth, &daysOfWeekRaw) == nil {
 			r.Amount = fmt.Sprintf("%.2f", amount)
 			if r.IsActive {
 				activeCount++
-				// Compute approximate next date based on frequency and last_added_date
 				base := startDate
 				if lastAdded != nil {
 					base = *lastAdded
 				}
-				next := nextOccurrence(base, r.Frequency)
-				if endDate == nil || next.Before(*endDate) {
+				dow := make([]int, len(daysOfWeekRaw))
+				for i, v := range daysOfWeekRaw {
+					dow[i] = int(v)
+				}
+				today := time.Now().UTC().Truncate(24 * time.Hour)
+				next := recurring.NextFutureOccurrence(base, r.Frequency, dayOfMonth, dow, today)
+				if next != nil && (endDate == nil || next.Before(*endDate)) {
 					r.NextDate = next.Format("Jan 2, 2006")
 				}
 			}
-			recurring = append(recurring, r)
+			recs = append(recs, r)
 		}
 	}
 
 	p.render(c, "recurring", gin.H{
 		"Title":       "Recurring",
 		"Active":      "recurring",
-		"Recurring":   recurring,
-		"Total":       len(recurring),
+		"Recurring":   recs,
+		"Total":       len(recs),
 		"ActiveCount": activeCount,
 	})
-}
-
-// nextOccurrence returns the approximate next occurrence date for a recurring transaction.
-func nextOccurrence(base time.Time, frequency string) time.Time {
-	switch frequency {
-	case "daily":
-		return base.AddDate(0, 0, 1)
-	case "weekly":
-		return base.AddDate(0, 0, 7)
-	case "monthly":
-		return base.AddDate(0, 1, 0)
-	case "yearly":
-		return base.AddDate(1, 0, 0)
-	default:
-		return base.AddDate(0, 1, 0)
-	}
 }
 
 // ── Budgets ───────────────────────────────────────────────────────────────────

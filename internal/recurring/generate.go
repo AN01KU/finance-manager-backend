@@ -213,9 +213,9 @@ func nextOccurrence(startDate time.Time, frequency string, dayOfMonth *int, days
 	return &next
 }
 
-// nextFutureOccurrence returns the next occurrence strictly after today.
+// NextFutureOccurrence returns the next occurrence strictly after today.
 // Used for the API response's next_occurrence field.
-func nextFutureOccurrence(startDate time.Time, frequency string, dayOfMonth *int, daysOfWeek []int, today time.Time) *time.Time {
+func NextFutureOccurrence(startDate time.Time, frequency string, dayOfMonth *int, daysOfWeek []int, today time.Time) *time.Time {
 	next := startOfDay(startDate)
 
 	switch frequency {
