@@ -75,7 +75,7 @@ func (c *Client) Send(to, subject, html string) error {
 	if err != nil {
 		return fmt.Errorf("send email: %w", err)
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 
 	var result sendResponse
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {

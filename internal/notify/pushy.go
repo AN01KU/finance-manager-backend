@@ -121,7 +121,7 @@ func (c *Client) send(tokens []string, data map[string]any, notification *IOSNot
 		log.Printf("[NOTIFY] push request failed: %v", err)
 		return
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 
 	var result pushResponse
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {

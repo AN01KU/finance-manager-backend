@@ -97,7 +97,6 @@ func ExportTransactionsCSV(c *gin.Context, database *db.DB) {
 		if ms, err := strconv.ParseInt(v, 10, 64); err == nil {
 			query += " AND t.date <= $" + strconv.Itoa(n)
 			args = append(args, time.UnixMilli(ms).UTC())
-			n++
 		}
 	}
 

@@ -508,13 +508,13 @@ func (p *Portal) transactionsExport(c *gin.Context) {
 
 	c.Header("Content-Type", "text/csv")
 	c.Header("Content-Disposition", `attachment; filename="transactions.csv"`)
-	fmt.Fprint(c.Writer, "date,type,amount,category,description,notes,group_name\n")
+	_, _ = fmt.Fprint(c.Writer, "date,type,amount,category,description,notes,group_name\n")
 	for rows.Next() {
 		var txType, category, description, notes, groupName string
 		var amount float64
 		var date time.Time
 		if rows.Scan(&txType, &amount, &category, &date, &description, &notes, &groupName) == nil {
-			fmt.Fprintf(c.Writer, "%s,%s,%.2f,%s,%s,%s,%s\n",
+			_, _ = fmt.Fprintf(c.Writer, "%s,%s,%.2f,%s,%s,%s,%s\n",
 				date.Format("2006-01-02"), txType, amount,
 				csvEscape(category), csvEscape(description), csvEscape(notes), csvEscape(groupName))
 		}
