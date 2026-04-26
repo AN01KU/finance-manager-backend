@@ -131,6 +131,11 @@ func main() {
 	portalApp := portal.New(database.Pool, cfg.JWTSecret)
 	portalApp.RegisterRoutes(r)
 
+	// Root redirects to the dashboard
+	r.GET("/", func(c *gin.Context) {
+		c.Redirect(http.StatusFound, "/dashboard/")
+	})
+
 	// Health check
 	r.GET("/health", func(c *gin.Context) {
 		if err := database.Pool.Ping(c.Request.Context()); err != nil {
