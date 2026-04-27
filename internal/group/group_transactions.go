@@ -1,6 +1,7 @@
 package group
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strconv"
@@ -69,20 +70,25 @@ func CreateGroupTransaction(c *gin.Context, database *db.DB) {
 		return
 	}
 
-	// Validate paid_by is a member
-	paidByIsMember, err := helpers.IsGroupMember(c.Request.Context(), database, groupID, req.PaidByUserID)
-	if err != nil || !paidByIsMember {
-		c.JSON(400, gin.H{"error": "paid_by_user_id is not a member of the group"})
+	// Validate paid_by + every split user is a group member in ONE query.
+	toCheck := make([]uuid.UUID, 0, len(req.Splits)+1)
+	toCheck = append(toCheck, req.PaidByUserID)
+	for _, s := range req.Splits {
+		toCheck = append(toCheck, s.UserID)
+	}
+	missing, err := helpers.MissingGroupMembers(c.Request.Context(), database, groupID, toCheck)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "failed to validate group members"})
 		return
 	}
-
-	// Validate all split users are members
-	for _, s := range req.Splits {
-		ok, err := helpers.IsGroupMember(c.Request.Context(), database, groupID, s.UserID)
-		if err != nil || !ok {
-			c.JSON(400, gin.H{"error": fmt.Sprintf("user %s is not a member of the group", s.UserID)})
-			return
+	if len(missing) > 0 {
+		// Surface the first missing user for actionable error; clients can re-query if they need more.
+		if missing[0] == req.PaidByUserID {
+			c.JSON(400, gin.H{"error": "paid_by_user_id is not a member of the group"})
+		} else {
+			c.JSON(400, gin.H{"error": fmt.Sprintf("user %s is not a member of the group", missing[0])})
 		}
+		return
 	}
 
 	gtDate := time.UnixMilli(req.Date).UTC()
@@ -99,7 +105,11 @@ func CreateGroupTransaction(c *gin.Context, database *db.DB) {
 	}
 	defer func() { _ = tx.Rollback(c.Request.Context()) }()
 
-	// Insert group_transaction
+	// Upsert group_transaction. The WHERE clause on ON CONFLICT defends against
+	// cross-group UUID collisions: if the row exists but belongs to a different
+	// group, the WHERE filters it out, no row is updated, RETURNING is empty,
+	// and we surface a 409. (Without this, a client could silently overwrite
+	// another group's transaction by reusing its UUID.)
 	var gt GroupTransaction
 	var rawGTDate, rawGTCreatedAt, rawGTUpdatedAt time.Time
 	err = tx.QueryRow(c.Request.Context(),
@@ -114,6 +124,7 @@ func CreateGroupTransaction(c *gin.Context, database *db.DB) {
 		   notes = EXCLUDED.notes,
 		   is_deleted = FALSE,
 		   updated_at = NOW()
+		 WHERE group_transactions.group_id = EXCLUDED.group_id
 		 RETURNING id, group_id, paid_by_user_id, total_amount, category, date, description, notes, is_deleted, created_at, updated_at`,
 		gtID, groupID, req.PaidByUserID, totalAmount, req.Category, gtDate, req.Description, req.Notes,
 	).Scan(
@@ -122,7 +133,7 @@ func CreateGroupTransaction(c *gin.Context, database *db.DB) {
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			c.JSON(409, gin.H{"error": "group transaction ID conflict with another group"})
+			c.JSON(409, gin.H{"error": "group transaction ID already exists in another group"})
 			return
 		}
 		c.JSON(500, gin.H{"error": "failed to create group transaction"})
@@ -132,37 +143,13 @@ func CreateGroupTransaction(c *gin.Context, database *db.DB) {
 	gt.CreatedAt = helpers.FromTime(rawGTCreatedAt)
 	gt.UpdatedAt = helpers.FromTime(rawGTUpdatedAt)
 
-	// For each split: create a personal expense transaction and insert the split row.
-	// All members (including the payer) get their split share as the personal transaction amount.
-	// The full amount the payer fronted is recorded in group_transactions.total_amount.
-	var splits []SplitDetail
-	for i, s := range req.Splits {
-		txAmount := splitAmounts[i]
-
-		var memberTxID uuid.UUID
-		err = tx.QueryRow(c.Request.Context(),
-			`INSERT INTO transactions (user_id, type, amount, category, date, description, notes, group_transaction_id, updated_at)
-			 VALUES ($1, 'expense', $2, $3, $4, $5, $6, $7, NOW())
-			 RETURNING id`,
-			s.UserID, txAmount, req.Category, gtDate, req.Description, req.Notes, gt.ID,
-		).Scan(&memberTxID)
-		if err != nil {
-			c.JSON(500, gin.H{"error": "failed to create personal transaction for member"})
-			return
-		}
-
-		var split SplitDetail
-		err = tx.QueryRow(c.Request.Context(),
-			`INSERT INTO group_transaction_splits (group_transaction_id, user_id, amount, transaction_id)
-			 VALUES ($1, $2, $3, $4)
-			 RETURNING id, user_id, amount, transaction_id`,
-			gt.ID, s.UserID, splitAmounts[i], memberTxID,
-		).Scan(&split.ID, &split.UserID, &split.Amount, &split.TransactionID)
-		if err != nil {
-			c.JSON(500, gin.H{"error": "failed to create split"})
-			return
-		}
-		splits = append(splits, split)
+	// Apply splits in-place. On first insert this is just N inserts; on
+	// idempotent retry (same id, same group) it becomes upsert + soft-remove,
+	// preserving personal transaction IDs across re-syncs.
+	splits, err := applySplitsInPlace(c.Request.Context(), tx, gt.ID, req.Splits, splitAmounts, req.Category, gtDate, req.Description, req.Notes)
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
 	}
 
 	if err := tx.Commit(c.Request.Context()); err != nil {
@@ -172,6 +159,142 @@ func CreateGroupTransaction(c *gin.Context, database *db.DB) {
 
 	gt.Splits = splits
 	c.JSON(201, gt)
+}
+
+// applySplitsInPlace reconciles the desired set of splits with what currently
+// exists in the DB for `gtID`, preserving transaction IDs wherever possible.
+//
+// For each split user:
+//   - If a split already exists → UPDATE the personal transaction (amount + meta)
+//     and the split row.
+//   - If no split exists → INSERT a new personal transaction + split row.
+//
+// For users present in DB but not in `desiredSplits`:
+//   - Soft-delete the personal transaction and DELETE the split row.
+//
+// This replaces the previous "soft-delete all + recreate all" strategy, which
+// burned through transaction IDs on every edit and broke any external link
+// (sync clients, exports, notifications) to the personal rows.
+func applySplitsInPlace(
+	ctx context.Context,
+	tx pgx.Tx,
+	gtID uuid.UUID,
+	desiredSplits []SplitInput,
+	desiredAmounts []decimal.Decimal,
+	category string,
+	date time.Time,
+	description, notes *string,
+) ([]SplitDetail, error) {
+	// Snapshot existing splits keyed by user_id.
+	type existing struct {
+		splitID uuid.UUID
+		txID    *uuid.UUID
+	}
+	rows, err := tx.Query(ctx,
+		`SELECT id, user_id, transaction_id
+		 FROM group_transaction_splits WHERE group_transaction_id = $1`, gtID)
+	if err != nil {
+		return nil, fmt.Errorf("load existing splits: %w", err)
+	}
+	current := map[uuid.UUID]existing{}
+	for rows.Next() {
+		var sid, uid uuid.UUID
+		var txID *uuid.UUID
+		if err := rows.Scan(&sid, &uid, &txID); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("scan existing split: %w", err)
+		}
+		current[uid] = existing{splitID: sid, txID: txID}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate splits: %w", err)
+	}
+
+	desiredByUser := make(map[uuid.UUID]struct{}, len(desiredSplits))
+	for _, s := range desiredSplits {
+		desiredByUser[s.UserID] = struct{}{}
+	}
+
+	// Step 1: remove users no longer in splits — soft-delete personal txs +
+	// delete split rows. Soft delete keeps the cleanup worker's invariants.
+	for uid, ex := range current {
+		if _, keep := desiredByUser[uid]; keep {
+			continue
+		}
+		if ex.txID != nil {
+			if _, err := tx.Exec(ctx,
+				`UPDATE transactions SET is_deleted = TRUE, updated_at = NOW()
+				 WHERE id = $1 AND is_deleted = FALSE`, *ex.txID); err != nil {
+				return nil, fmt.Errorf("soft-delete removed-member tx: %w", err)
+			}
+		}
+		if _, err := tx.Exec(ctx,
+			`DELETE FROM group_transaction_splits WHERE id = $1`, ex.splitID); err != nil {
+			return nil, fmt.Errorf("delete removed-member split: %w", err)
+		}
+	}
+
+	// Step 2: upsert every desired split + its personal transaction.
+	out := make([]SplitDetail, 0, len(desiredSplits))
+	for i, s := range desiredSplits {
+		amt := desiredAmounts[i]
+
+		ex, hadExisting := current[s.UserID]
+
+		var memberTxID uuid.UUID
+		if hadExisting && ex.txID != nil {
+			memberTxID = *ex.txID
+			// Update existing personal transaction in place. is_deleted=FALSE
+			// in case it was soft-deleted previously (e.g. by an older edit
+			// path) and the user is being re-added.
+			if _, err := tx.Exec(ctx,
+				`UPDATE transactions
+				 SET amount = $1, category = $2, date = $3,
+				     description = $4, notes = $5, is_deleted = FALSE, updated_at = NOW()
+				 WHERE id = $6`,
+				amt, category, date, description, notes, memberTxID,
+			); err != nil {
+				return nil, fmt.Errorf("update personal tx for %s: %w", s.UserID, err)
+			}
+		} else {
+			// New member: insert a fresh personal transaction.
+			if err := tx.QueryRow(ctx,
+				`INSERT INTO transactions (user_id, type, amount, category, date, description, notes, group_transaction_id, updated_at)
+				 VALUES ($1, 'expense', $2, $3, $4, $5, $6, $7, NOW())
+				 RETURNING id`,
+				s.UserID, amt, category, date, description, notes, gtID,
+			).Scan(&memberTxID); err != nil {
+				return nil, fmt.Errorf("insert personal tx for %s: %w", s.UserID, err)
+			}
+		}
+
+		var split SplitDetail
+		if hadExisting {
+			// Update the existing split row's amount + (re-)bind to the personal tx.
+			if err := tx.QueryRow(ctx,
+				`UPDATE group_transaction_splits
+				 SET amount = $1, transaction_id = $2
+				 WHERE id = $3
+				 RETURNING id, user_id, amount, transaction_id`,
+				amt, memberTxID, ex.splitID,
+			).Scan(&split.ID, &split.UserID, &split.Amount, &split.TransactionID); err != nil {
+				return nil, fmt.Errorf("update split for %s: %w", s.UserID, err)
+			}
+		} else {
+			if err := tx.QueryRow(ctx,
+				`INSERT INTO group_transaction_splits (group_transaction_id, user_id, amount, transaction_id)
+				 VALUES ($1, $2, $3, $4)
+				 RETURNING id, user_id, amount, transaction_id`,
+				gtID, s.UserID, amt, memberTxID,
+			).Scan(&split.ID, &split.UserID, &split.Amount, &split.TransactionID); err != nil {
+				return nil, fmt.Errorf("insert split for %s: %w", s.UserID, err)
+			}
+		}
+		out = append(out, split)
+	}
+
+	return out, nil
 }
 
 func ListGroupTransactions(c *gin.Context, database *db.DB) {
@@ -507,13 +630,19 @@ func UpdateGroupTransaction(c *gin.Context, database *db.DB) {
 			return
 		}
 
-		// Validate all split users are group members
+		// Validate all split users are group members in one query.
+		uids := make([]uuid.UUID, 0, len(req.Splits))
 		for _, s := range req.Splits {
-			ok, err := helpers.IsGroupMember(c.Request.Context(), database, groupID, s.UserID)
-			if err != nil || !ok {
-				c.JSON(400, gin.H{"error": fmt.Sprintf("user %s is not a member of the group", s.UserID)})
-				return
-			}
+			uids = append(uids, s.UserID)
+		}
+		missing, err := helpers.MissingGroupMembers(c.Request.Context(), database, groupID, uids)
+		if err != nil {
+			c.JSON(500, gin.H{"error": "failed to validate group members"})
+			return
+		}
+		if len(missing) > 0 {
+			c.JSON(400, gin.H{"error": fmt.Sprintf("user %s is not a member of the group", missing[0])})
+			return
 		}
 	}
 
@@ -569,57 +698,13 @@ func UpdateGroupTransaction(c *gin.Context, database *db.DB) {
 	gt.UpdatedAt = helpers.FromTime(rawUpdatedAt)
 
 	if hasSplits {
-		// Determine the category/date/description/notes for new personal transactions
-		// Use updated values from the group transaction row
-		gtDate := rawDate
-		gtCategory := gt.Category
-
-		// Soft-delete existing personal transactions linked to this group transaction
-		if _, err = dbTx.Exec(c.Request.Context(),
-			`UPDATE transactions SET is_deleted = TRUE, updated_at = NOW()
-			 WHERE group_transaction_id = $1 AND is_deleted = FALSE`, txID); err != nil {
-			c.JSON(500, gin.H{"error": "failed to soft-delete personal transactions"})
+		// Reconcile in place — preserve personal transaction IDs for unchanged
+		// members; insert for new members; soft-delete + remove for removed.
+		splits, err := applySplitsInPlace(c.Request.Context(), dbTx, gt.ID, req.Splits, splitAmounts, gt.Category, rawDate, gt.Description, gt.Notes)
+		if err != nil {
+			c.JSON(500, gin.H{"error": err.Error()})
 			return
 		}
-
-		// Delete existing split rows
-		if _, err = dbTx.Exec(c.Request.Context(),
-			`DELETE FROM group_transaction_splits WHERE group_transaction_id = $1`, txID); err != nil {
-			c.JSON(500, gin.H{"error": "failed to delete splits"})
-			return
-		}
-
-		// Create new splits and personal transactions
-		var splits []SplitDetail
-		for i, s := range req.Splits {
-			txAmount := splitAmounts[i]
-
-			var memberTxID uuid.UUID
-			err = dbTx.QueryRow(c.Request.Context(),
-				`INSERT INTO transactions (user_id, type, amount, category, date, description, notes, group_transaction_id, updated_at)
-				 VALUES ($1, 'expense', $2, $3, $4, $5, $6, $7, NOW())
-				 RETURNING id`,
-				s.UserID, txAmount, gtCategory, gtDate, gt.Description, gt.Notes, gt.ID,
-			).Scan(&memberTxID)
-			if err != nil {
-				c.JSON(500, gin.H{"error": "failed to create personal transaction for member"})
-				return
-			}
-
-			var split SplitDetail
-			err = dbTx.QueryRow(c.Request.Context(),
-				`INSERT INTO group_transaction_splits (group_transaction_id, user_id, amount, transaction_id)
-				 VALUES ($1, $2, $3, $4)
-				 RETURNING id, user_id, amount, transaction_id`,
-				gt.ID, s.UserID, splitAmounts[i], memberTxID,
-			).Scan(&split.ID, &split.UserID, &split.Amount, &split.TransactionID)
-			if err != nil {
-				c.JSON(500, gin.H{"error": "failed to create split"})
-				return
-			}
-			splits = append(splits, split)
-		}
-
 		gt.Splits = splits
 	} else {
 		// Sync the same field changes to linked personal transactions.
@@ -689,17 +774,26 @@ func DeleteGroupTransaction(c *gin.Context, database *db.DB) {
 		return
 	}
 
+	// Authorization: anyone involved in the transaction (payer OR any split
+	// member) can delete. This prevents the "immortal transaction" case where
+	// the original payer leaves the group and nobody else can clean it up.
 	var paidByUserID uuid.UUID
+	var isInvolved bool
 	err = database.Pool.QueryRow(c.Request.Context(),
-		`SELECT paid_by_user_id FROM group_transactions WHERE id = $1 AND group_id = $2`,
-		txID, groupID,
-	).Scan(&paidByUserID)
+		`SELECT gt.paid_by_user_id,
+		        gt.paid_by_user_id = $3
+		        OR EXISTS (SELECT 1 FROM group_transaction_splits s
+		                   WHERE s.group_transaction_id = gt.id AND s.user_id = $3) AS involved
+		 FROM group_transactions gt
+		 WHERE gt.id = $1 AND gt.group_id = $2`,
+		txID, groupID, userID,
+	).Scan(&paidByUserID, &isInvolved)
 	if err != nil {
 		c.JSON(404, gin.H{"error": "group transaction not found"})
 		return
 	}
-	if paidByUserID != userID {
-		c.JSON(403, gin.H{"error": "only the payer can delete this transaction"})
+	if !isInvolved {
+		c.JSON(403, gin.H{"error": "only the payer or someone in the splits can delete this transaction"})
 		return
 	}
 

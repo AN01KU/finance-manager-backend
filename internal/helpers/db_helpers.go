@@ -97,6 +97,47 @@ func IsGroupMember(ctx context.Context, db *db.DB, groupID, userID uuid.UUID) (b
 	return isMember, err
 }
 
+// MissingGroupMembers returns the subset of `userIDs` that are NOT members of
+// the active (non-deleted) group. Returns an empty slice if all are members.
+// Uses one round-trip instead of N IsGroupMember calls.
+func MissingGroupMembers(ctx context.Context, db *db.DB, groupID uuid.UUID, userIDs []uuid.UUID) ([]uuid.UUID, error) {
+	if len(userIDs) == 0 {
+		return nil, nil
+	}
+	rows, err := db.Pool.Query(ctx,
+		`SELECT gm.user_id
+		 FROM group_members gm
+		 JOIN groups g ON gm.group_id = g.id
+		 WHERE gm.group_id = $1 AND g.is_deleted = FALSE
+		   AND gm.user_id = ANY($2)`,
+		groupID, userIDs,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	present := make(map[uuid.UUID]struct{}, len(userIDs))
+	for rows.Next() {
+		var uid uuid.UUID
+		if err := rows.Scan(&uid); err != nil {
+			return nil, err
+		}
+		present[uid] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	var missing []uuid.UUID
+	for _, uid := range userIDs {
+		if _, ok := present[uid]; !ok {
+			missing = append(missing, uid)
+		}
+	}
+	return missing, nil
+}
+
 // UserExists checks if a user exists by ID
 func UserExists(ctx context.Context, db *db.DB, userID uuid.UUID) (bool, error) {
 	var exists bool
