@@ -12,6 +12,7 @@ type User struct {
 	Username      string              `json:"username" db:"username"`
 	PasswordHash  string              `json:"-" db:"password_hash"`
 	Currency      string              `json:"currency" db:"currency"`
+	Timezone      string              `json:"timezone" db:"timezone"`
 	EmailVerified bool                `json:"email_verified" db:"email_verified"`
 	CreatedAt     helpers.EpochMillis `json:"created_at" db:"created_at"`
 }

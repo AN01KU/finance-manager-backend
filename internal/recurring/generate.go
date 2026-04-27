@@ -11,11 +11,24 @@ import (
 	"github.com/yanonymousV2/finance-manager-backend/internal/db"
 )
 
-// GenerateDueTransactions checks all active recurring transactions for the given
-// user and inserts any overdue transaction instances, updating last_added_date.
-// It is called on GET /transactions so the list is always up-to-date.
+// GenerateDueTransactions checks all active recurring transactions for the
+// given user and inserts EVERY missed transaction instance between the rule's
+// last fire (or start_date) and `now`, evaluated in the user's timezone.
+//
+// Idempotency:
+//   - Inserts use ON CONFLICT (user_id, recurring_transaction_id, date) DO
+//     NOTHING so a re-run never duplicates.
+//   - Dates present in recurring_skipped_occurrences (populated when the user
+//     manually deletes a generated instance) are filtered out so the user's
+//     intentional deletes are respected.
+//
+// Called by the scheduler tick and on demand from GET /transactions.
 func GenerateDueTransactions(ctx context.Context, userID uuid.UUID, database *db.DB, now time.Time) error {
-	today := startOfDay(now)
+	loc, err := loadUserTimezone(ctx, database, userID)
+	if err != nil {
+		return err
+	}
+	today := startOfDayIn(now, loc)
 
 	rows, err := database.Pool.Query(ctx,
 		`SELECT id, type, name, amount, category, frequency, day_of_month, days_of_week,
@@ -61,48 +74,67 @@ func GenerateDueTransactions(ctx context.Context, userID uuid.UUID, database *db
 		for i, v := range r.daysOfWeek {
 			dow[i] = int(v)
 		}
-		next := nextOccurrence(r.startDate, r.frequency, r.dayOfMonth, dow, today)
-		if next == nil {
+
+		dates := allMissedOccurrences(r.startDate, r.frequency, r.dayOfMonth, dow, r.lastAddedDate, today, loc)
+		if r.endDate != nil {
+			endDay := startOfDayIn(*r.endDate, loc)
+			filtered := dates[:0]
+			for _, d := range dates {
+				if !d.After(endDay) {
+					filtered = append(filtered, d)
+				}
+			}
+			dates = filtered
+		}
+		if len(dates) == 0 {
 			continue
 		}
 
-		// Skip if already generated up to this date
-		if r.lastAddedDate != nil {
-			lastDay := startOfDay(*r.lastAddedDate)
-			if !next.After(lastDay) {
+		// Filter out dates the user previously deleted manually.
+		skipped, err := loadSkippedDates(ctx, database, r.id)
+		if err != nil {
+			return fmt.Errorf("load skipped for recurring %s: %w", r.id, err)
+		}
+		var toGenerate []time.Time
+		for _, d := range dates {
+			if _, isSkipped := skipped[d.Format("2006-01-02")]; isSkipped {
 				continue
 			}
+			toGenerate = append(toGenerate, d)
 		}
-
-		// Respect end date
-		if r.endDate != nil && next.After(*r.endDate) {
+		if len(toGenerate) == 0 {
 			continue
 		}
 
-		txID := uuid.New()
 		tx, err := database.Pool.Begin(ctx)
 		if err != nil {
 			return fmt.Errorf("begin tx for recurring %s: %w", r.id, err)
 		}
 
-		_, err = tx.Exec(ctx,
-			`INSERT INTO transactions (id, user_id, type, amount, category, date, description, notes, recurring_transaction_id, updated_at)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
-			 ON CONFLICT (user_id, recurring_transaction_id, date) WHERE recurring_transaction_id IS NOT NULL DO NOTHING`,
-			txID, userID, r.txType, r.amount, r.category, *next, r.name, nil, r.id,
-		)
-		if err != nil {
-			_ = tx.Rollback(ctx)
-			return fmt.Errorf("insert transaction for recurring %s: %w", r.id, err)
+		for _, d := range toGenerate {
+			txID := uuid.New()
+			_, err = tx.Exec(ctx,
+				`INSERT INTO transactions (id, user_id, type, amount, category, date, description, notes, recurring_transaction_id, updated_at)
+				 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+				 ON CONFLICT (user_id, recurring_transaction_id, date) WHERE recurring_transaction_id IS NOT NULL DO NOTHING`,
+				txID, userID, r.txType, r.amount, r.category, d, r.name, nil, r.id,
+			)
+			if err != nil {
+				_ = tx.Rollback(ctx)
+				return fmt.Errorf("insert transaction for recurring %s: %w", r.id, err)
+			}
 		}
 
-		// Update last_added_date in the same transaction so insert + date update are atomic.
+		// Bump last_added_date to the latest generated date so the next tick
+		// starts strictly after it. GREATEST guards against rare out-of-order
+		// concurrent inserts (e.g. on-demand generation racing the scheduler).
+		latest := toGenerate[len(toGenerate)-1]
 		_, err = tx.Exec(ctx,
 			`UPDATE recurring_transactions
 			 SET last_added_date = GREATEST(COALESCE(last_added_date, '-infinity'::timestamptz), $1),
 			     updated_at = NOW()
 			 WHERE id = $2`,
-			*next, r.id,
+			latest, r.id,
 		)
 		if err != nil {
 			_ = tx.Rollback(ctx)
@@ -117,177 +149,299 @@ func GenerateDueTransactions(ctx context.Context, userID uuid.UUID, database *db
 	return nil
 }
 
-// nextOccurrence returns the latest occurrence of the recurring rule that falls
-// on or before today. GenerateDueTransactions uses this to create transactions
-// only for dates that are already due — never for future dates.
+// loadUserTimezone looks up the user's IANA timezone and resolves it to a
+// *time.Location. Falls back to UTC if the user row is missing or the stored
+// name is unparseable (e.g. tzdata change). Never blocks generation.
+func loadUserTimezone(ctx context.Context, database *db.DB, userID uuid.UUID) (*time.Location, error) {
+	var tzName string
+	err := database.Pool.QueryRow(ctx,
+		`SELECT timezone FROM users WHERE id = $1`, userID,
+	).Scan(&tzName)
+	if err != nil {
+		// User not found / DB error → degrade to UTC, don't break recurring.
+		return time.UTC, nil
+	}
+	loc, err := time.LoadLocation(tzName)
+	if err != nil || loc == nil {
+		return time.UTC, nil
+	}
+	return loc, nil
+}
+
+func loadSkippedDates(ctx context.Context, database *db.DB, recurringID uuid.UUID) (map[string]struct{}, error) {
+	rows, err := database.Pool.Query(ctx,
+		`SELECT occurrence_date FROM recurring_skipped_occurrences WHERE recurring_transaction_id = $1`,
+		recurringID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := map[string]struct{}{}
+	for rows.Next() {
+		var d time.Time
+		if err := rows.Scan(&d); err != nil {
+			return nil, err
+		}
+		out[d.Format("2006-01-02")] = struct{}{}
+	}
+	return out, rows.Err()
+}
+
+// allMissedOccurrences returns every date the rule should fire that is on or
+// before `today`, strictly after `lastAdded` (if set), and on or after
+// `startDate`. All comparisons are in `loc` (user's timezone).
+//
+// Empty `loc` is treated as UTC.
+func allMissedOccurrences(startDate time.Time, frequency string, dayOfMonth *int, daysOfWeek []int, lastAdded *time.Time, today time.Time, loc *time.Location) []time.Time {
+	if loc == nil {
+		loc = time.UTC
+	}
+	startDay := startOfDayIn(startDate, loc)
+	todayDay := startOfDayIn(today, loc)
+	if startDay.After(todayDay) {
+		return nil
+	}
+
+	cursor := startDay
+	if lastAdded != nil {
+		la := startOfDayIn(*lastAdded, loc)
+		if !la.Before(cursor) {
+			// Resume strictly after the last fire date.
+			cursor = la.AddDate(0, 0, 1)
+		}
+	}
+	if cursor.After(todayDay) {
+		return nil
+	}
+
+	switch frequency {
+	case "daily":
+		return collectDaily(cursor, todayDay)
+	case "weekly":
+		if len(daysOfWeek) == 0 {
+			return collectWeeklyAligned(startDay, cursor, todayDay)
+		}
+		return collectWeeklyByDay(cursor, todayDay, daysOfWeek)
+	case "monthly":
+		td := startDay.Day()
+		if dayOfMonth != nil {
+			td = *dayOfMonth
+		}
+		return collectMonthly(cursor, todayDay, td, loc)
+	case "yearly":
+		return collectYearly(cursor, todayDay, startDay.Month(), startDay.Day(), loc)
+	default:
+		return nil
+	}
+}
+
+func collectDaily(cursor, today time.Time) []time.Time {
+	var out []time.Time
+	for !cursor.After(today) {
+		out = append(out, cursor)
+		cursor = cursor.AddDate(0, 0, 1)
+	}
+	return out
+}
+
+// collectWeeklyAligned fires every 7 days from startDay. Cursor may have
+// advanced past lastAdded — snap it forward to the next valid grid date.
+func collectWeeklyAligned(startDay, cursor, today time.Time) []time.Time {
+	diffDays := int(cursor.Sub(startDay).Hours() / 24)
+	if mod := diffDays % 7; mod != 0 {
+		cursor = cursor.AddDate(0, 0, 7-mod)
+	}
+	var out []time.Time
+	for !cursor.After(today) {
+		out = append(out, cursor)
+		cursor = cursor.AddDate(0, 0, 7)
+	}
+	return out
+}
+
+func collectWeeklyByDay(cursor, today time.Time, daysOfWeek []int) []time.Time {
+	var out []time.Time
+	for !cursor.After(today) {
+		if containsInt(daysOfWeek, int(cursor.Weekday())) {
+			out = append(out, cursor)
+		}
+		cursor = cursor.AddDate(0, 0, 1)
+	}
+	return out
+}
+
+// collectMonthly fires on `targetDay` of each month, using last-valid-day-of-month
+// semantics: targetDay=31 in February becomes the 28th/29th, in April becomes
+// the 30th, etc. This matches Splitwise / Money Lover behavior, not RFC 5545
+// (which would skip those months entirely).
+func collectMonthly(cursor, today time.Time, targetDay int, loc *time.Location) []time.Time {
+	var out []time.Time
+	y, m, _ := cursor.Date()
+	for {
+		fire := resolveMonthDay(y, m, targetDay, loc)
+		if fire.Before(cursor) {
+			y, m = advanceMonth(y, m)
+			continue
+		}
+		if fire.After(today) {
+			return out
+		}
+		out = append(out, fire)
+		y, m = advanceMonth(y, m)
+	}
+}
+
+func collectYearly(cursor, today time.Time, anniversaryMonth time.Month, anniversaryDay int, loc *time.Location) []time.Time {
+	var out []time.Time
+	y, _, _ := cursor.Date()
+	for {
+		fire := resolveMonthDay(y, anniversaryMonth, anniversaryDay, loc)
+		if fire.Before(cursor) {
+			y++
+			continue
+		}
+		if fire.After(today) {
+			return out
+		}
+		out = append(out, fire)
+		y++
+	}
+}
+
+// resolveMonthDay returns midnight of (year, month, min(day, lastDayOfMonth)).
+// time.Date(year, month+1, 0, ...) normalizes to the last day of `month`.
+func resolveMonthDay(year int, month time.Month, day int, loc *time.Location) time.Time {
+	if loc == nil {
+		loc = time.UTC
+	}
+	lastDay := time.Date(year, month+1, 0, 0, 0, 0, 0, loc).Day()
+	if day < 1 {
+		day = 1
+	}
+	if day > lastDay {
+		day = lastDay
+	}
+	return time.Date(year, month, day, 0, 0, 0, 0, loc)
+}
+
+func advanceMonth(y int, m time.Month) (int, time.Month) {
+	m++
+	if m > 12 {
+		m = 1
+		y++
+	}
+	return y, m
+}
+
+// nextOccurrence returns the latest occurrence of the rule that falls on or
+// before today (single-shot variant kept for backwards compatibility with
+// callers that want a "what's the most recent due date" answer).
+//
+// Internally this just runs the full backfill enumeration and returns the
+// last element so day-of-month / leap-year semantics stay consistent.
 func nextOccurrence(startDate time.Time, frequency string, dayOfMonth *int, daysOfWeek []int, today time.Time) *time.Time {
-	next := startOfDay(startDate)
-
-	// If the start date is in the future, nothing is due yet.
-	if next.After(today) {
+	dates := allMissedOccurrences(startDate, frequency, dayOfMonth, daysOfWeek, nil, today, time.UTC)
+	if len(dates) == 0 {
 		return nil
 	}
-
-	switch frequency {
-	case "daily":
-		// The latest daily occurrence on or before today is simply today.
-		next = today
-
-	case "weekly":
-		if len(daysOfWeek) == 0 {
-			// Jump forward in bulk: calculate weeks between start and today.
-			days := int(today.Sub(next).Hours() / 24)
-			weeks := days / 7
-			next = next.AddDate(0, 0, weeks*7)
-		} else {
-			// Walk backwards from today (at most 7 days) to find the latest matching weekday.
-			var latest *time.Time
-			for i := 0; i < 7; i++ {
-				candidate := today.AddDate(0, 0, -i)
-				if candidate.Before(next) {
-					break
-				}
-				if containsInt(daysOfWeek, int(candidate.Weekday())) {
-					t := candidate
-					latest = &t
-					break
-				}
-			}
-			if latest == nil {
-				return nil
-			}
-			next = *latest
-		}
-
-	case "monthly":
-		if dayOfMonth == nil {
-			for next.AddDate(0, 1, 0).Before(today) || next.AddDate(0, 1, 0).Equal(today) {
-				next = next.AddDate(0, 1, 0)
-			}
-		} else {
-			day := *dayOfMonth
-			if day > 28 {
-				day = 28
-			}
-			// Snap `next` to the first day-of-month occurrence on or after startDate.
-			y, m, _ := next.Date()
-			candidate := time.Date(y, m, day, 0, 0, 0, 0, time.UTC)
-			if candidate.Before(next) {
-				m++
-				if m > 12 {
-					m = 1
-					y++
-				}
-				candidate = time.Date(y, m, day, 0, 0, 0, 0, time.UTC)
-			}
-			next = candidate
-			// If even the first valid occurrence is in the future, nothing is due yet.
-			if next.After(today) {
-				return nil
-			}
-			// Find the latest month where day_of_month falls on or before today.
-			for {
-				y, m, _ := next.Date()
-				m++
-				if m > 12 {
-					m = 1
-					y++
-				}
-				candidate := time.Date(y, m, day, 0, 0, 0, 0, time.UTC)
-				if candidate.After(today) {
-					break
-				}
-				next = candidate
-			}
-		}
-
-	case "yearly":
-		for next.AddDate(1, 0, 0).Before(today) || next.AddDate(1, 0, 0).Equal(today) {
-			next = next.AddDate(1, 0, 0)
-		}
-
-	default:
-		return nil
-	}
-
-	return &next
+	last := dates[len(dates)-1]
+	return &last
 }
 
-// NextFutureOccurrence returns the next occurrence strictly after today.
-// Used for the API response's next_occurrence field.
+// NextFutureOccurrence returns the next occurrence strictly after `today`.
+// Used for the API response's next_occurrence field. UTC-only — the response
+// is informational and doesn't drive generation.
 func NextFutureOccurrence(startDate time.Time, frequency string, dayOfMonth *int, daysOfWeek []int, today time.Time) *time.Time {
-	next := startOfDay(startDate)
+	return nextOccurrenceAfter(startDate, frequency, dayOfMonth, daysOfWeek, today, time.UTC)
+}
 
-	switch frequency {
-	case "daily":
-		for !next.After(today) {
-			next = next.AddDate(0, 0, 1)
-		}
+// nextOccurrenceAfter returns the first occurrence strictly greater than
+// `after`, in the given location. Bounded search: walks at most ~400 days for
+// daily/weekly, ~13 months for monthly, ~5 years for yearly before giving up.
+func nextOccurrenceAfter(startDate time.Time, frequency string, dayOfMonth *int, daysOfWeek []int, after time.Time, loc *time.Location) *time.Time {
+	if loc == nil {
+		loc = time.UTC
+	}
+	startDay := startOfDayIn(startDate, loc)
+	afterDay := startOfDayIn(after, loc)
 
-	case "weekly":
-		if len(daysOfWeek) == 0 {
-			for !next.After(today) {
-				next = next.AddDate(0, 0, 7)
-			}
-		} else {
-			for !next.After(today) {
-				weekday := int(next.Weekday())
-				if containsInt(daysOfWeek, weekday) && next.After(today) {
-					break
-				}
-				next = next.AddDate(0, 0, 1)
-			}
-		}
-
-	case "monthly":
-		if dayOfMonth == nil {
-			for !next.After(today) {
-				next = next.AddDate(0, 1, 0)
-			}
-		} else {
-			day := *dayOfMonth
-			if day > 28 {
-				day = 28
-			}
-			// Snap `next` to the first day-of-month occurrence on or after startDate.
-			y, m, _ := next.Date()
-			candidate := time.Date(y, m, day, 0, 0, 0, 0, time.UTC)
-			if candidate.Before(next) {
-				m++
-				if m > 12 {
-					m = 1
-					y++
-				}
-				candidate = time.Date(y, m, day, 0, 0, 0, 0, time.UTC)
-			}
-			next = candidate
-			// Advance by whole months until strictly after today.
-			for !next.After(today) {
-				y, m, _ := next.Date()
-				m++
-				if m > 12 {
-					m = 1
-					y++
-				}
-				next = time.Date(y, m, day, 0, 0, 0, 0, time.UTC)
-			}
-		}
-
-	case "yearly":
-		for !next.After(today) {
-			next = next.AddDate(1, 0, 0)
-		}
-
-	default:
+	// Probe horizon — comfortably covers the largest valid interval.
+	horizon := afterDay.AddDate(5, 0, 0)
+	if startDay.After(horizon) {
 		return nil
 	}
 
-	return &next
+	cursor := startDay
+	if cursor.Before(afterDay) || cursor.Equal(afterDay) {
+		// Start enumeration from the day after `after`.
+		cursor = afterDay.AddDate(0, 0, 1)
+	}
+
+	switch frequency {
+	case "daily":
+		return &cursor
+	case "weekly":
+		if len(daysOfWeek) == 0 {
+			diffDays := int(cursor.Sub(startDay).Hours() / 24)
+			if mod := diffDays % 7; mod != 0 {
+				cursor = cursor.AddDate(0, 0, 7-mod)
+			}
+			if cursor.After(horizon) {
+				return nil
+			}
+			return &cursor
+		}
+		for i := 0; i < 14; i++ {
+			if containsInt(daysOfWeek, int(cursor.Weekday())) {
+				return &cursor
+			}
+			cursor = cursor.AddDate(0, 0, 1)
+		}
+		return nil
+	case "monthly":
+		td := startDay.Day()
+		if dayOfMonth != nil {
+			td = *dayOfMonth
+		}
+		y, m, _ := cursor.Date()
+		for i := 0; i < 14; i++ {
+			fire := resolveMonthDay(y, m, td, loc)
+			if !fire.Before(cursor) {
+				return &fire
+			}
+			y, m = advanceMonth(y, m)
+		}
+		return nil
+	case "yearly":
+		y, _, _ := cursor.Date()
+		for i := 0; i < 6; i++ {
+			fire := resolveMonthDay(y, startDay.Month(), startDay.Day(), loc)
+			if !fire.Before(cursor) {
+				return &fire
+			}
+			y++
+		}
+		return nil
+	default:
+		return nil
+	}
 }
 
+func startOfDayIn(t time.Time, loc *time.Location) time.Time {
+	if loc == nil {
+		loc = time.UTC
+	}
+	in := t.In(loc)
+	y, m, d := in.Date()
+	return time.Date(y, m, d, 0, 0, 0, 0, loc)
+}
+
+// startOfDay is kept for backwards compatibility with callers (and tests) that
+// don't care about timezone — it always returns UTC midnight.
 func startOfDay(t time.Time) time.Time {
-	y, m, d := t.UTC().Date()
-	return time.Date(y, m, d, 0, 0, 0, 0, time.UTC)
+	return startOfDayIn(t, time.UTC)
 }
 
 func containsInt(slice []int, val int) bool {

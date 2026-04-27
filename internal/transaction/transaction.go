@@ -487,12 +487,51 @@ func DeleteTransaction(c *gin.Context, database *db.DB) {
 		return
 	}
 
+	// For recurring-linked deletes, fetch the date so we can record a skip
+	// row before the row disappears. Without this the next scheduler tick
+	// would happily regenerate the deleted instance.
+	var txDate time.Time
+	if recurringTxID != nil {
+		if err := database.Pool.QueryRow(c.Request.Context(),
+			`SELECT date FROM transactions WHERE id = $1 AND user_id = $2`, id, userID,
+		).Scan(&txDate); err != nil {
+			c.JSON(404, gin.H{"error": "transaction not found"})
+			return
+		}
+	}
+
 	// Hard delete plain and recurring-linked transactions immediately.
 	// Only group-linked transactions use soft delete (handled above via the group endpoint).
-	_, err = database.Pool.Exec(c.Request.Context(),
-		`DELETE FROM transactions WHERE id = $1 AND user_id = $2`, id, userID)
+	dbTx, err := database.Pool.Begin(c.Request.Context())
 	if err != nil {
+		c.JSON(500, gin.H{"error": "failed to start transaction"})
+		return
+	}
+	defer func() { _ = dbTx.Rollback(c.Request.Context()) }()
+
+	if _, err = dbTx.Exec(c.Request.Context(),
+		`DELETE FROM transactions WHERE id = $1 AND user_id = $2`, id, userID); err != nil {
 		c.JSON(500, gin.H{"error": "failed to delete transaction"})
+		return
+	}
+
+	if recurringTxID != nil {
+		// Record the skip so GenerateDueTransactions never re-creates this
+		// occurrence. Idempotent via PRIMARY KEY (recurring_transaction_id, occurrence_date).
+		if _, err = dbTx.Exec(c.Request.Context(),
+			`INSERT INTO recurring_skipped_occurrences (recurring_transaction_id, occurrence_date)
+			 VALUES ($1, $2::date)
+			 ON CONFLICT DO NOTHING`,
+			*recurringTxID, txDate,
+		); err != nil {
+			log.Printf("[WARN] failed to record recurring skip for tx %s: %v", id, err)
+			// Non-fatal: even if the skip row insert fails, the user's delete
+			// already happened. Worst case the next tick regenerates one row.
+		}
+	}
+
+	if err := dbTx.Commit(c.Request.Context()); err != nil {
+		c.JSON(500, gin.H{"error": "failed to commit"})
 		return
 	}
 

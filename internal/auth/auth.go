@@ -35,7 +35,20 @@ type SignupRequest struct {
 	Email      string `json:"email" validate:"required,email"`
 	Username   string `json:"username" validate:"required,min=3"`
 	Password   string `json:"password" validate:"required,min=6"`
+	Timezone   string `json:"timezone"`
 	InviteCode string `json:"invite_code"`
+}
+
+// validateTimezone returns the canonical IANA name if valid, "UTC" if empty,
+// or an error if the name does not resolve via time.LoadLocation.
+func validateTimezone(tz string) (string, error) {
+	if strings.TrimSpace(tz) == "" {
+		return "UTC", nil
+	}
+	if _, err := time.LoadLocation(tz); err != nil {
+		return "", fmt.Errorf("invalid timezone %q: %w", tz, err)
+	}
+	return tz, nil
 }
 
 type LoginRequest struct {
@@ -80,6 +93,12 @@ func Signup(c *gin.Context, service *AuthService) {
 		}
 	}
 
+	tz, err := validateTimezone(req.Timezone)
+	if err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+
 	// Hash password
 	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 	if err != nil {
@@ -91,10 +110,10 @@ func Signup(c *gin.Context, service *AuthService) {
 	var u user.User
 	var rawCreatedAt time.Time
 	err = database.Pool.QueryRow(c.Request.Context(),
-		`INSERT INTO users (email, username, password_hash) VALUES ($1, $2, $3)
+		`INSERT INTO users (email, username, password_hash, timezone) VALUES ($1, $2, $3, $4)
 		 ON CONFLICT (email) DO NOTHING
-		 RETURNING id, email, username, currency, email_verified, created_at`,
-		req.Email, req.Username, string(hash)).Scan(&u.ID, &u.Email, &u.Username, &u.Currency, &u.EmailVerified, &rawCreatedAt)
+		 RETURNING id, email, username, currency, timezone, email_verified, created_at`,
+		req.Email, req.Username, string(hash), tz).Scan(&u.ID, &u.Email, &u.Username, &u.Currency, &u.Timezone, &u.EmailVerified, &rawCreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		c.JSON(400, gin.H{"error": "user already exists"})
 		return
@@ -159,8 +178,8 @@ func GetMe(c *gin.Context, service *AuthService) {
 	var u user.User
 	var rawCreatedAt time.Time
 	err := service.DB.Pool.QueryRow(c.Request.Context(),
-		"SELECT id, email, username, currency, email_verified, created_at FROM users WHERE id = $1", userID).Scan(
-		&u.ID, &u.Email, &u.Username, &u.Currency, &u.EmailVerified, &rawCreatedAt)
+		"SELECT id, email, username, currency, timezone, email_verified, created_at FROM users WHERE id = $1", userID).Scan(
+		&u.ID, &u.Email, &u.Username, &u.Currency, &u.Timezone, &u.EmailVerified, &rawCreatedAt)
 	if err != nil {
 		c.JSON(404, gin.H{"error": "user not found"})
 		return
@@ -189,8 +208,8 @@ func Login(c *gin.Context, service *AuthService) {
 	var u user.User
 	var rawCreatedAt time.Time
 	err := database.Pool.QueryRow(c.Request.Context(),
-		"SELECT id, email, username, password_hash, currency, email_verified, created_at FROM users WHERE email = $1", req.Email).Scan(
-		&u.ID, &u.Email, &u.Username, &u.PasswordHash, &u.Currency, &u.EmailVerified, &rawCreatedAt)
+		"SELECT id, email, username, password_hash, currency, timezone, email_verified, created_at FROM users WHERE email = $1", req.Email).Scan(
+		&u.ID, &u.Email, &u.Username, &u.PasswordHash, &u.Currency, &u.Timezone, &u.EmailVerified, &rawCreatedAt)
 	if err != nil {
 		c.JSON(401, gin.H{"error": "invalid credentials"})
 		return
@@ -269,6 +288,7 @@ type UpdateMeRequest struct {
 	Email    *string `json:"email,omitempty" validate:"omitempty,email"`
 	Password *string `json:"password,omitempty" validate:"omitempty,min=6"`
 	Currency *string `json:"currency,omitempty" validate:"omitempty,len=3"`
+	Timezone *string `json:"timezone,omitempty"`
 }
 
 func UpdateMe(c *gin.Context, service *AuthService) {
@@ -294,9 +314,18 @@ func UpdateMe(c *gin.Context, service *AuthService) {
 		return
 	}
 
-	if req.Username == nil && req.Email == nil && req.Password == nil && req.Currency == nil {
+	if req.Username == nil && req.Email == nil && req.Password == nil && req.Currency == nil && req.Timezone == nil {
 		c.JSON(400, gin.H{"error": "no fields to update"})
 		return
+	}
+
+	if req.Timezone != nil {
+		canonical, err := validateTimezone(*req.Timezone)
+		if err != nil {
+			c.JSON(400, gin.H{"error": err.Error()})
+			return
+		}
+		req.Timezone = &canonical
 	}
 
 	query := `UPDATE users SET`
@@ -347,15 +376,21 @@ func UpdateMe(c *gin.Context, service *AuthService) {
 		n++
 	}
 
+	if req.Timezone != nil {
+		query += fmt.Sprintf(` timezone = $%d,`, n)
+		args = append(args, *req.Timezone)
+		n++
+	}
+
 	// Add updated_at and remove trailing comma, then add WHERE + RETURNING
 	query += ` updated_at = NOW()`
-	query += fmt.Sprintf(` WHERE id = $%d RETURNING id, email, username, currency, email_verified, created_at`, n)
+	query += fmt.Sprintf(` WHERE id = $%d RETURNING id, email, username, currency, timezone, email_verified, created_at`, n)
 	args = append(args, userID)
 
 	var u user.User
 	var rawCreatedAt time.Time
 	err := service.DB.Pool.QueryRow(c.Request.Context(), query, args...).Scan(
-		&u.ID, &u.Email, &u.Username, &u.Currency, &u.EmailVerified, &rawCreatedAt)
+		&u.ID, &u.Email, &u.Username, &u.Currency, &u.Timezone, &u.EmailVerified, &rawCreatedAt)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "failed to update user"})
 		return

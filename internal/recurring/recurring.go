@@ -336,9 +336,20 @@ func UpdateRecurringTransaction(c *gin.Context, db *db.DB) {
 		return
 	}
 
+	// If any schedule-affecting field changes, reset last_added_date so the
+	// generator re-evaluates from start_date under the new rule. Combined with
+	// the (user_id, recurring_transaction_id, date) unique index and the
+	// recurring_skipped_occurrences table, this is safe — we won't duplicate
+	// already-generated instances and we won't regenerate user-deleted ones.
+	scheduleChanged := req.Frequency != nil || req.DayOfMonth != nil || req.DaysOfWeek != nil || req.StartDate != nil
+
 	query := `UPDATE recurring_transactions SET updated_at = NOW()`
 	args := []interface{}{}
 	argCount := 1
+
+	if scheduleChanged {
+		query += `, last_added_date = NULL`
+	}
 
 	if req.Type != nil {
 		query += fmt.Sprintf(", type = $%d", argCount)
