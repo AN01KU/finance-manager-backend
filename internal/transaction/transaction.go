@@ -48,6 +48,13 @@ type CreateTransactionRequest struct {
 	Description            *string    `json:"description,omitempty" validate:"omitempty,max=255"`
 	Notes                  *string    `json:"notes,omitempty"`
 	RecurringTransactionID *uuid.UUID `json:"recurring_transaction_id,omitempty"`
+	// UpdatedAt is the client-side wall-clock for this version of the row,
+	// in epoch ms. When syncing offline-queued writes, the server uses it as
+	// a last-write-wins guard: an upsert that finds a newer row server-side
+	// is rejected with 409 STALE_WRITE so a stale device cannot overwrite a
+	// fresher edit from another device. Optional — defaults to NOW() on the
+	// server (no LWW protection in that case).
+	UpdatedAt *int64 `json:"updated_at,omitempty"`
 }
 
 type UpdateTransactionRequest struct {
@@ -89,13 +96,21 @@ func CreateTransaction(c *gin.Context, database *db.DB) {
 		id = *req.ID
 	}
 
+	// LWW: prefer the client-supplied updated_at when present so a stale device
+	// can be detected against a newer server-side row. Fallback to NOW() when
+	// absent (legacy behavior; no LWW protection but never blocks).
+	updatedAt := time.Now()
+	if req.UpdatedAt != nil {
+		updatedAt = time.UnixMilli(*req.UpdatedAt).UTC()
+	}
+
 	var tx Transaction
 	var rawDate, rawCreatedAt, rawUpdatedAt time.Time
 
 	err := database.Pool.QueryRow(c.Request.Context(),
 		`WITH ins AS (
 		   INSERT INTO transactions (id, user_id, type, amount, category, date, description, notes, recurring_transaction_id, updated_at)
-		   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+		   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 		   ON CONFLICT (id) DO UPDATE SET
 		     type = EXCLUDED.type,
 		     amount = EXCLUDED.amount,
@@ -104,8 +119,9 @@ func CreateTransaction(c *gin.Context, database *db.DB) {
 		     description = EXCLUDED.description,
 		     notes = EXCLUDED.notes,
 		     recurring_transaction_id = EXCLUDED.recurring_transaction_id,
-		     updated_at = NOW()
+		     updated_at = EXCLUDED.updated_at
 		   WHERE transactions.user_id = EXCLUDED.user_id
+		     AND transactions.updated_at <= EXCLUDED.updated_at
 		   RETURNING id, user_id, type, amount, category, date, description, notes, recurring_transaction_id, group_transaction_id, settlement_id, is_deleted, created_at, updated_at
 		 )
 		 SELECT ins.*, g.name AS group_name
@@ -113,7 +129,7 @@ func CreateTransaction(c *gin.Context, database *db.DB) {
 		 LEFT JOIN group_transactions gt ON ins.group_transaction_id = gt.id
 		 LEFT JOIN groups g ON gt.group_id = g.id`,
 		id, userID, req.Type, amount, req.Category, date,
-		req.Description, req.Notes, req.RecurringTransactionID,
+		req.Description, req.Notes, req.RecurringTransactionID, updatedAt,
 	).Scan(
 		&tx.ID, &tx.UserID, &tx.Type, &tx.Amount, &tx.Category,
 		&rawDate, &tx.Description, &tx.Notes,
@@ -123,7 +139,25 @@ func CreateTransaction(c *gin.Context, database *db.DB) {
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			c.JSON(409, gin.H{"error": "transaction ID conflict with another user"})
+			// Distinguish: row exists but the WHERE rejected the update.
+			// Either (a) UUID belongs to another user, or (b) the existing
+			// row is newer than this incoming write (stale write).
+			var existingUserID uuid.UUID
+			var existingUpdatedAt time.Time
+			lookupErr := database.Pool.QueryRow(c.Request.Context(),
+				`SELECT user_id, updated_at FROM transactions WHERE id = $1`, id,
+			).Scan(&existingUserID, &existingUpdatedAt)
+			if lookupErr == nil {
+				if existingUserID != userID {
+					c.JSON(409, gin.H{"error": "transaction ID conflict with another user", "code": "ID_OWNED_BY_ANOTHER_USER"})
+					return
+				}
+				if existingUpdatedAt.After(updatedAt) {
+					c.JSON(409, gin.H{"error": "stale write: a newer version exists on the server", "code": "STALE_WRITE"})
+					return
+				}
+			}
+			c.JSON(409, gin.H{"error": "transaction ID conflict"})
 			return
 		}
 		log.Printf("[ERROR] CreateTransaction: %v", err)
