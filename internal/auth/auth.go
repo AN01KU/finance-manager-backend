@@ -35,7 +35,20 @@ type SignupRequest struct {
 	Email      string `json:"email" validate:"required,email"`
 	Username   string `json:"username" validate:"required,min=3"`
 	Password   string `json:"password" validate:"required,min=6"`
+	Timezone   string `json:"timezone"`
 	InviteCode string `json:"invite_code"`
+}
+
+// validateTimezone returns the canonical IANA name if valid, "UTC" if empty,
+// or an error if the name does not resolve via time.LoadLocation.
+func validateTimezone(tz string) (string, error) {
+	if strings.TrimSpace(tz) == "" {
+		return "UTC", nil
+	}
+	if _, err := time.LoadLocation(tz); err != nil {
+		return "", fmt.Errorf("invalid timezone %q: %w", tz, err)
+	}
+	return tz, nil
 }
 
 type LoginRequest struct {
@@ -80,6 +93,12 @@ func Signup(c *gin.Context, service *AuthService) {
 		}
 	}
 
+	tz, err := validateTimezone(req.Timezone)
+	if err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+
 	// Hash password
 	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 	if err != nil {
@@ -91,10 +110,10 @@ func Signup(c *gin.Context, service *AuthService) {
 	var u user.User
 	var rawCreatedAt time.Time
 	err = database.Pool.QueryRow(c.Request.Context(),
-		`INSERT INTO users (email, username, password_hash) VALUES ($1, $2, $3)
+		`INSERT INTO users (email, username, password_hash, timezone) VALUES ($1, $2, $3, $4)
 		 ON CONFLICT (email) DO NOTHING
-		 RETURNING id, email, username, currency, email_verified, created_at`,
-		req.Email, req.Username, string(hash)).Scan(&u.ID, &u.Email, &u.Username, &u.Currency, &u.EmailVerified, &rawCreatedAt)
+		 RETURNING id, email, username, currency, timezone, email_verified, created_at`,
+		req.Email, req.Username, string(hash), tz).Scan(&u.ID, &u.Email, &u.Username, &u.Currency, &u.Timezone, &u.EmailVerified, &rawCreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		c.JSON(400, gin.H{"error": "user already exists"})
 		return
@@ -159,8 +178,8 @@ func GetMe(c *gin.Context, service *AuthService) {
 	var u user.User
 	var rawCreatedAt time.Time
 	err := service.DB.Pool.QueryRow(c.Request.Context(),
-		"SELECT id, email, username, currency, email_verified, created_at FROM users WHERE id = $1", userID).Scan(
-		&u.ID, &u.Email, &u.Username, &u.Currency, &u.EmailVerified, &rawCreatedAt)
+		"SELECT id, email, username, currency, timezone, email_verified, created_at FROM users WHERE id = $1", userID).Scan(
+		&u.ID, &u.Email, &u.Username, &u.Currency, &u.Timezone, &u.EmailVerified, &rawCreatedAt)
 	if err != nil {
 		c.JSON(404, gin.H{"error": "user not found"})
 		return
@@ -189,8 +208,8 @@ func Login(c *gin.Context, service *AuthService) {
 	var u user.User
 	var rawCreatedAt time.Time
 	err := database.Pool.QueryRow(c.Request.Context(),
-		"SELECT id, email, username, password_hash, currency, email_verified, created_at FROM users WHERE email = $1", req.Email).Scan(
-		&u.ID, &u.Email, &u.Username, &u.PasswordHash, &u.Currency, &u.EmailVerified, &rawCreatedAt)
+		"SELECT id, email, username, password_hash, currency, timezone, email_verified, created_at FROM users WHERE email = $1", req.Email).Scan(
+		&u.ID, &u.Email, &u.Username, &u.PasswordHash, &u.Currency, &u.Timezone, &u.EmailVerified, &rawCreatedAt)
 	if err != nil {
 		c.JSON(401, gin.H{"error": "invalid credentials"})
 		return
@@ -239,10 +258,15 @@ func Logout(c *gin.Context, service *AuthService) {
 		return
 	}
 
+	// Tolerate an empty body — clients that just want "logout this user, all
+	// devices" send POST /auth/logout with no payload. ShouldBindJSON returns
+	// io.EOF on empty body, which we treat as "no specific session".
 	var req LogoutRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(400, gin.H{"error": err.Error()})
-		return
+	if c.Request.ContentLength > 0 {
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(400, gin.H{"error": err.Error()})
+			return
+		}
 	}
 
 	if req.SyncSessionID != nil {
@@ -261,6 +285,10 @@ func Logout(c *gin.Context, service *AuthService) {
 		invalidateAllSessions(c.Request.Context(), service.DB, userID, "logout")
 	}
 
+	// Revoke all JWTs issued before now so the bearer token cannot keep
+	// reading data after logout.
+	invalidateJWTs(c.Request.Context(), service.DB, userID)
+
 	c.JSON(200, gin.H{"message": "logged out successfully"})
 }
 
@@ -269,6 +297,7 @@ type UpdateMeRequest struct {
 	Email    *string `json:"email,omitempty" validate:"omitempty,email"`
 	Password *string `json:"password,omitempty" validate:"omitempty,min=6"`
 	Currency *string `json:"currency,omitempty" validate:"omitempty,len=3"`
+	Timezone *string `json:"timezone,omitempty"`
 }
 
 func UpdateMe(c *gin.Context, service *AuthService) {
@@ -294,9 +323,18 @@ func UpdateMe(c *gin.Context, service *AuthService) {
 		return
 	}
 
-	if req.Username == nil && req.Email == nil && req.Password == nil && req.Currency == nil {
+	if req.Username == nil && req.Email == nil && req.Password == nil && req.Currency == nil && req.Timezone == nil {
 		c.JSON(400, gin.H{"error": "no fields to update"})
 		return
+	}
+
+	if req.Timezone != nil {
+		canonical, err := validateTimezone(*req.Timezone)
+		if err != nil {
+			c.JSON(400, gin.H{"error": err.Error()})
+			return
+		}
+		req.Timezone = &canonical
 	}
 
 	query := `UPDATE users SET`
@@ -347,24 +385,34 @@ func UpdateMe(c *gin.Context, service *AuthService) {
 		n++
 	}
 
+	if req.Timezone != nil {
+		query += fmt.Sprintf(` timezone = $%d,`, n)
+		args = append(args, *req.Timezone)
+		n++
+	}
+
 	// Add updated_at and remove trailing comma, then add WHERE + RETURNING
 	query += ` updated_at = NOW()`
-	query += fmt.Sprintf(` WHERE id = $%d RETURNING id, email, username, currency, email_verified, created_at`, n)
+	query += fmt.Sprintf(` WHERE id = $%d RETURNING id, email, username, currency, timezone, email_verified, created_at`, n)
 	args = append(args, userID)
 
 	var u user.User
 	var rawCreatedAt time.Time
 	err := service.DB.Pool.QueryRow(c.Request.Context(), query, args...).Scan(
-		&u.ID, &u.Email, &u.Username, &u.Currency, &u.EmailVerified, &rawCreatedAt)
+		&u.ID, &u.Email, &u.Username, &u.Currency, &u.Timezone, &u.EmailVerified, &rawCreatedAt)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "failed to update user"})
 		return
 	}
 	u.CreatedAt = helpers.FromTime(rawCreatedAt)
 
-	// Password or email change — invalidate all sync sessions to force re-login
+	// Password or email change — invalidate all sync sessions AND all JWTs
+	// to force re-login. Without the JWT bump, an attacker holding a leaked
+	// bearer token could continue to read /me, /transactions, etc. for up
+	// to 24h after the credential change.
 	if req.Password != nil || req.Email != nil {
 		invalidateAllSessions(c.Request.Context(), service.DB, userID, "credentials_changed")
+		invalidateJWTs(c.Request.Context(), service.DB, userID)
 	}
 
 	c.JSON(200, u)
@@ -442,6 +490,18 @@ func invalidateAllSessions(ctx context.Context, database *db.DB, userID uuid.UUI
 		`UPDATE sync_sessions SET invalidated_at = now(), invalidation_reason = $1
 		 WHERE user_id = $2 AND invalidated_at IS NULL`,
 		reason, userID,
+	)
+}
+
+// invalidateJWTs bumps users.tokens_invalidated_after to NOW() so any JWT
+// issued before this instant is rejected by JWTAuth. Used on logout,
+// password change, and email change to ensure the JWT cannot outlive the
+// security event.
+func invalidateJWTs(ctx context.Context, database *db.DB, userID uuid.UUID) {
+	_, _ = database.Pool.Exec(ctx,
+		`UPDATE users SET tokens_invalidated_after = now(), updated_at = now()
+		 WHERE id = $1`,
+		userID,
 	)
 }
 

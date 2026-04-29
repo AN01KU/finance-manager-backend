@@ -52,7 +52,11 @@ func computeBalances(members []GroupMember, payers []payerEntry, splits []splitE
 
 	balances := []Balance{}
 	for uid, amt := range bal {
-		balances = append(balances, Balance{UserID: uid, Amount: amt.InexactFloat64()})
+		// Round to 2 decimal places before converting to float to suppress
+		// float residuals (e.g. 0.0000001) from accumulated decimal arithmetic.
+		// TODO(R2): per-currency precision (JPY=0, KWD=3) once multi-currency
+		// support lands.
+		balances = append(balances, Balance{UserID: uid, Amount: amt.Round(2).InexactFloat64()})
 	}
 	return balances
 }

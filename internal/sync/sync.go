@@ -1,6 +1,7 @@
 package sync
 
 import (
+	"errors"
 	"log"
 	"time"
 
@@ -12,6 +13,15 @@ import (
 )
 
 const currentSyncVersion = "1"
+
+// Reason codes returned to clients on sync validation failures. Distinct codes
+// so the client can take the right action (retry vs orphan-and-reauth).
+const (
+	ReasonNotFound  = "SYNC_SESSION_NOT_FOUND"
+	ReasonExpired   = "SYNC_SESSION_EXPIRED"
+	ReasonMismatch  = "SYNC_SESSION_MISMATCH"
+	ReasonTransient = "SYNC_TRANSIENT" // DB blip, pool exhausted; client should retry
+)
 
 func checkSyncVersion(c *gin.Context) {
 	version := c.GetHeader("X-Sync-Version")
@@ -33,9 +43,18 @@ type PreflightResponse struct {
 	Reason string `json:"reason,omitempty"`
 }
 
-// ValidateSession checks if a sync session is active and belongs to the given user.
-// Returns a reason string if invalid, or empty string if valid.
-func ValidateSession(c *gin.Context, database *db.DB, syncSessionID uuid.UUID, jwtUserID uuid.UUID) (valid bool, reason string) {
+// ValidateSession checks whether a sync session is active and belongs to the
+// given JWT user.
+//
+// Return values:
+//   - valid:     true only when the session exists, is not expired, and matches
+//     the JWT user.
+//   - reason:    one of the SYNC_* codes when valid=false.
+//   - transient: true when the failure is a DB-level issue (blip / pool /
+//     deadline) that should NOT cause the client to orphan its
+//     queue. When transient is true, callers should respond 502 so
+//     the client retries.
+func ValidateSession(c *gin.Context, database *db.DB, syncSessionID uuid.UUID, jwtUserID uuid.UUID) (valid bool, reason string, transient bool) {
 	var sessionUserID uuid.UUID
 	var invalidatedAt *time.Time
 	var createdAt time.Time
@@ -45,36 +64,43 @@ func ValidateSession(c *gin.Context, database *db.DB, syncSessionID uuid.UUID, j
 		syncSessionID,
 	).Scan(&sessionUserID, &invalidatedAt, &createdAt)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		log.Printf("[SYNC] sync_session_not_found session_id=%s", syncSessionID)
-		return false, "SYNC_SESSION_NOT_FOUND"
+		return false, ReasonNotFound, false
 	}
 	if err != nil {
-		log.Printf("[SYNC] sync_session_not_found session_id=%s", syncSessionID)
-		return false, "SYNC_SESSION_NOT_FOUND"
+		// Transient DB error — caller should let the client retry rather than
+		// trash its offline queue.
+		log.Printf("[SYNC] sync_session_transient session_id=%s err=%v", syncSessionID, err)
+		return false, ReasonTransient, true
 	}
 	if invalidatedAt != nil {
 		ageDays := int(time.Since(createdAt).Hours() / 24)
 		log.Printf("[SYNC] sync_session_expired session_id=%s session_age_days=%d", syncSessionID, ageDays)
-		return false, "SYNC_SESSION_EXPIRED"
+		return false, ReasonExpired, false
 	}
 	if sessionUserID != jwtUserID {
 		log.Printf("[SYNC] sync_session_mismatch jwt_user_id=%s session_user_id=%s session_id=%s", jwtUserID, sessionUserID, syncSessionID)
-		return false, "SYNC_SESSION_MISMATCH"
+		return false, ReasonMismatch, false
 	}
 
 	log.Printf("[SYNC] sync_preflight_ok session_id=%s user_id=%s", syncSessionID, jwtUserID)
-	return true, ""
+	return true, "", false
 }
 
-// SyncSessionGuard returns a middleware that validates the optional X-Sync-Session-ID header.
-// If the header is present, the session is validated against the JWT user.
-// If the header is absent, the request proceeds as normal (backwards compatible).
+// SyncSessionGuard returns middleware that REQUIRES a valid X-Sync-Session-ID
+// header on every mutating request. There is no opt-out: a missing header is
+// a 400, an invalid header is a 400, and a stale/foreign session is a 409.
+//
+// On successful validation, last_seen_at is refreshed so an actively-syncing
+// client never gets expired by the TTL cleanup just because it doesn't call
+// preflight on every batch.
 func SyncSessionGuard(database *db.DB) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		sessionHeader := c.GetHeader("X-Sync-Session-ID")
 		if sessionHeader == "" {
-			c.Next()
+			c.JSON(400, gin.H{"error": "X-Sync-Session-ID header is required"})
+			c.Abort()
 			return
 		}
 
@@ -100,11 +126,26 @@ func SyncSessionGuard(database *db.DB) gin.HandlerFunc {
 			return
 		}
 
-		valid, reason := ValidateSession(c, database, syncSessionID, jwtUserID)
+		valid, reason, transient := ValidateSession(c, database, syncSessionID, jwtUserID)
 		if !valid {
-			c.JSON(409, PreflightResponse{Valid: false, Reason: reason})
+			if transient {
+				// 502 → the client should back off and retry; do NOT trash queue.
+				c.JSON(502, PreflightResponse{Valid: false, Reason: reason})
+			} else {
+				c.JSON(409, PreflightResponse{Valid: false, Reason: reason})
+			}
 			c.Abort()
 			return
+		}
+
+		// Refresh last_seen_at so an actively-syncing client doesn't get
+		// expired by the TTL job just because they never call preflight.
+		// Best-effort: log and proceed on failure.
+		if _, err := database.Pool.Exec(c.Request.Context(),
+			`UPDATE sync_sessions SET last_seen_at = now() WHERE id = $1`,
+			syncSessionID,
+		); err != nil {
+			log.Printf("[SYNC] failed to refresh last_seen_at session_id=%s err=%v", syncSessionID, err)
 		}
 
 		c.Next()
@@ -131,9 +172,13 @@ func Preflight(c *gin.Context, database *db.DB) {
 		return
 	}
 
-	valid, reason := ValidateSession(c, database, req.SyncSessionID, jwtUserID)
+	valid, reason, transient := ValidateSession(c, database, req.SyncSessionID, jwtUserID)
 	if !valid {
-		c.JSON(409, PreflightResponse{Valid: false, Reason: reason})
+		if transient {
+			c.JSON(502, PreflightResponse{Valid: false, Reason: reason})
+		} else {
+			c.JSON(409, PreflightResponse{Valid: false, Reason: reason})
+		}
 		return
 	}
 

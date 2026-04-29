@@ -1,6 +1,7 @@
 package recurring
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 	"time"
@@ -8,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/go-playground/validator/v10"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/shopspring/decimal"
 
 	"github.com/yanonymousV2/finance-manager-backend/internal/db"
@@ -49,6 +51,13 @@ type CreateRecurringTransactionRequest struct {
 	StartDate  int64      `json:"start_date" validate:"required"`
 	EndDate    *int64     `json:"end_date,omitempty"`
 	Notes      *string    `json:"notes,omitempty"`
+	// UpdatedAt is the client-side wall-clock for this version of the row,
+	// in epoch ms. When syncing offline-queued writes, the server uses it as
+	// a last-write-wins guard: an upsert that finds a newer row server-side
+	// is rejected with 409 STALE_WRITE so a stale device cannot overwrite a
+	// fresher edit from another device. Optional — defaults to NOW() on the
+	// server (no LWW protection in that case).
+	UpdatedAt *int64 `json:"updated_at,omitempty"`
 }
 
 type UpdateRecurringTransactionRequest struct {
@@ -121,12 +130,20 @@ func CreateRecurringTransaction(c *gin.Context, db *db.DB) {
 		recurringID = *req.ID
 	}
 
+	// LWW: prefer the client-supplied updated_at when present so a stale device
+	// can be detected against a newer server-side row. Fallback to NOW() when
+	// absent (legacy behavior; no LWW protection but never blocks).
+	updatedAt := time.Now()
+	if req.UpdatedAt != nil {
+		updatedAt = time.UnixMilli(*req.UpdatedAt).UTC()
+	}
+
 	var rt RecurringTransaction
 	var rawStartDate, rawCreatedAt, rawUpdatedAt time.Time
 	var rawEndDate, rawLastAddedDate *time.Time
 	err := db.Pool.QueryRow(c.Request.Context(),
 		`INSERT INTO recurring_transactions (id, user_id, type, name, amount, category, frequency, day_of_month, days_of_week, start_date, end_date, is_active, notes, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, true, $12, NOW())
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, true, $12, $13)
 		 ON CONFLICT (id) DO UPDATE SET
 		   type = EXCLUDED.type,
 		   name = EXCLUDED.name,
@@ -138,13 +155,38 @@ func CreateRecurringTransaction(c *gin.Context, db *db.DB) {
 		   start_date = EXCLUDED.start_date,
 		   end_date = EXCLUDED.end_date,
 		   notes = EXCLUDED.notes,
-		   updated_at = NOW()
+		   updated_at = EXCLUDED.updated_at
+		 WHERE recurring_transactions.user_id = EXCLUDED.user_id
+		   AND recurring_transactions.updated_at <= EXCLUDED.updated_at
 		 RETURNING id, user_id, type, name, amount, category, frequency, day_of_month, days_of_week, start_date, end_date, is_active, last_added_date, notes, created_at, updated_at`,
-		recurringID, userID, req.Type, req.Name, amount, req.Category, req.Frequency, req.DayOfMonth, req.DaysOfWeek, startDate, endDate, req.Notes).Scan(
+		recurringID, userID, req.Type, req.Name, amount, req.Category, req.Frequency, req.DayOfMonth, req.DaysOfWeek, startDate, endDate, req.Notes, updatedAt).Scan(
 		&rt.ID, &rt.UserID, &rt.Type, &rt.Name, &rt.Amount, &rt.Category,
 		&rt.Frequency, &rt.DayOfMonth, &rt.DaysOfWeek, &rawStartDate,
 		&rawEndDate, &rt.IsActive, &rawLastAddedDate, &rt.Notes, &rawCreatedAt, &rawUpdatedAt)
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			// Distinguish: row exists but the WHERE rejected the update.
+			// Either (a) UUID belongs to another user, or (b) the existing
+			// row is newer than this incoming write (stale write). Stale
+			// reject = full no-op (no last_added_date reset, no row mutation).
+			var existingUserID uuid.UUID
+			var existingUpdatedAt time.Time
+			lookupErr := db.Pool.QueryRow(c.Request.Context(),
+				`SELECT user_id, updated_at FROM recurring_transactions WHERE id = $1`, recurringID,
+			).Scan(&existingUserID, &existingUpdatedAt)
+			if lookupErr == nil {
+				if existingUserID != userID {
+					c.JSON(409, gin.H{"error": "recurring transaction ID conflict with another user", "code": "ID_OWNED_BY_ANOTHER_USER"})
+					return
+				}
+				if existingUpdatedAt.After(updatedAt) {
+					c.JSON(409, gin.H{"error": "stale write: a newer version exists on the server", "code": "STALE_WRITE"})
+					return
+				}
+			}
+			c.JSON(409, gin.H{"error": "recurring transaction ID conflict"})
+			return
+		}
 		c.JSON(500, gin.H{"error": "failed to create recurring transaction"})
 		return
 	}
@@ -336,9 +378,20 @@ func UpdateRecurringTransaction(c *gin.Context, db *db.DB) {
 		return
 	}
 
+	// If any schedule-affecting field changes, reset last_added_date so the
+	// generator re-evaluates from start_date under the new rule. Combined with
+	// the (user_id, recurring_transaction_id, date) unique index and the
+	// recurring_skipped_occurrences table, this is safe — we won't duplicate
+	// already-generated instances and we won't regenerate user-deleted ones.
+	scheduleChanged := req.Frequency != nil || req.DayOfMonth != nil || req.DaysOfWeek != nil || req.StartDate != nil
+
 	query := `UPDATE recurring_transactions SET updated_at = NOW()`
 	args := []interface{}{}
 	argCount := 1
+
+	if scheduleChanged {
+		query += `, last_added_date = NULL`
+	}
 
 	if req.Type != nil {
 		query += fmt.Sprintf(", type = $%d", argCount)

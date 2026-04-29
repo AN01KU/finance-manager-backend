@@ -179,49 +179,49 @@ func main() {
 
 		// User profile
 		protected.GET("/me", func(c *gin.Context) { auth.GetMe(c, authService) })
-		protected.PATCH("/me", func(c *gin.Context) { auth.UpdateMe(c, authService) })
-		protected.DELETE("/me", func(c *gin.Context) { auth.DeleteMe(c, authService) })
+		protected.PATCH("/me", syncGuard, func(c *gin.Context) { auth.UpdateMe(c, authService) })
+		protected.DELETE("/me", syncGuard, func(c *gin.Context) { auth.DeleteMe(c, authService) })
 
 		// Transactions (personal expenses + income)
 		protected.POST("/transactions", syncGuard, func(c *gin.Context) { transaction.CreateTransaction(c, database) })
 		protected.GET("/transactions", func(c *gin.Context) { transaction.ListTransactions(c, database) })
 		protected.GET("/transactions/export", func(c *gin.Context) { transaction.ExportTransactionsCSV(c, database) })
 		protected.GET("/transactions/:id", func(c *gin.Context) { transaction.GetTransaction(c, database) })
-		protected.PATCH("/transactions/:id", func(c *gin.Context) { transaction.UpdateTransaction(c, database) })
-		protected.DELETE("/transactions/:id", func(c *gin.Context) { transaction.DeleteTransaction(c, database) })
+		protected.PATCH("/transactions/:id", syncGuard, func(c *gin.Context) { transaction.UpdateTransaction(c, database) })
+		protected.DELETE("/transactions/:id", syncGuard, func(c *gin.Context) { transaction.DeleteTransaction(c, database) })
 
 		// Recurring Transactions
 		protected.POST("/recurring-transactions", syncGuard, func(c *gin.Context) { recurring.CreateRecurringTransaction(c, database) })
 		protected.GET("/recurring-transactions", func(c *gin.Context) { recurring.ListRecurringTransactions(c, database) })
 		protected.GET("/recurring-transactions/:id", func(c *gin.Context) { recurring.GetRecurringTransaction(c, database) })
-		protected.PATCH("/recurring-transactions/:id", func(c *gin.Context) { recurring.UpdateRecurringTransaction(c, database) })
-		protected.DELETE("/recurring-transactions/:id", func(c *gin.Context) { recurring.DeleteRecurringTransaction(c, database) })
+		protected.PATCH("/recurring-transactions/:id", syncGuard, func(c *gin.Context) { recurring.UpdateRecurringTransaction(c, database) })
+		protected.DELETE("/recurring-transactions/:id", syncGuard, func(c *gin.Context) { recurring.DeleteRecurringTransaction(c, database) })
 
 		// Budgets
 		protected.POST("/budgets", syncGuard, func(c *gin.Context) { budget.CreateBudget(c, database) })
 		protected.GET("/budgets", func(c *gin.Context) { budget.ListBudgets(c, database) })
-		protected.PATCH("/budgets/:id", func(c *gin.Context) { budget.UpdateBudget(c, database) })
-		protected.DELETE("/budgets/:id", func(c *gin.Context) { budget.DeleteBudget(c, database) })
+		protected.PATCH("/budgets/:id", syncGuard, func(c *gin.Context) { budget.UpdateBudget(c, database) })
+		protected.DELETE("/budgets/:id", syncGuard, func(c *gin.Context) { budget.DeleteBudget(c, database) })
 
 		// Categories
 		protected.POST("/categories", syncGuard, func(c *gin.Context) { category.CreateCategory(c, database) })
 		protected.GET("/categories", func(c *gin.Context) { category.ListCategories(c, database) })
-		protected.PATCH("/categories/:id", func(c *gin.Context) { category.UpdateCategory(c, database) })
-		protected.DELETE("/categories/:id", func(c *gin.Context) { category.DeleteCategory(c, database) })
+		protected.PATCH("/categories/:id", syncGuard, func(c *gin.Context) { category.UpdateCategory(c, database) })
+		protected.DELETE("/categories/:id", syncGuard, func(c *gin.Context) { category.DeleteCategory(c, database) })
 
 		// Dashboard
 		protected.GET("/dashboard/monthly", func(c *gin.Context) { dashboard.GetMonthlyDashboard(c, database) })
 
 		// Groups
-		protected.POST("/groups", func(c *gin.Context) { group.CreateGroup(c, database) })
+		protected.POST("/groups", syncGuard, func(c *gin.Context) { group.CreateGroup(c, database) })
 		protected.GET("/groups", func(c *gin.Context) { group.GetUserGroups(c, database) })
 		protected.GET("/groups/:id", func(c *gin.Context) { group.GetGroup(c, database) })
-		protected.PATCH("/groups/:id", func(c *gin.Context) { group.UpdateGroup(c, database) })
-		protected.DELETE("/groups/:id", func(c *gin.Context) { group.DeleteGroup(c, database) })
-		protected.POST("/groups/:id/members", func(c *gin.Context) { group.AddMember(c, database) })
+		protected.PATCH("/groups/:id", syncGuard, func(c *gin.Context) { group.UpdateGroup(c, database) })
+		protected.DELETE("/groups/:id", syncGuard, func(c *gin.Context) { group.DeleteGroup(c, database) })
+		protected.POST("/groups/:id/members", syncGuard, func(c *gin.Context) { group.AddMember(c, database) })
 		protected.GET("/groups/:id/members", func(c *gin.Context) { group.GetMembers(c, database) })
-		protected.DELETE("/groups/:id/members/:userId", func(c *gin.Context) { group.RemoveMember(c, database) })
-		protected.POST("/groups/:id/leave", func(c *gin.Context) { group.LeaveGroup(c, database) })
+		protected.DELETE("/groups/:id/members/:userId", syncGuard, func(c *gin.Context) { group.RemoveMember(c, database) })
+		protected.POST("/groups/:id/leave", syncGuard, func(c *gin.Context) { group.LeaveGroup(c, database) })
 		protected.GET("/groups/:id/balances", func(c *gin.Context) { group.GetBalances(c, database) })
 		protected.GET("/groups/:id/settlements", func(c *gin.Context) { group.GetGroupSettlements(c, database) })
 
@@ -229,18 +229,18 @@ func main() {
 		protected.POST("/groups/:id/transactions", syncGuard, func(c *gin.Context) { group.CreateGroupTransaction(c, database) })
 		protected.GET("/groups/:id/transactions", func(c *gin.Context) { group.ListGroupTransactions(c, database) })
 		protected.GET("/groups/:id/transactions/:txId", func(c *gin.Context) { group.GetGroupTransaction(c, database) })
-		protected.PATCH("/groups/:id/transactions/:txId", func(c *gin.Context) { group.UpdateGroupTransaction(c, database) })
-		protected.DELETE("/groups/:id/transactions/:txId", func(c *gin.Context) { group.DeleteGroupTransaction(c, database) })
+		protected.PATCH("/groups/:id/transactions/:txId", syncGuard, func(c *gin.Context) { group.UpdateGroupTransaction(c, database) })
+		protected.DELETE("/groups/:id/transactions/:txId", syncGuard, func(c *gin.Context) { group.DeleteGroupTransaction(c, database) })
 
 		// Settlements
-		protected.POST("/settlements", func(c *gin.Context) { settlement.CreateSettlement(c, database) })
+		protected.POST("/settlements", syncGuard, func(c *gin.Context) { settlement.CreateSettlement(c, database) })
 		protected.GET("/settlements/:id", func(c *gin.Context) { settlement.GetSettlement(c, database) })
-		protected.DELETE("/settlements/:id", func(c *gin.Context) { settlement.DeleteSettlement(c, database) })
-		protected.PATCH("/settlements/:id", func(c *gin.Context) { settlement.UpdateSettlement(c, database) })
+		protected.DELETE("/settlements/:id", syncGuard, func(c *gin.Context) { settlement.DeleteSettlement(c, database) })
+		protected.PATCH("/settlements/:id", syncGuard, func(c *gin.Context) { settlement.UpdateSettlement(c, database) })
 
 		// Device tokens (push notifications)
-		protected.POST("/device-tokens", func(c *gin.Context) { notify.RegisterToken(c, database.Pool) })
-		protected.DELETE("/device-tokens", func(c *gin.Context) { notify.UnregisterToken(c, database.Pool) })
+		protected.POST("/device-tokens", syncGuard, func(c *gin.Context) { notify.RegisterToken(c, database.Pool) })
+		protected.DELETE("/device-tokens", syncGuard, func(c *gin.Context) { notify.UnregisterToken(c, database.Pool) })
 
 		// Sync
 		protected.POST("/sync/preflight", func(c *gin.Context) { sync.Preflight(c, database) })

@@ -8,6 +8,11 @@ CREATE TABLE users (
     password_hash VARCHAR(255) NOT NULL,
     currency VARCHAR(3) NOT NULL DEFAULT 'INR',
     email_verified BOOLEAN NOT NULL DEFAULT FALSE,
+    -- tokens_invalidated_after is the cutoff used by JWTAuth to revoke
+    -- previously-issued JWTs without storing them server-side: any token
+    -- whose `iat` is <= this value is rejected as stale. Bumped to NOW()
+    -- on logout, password change, and email change.
+    tokens_invalidated_after TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -230,6 +235,9 @@ CREATE TABLE sync_sessions (
 );
 
 CREATE INDEX idx_sync_sessions_user_id ON sync_sessions(user_id);
+-- Partial index for fast lookup of active sessions; matches every read in
+-- ValidateSession / SyncSessionGuard / TTL cleanup.
+CREATE INDEX idx_sync_sessions_active ON sync_sessions(id) WHERE invalidated_at IS NULL;
 
 -- ============================================================================
 -- Device tokens (push notifications)
