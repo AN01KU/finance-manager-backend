@@ -1,12 +1,14 @@
 package category
 
 import (
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/go-playground/validator/v10"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/yanonymousV2/finance-manager-backend/internal/db"
 	"github.com/yanonymousV2/finance-manager-backend/internal/helpers"
@@ -119,11 +121,18 @@ func CreateCategory(c *gin.Context, db *db.DB) {
 		   color = EXCLUDED.color,
 		   is_hidden = EXCLUDED.is_hidden,
 		   updated_at = NOW()
+		 WHERE custom_categories.user_id = EXCLUDED.user_id
 		 RETURNING id, user_id, name, icon, color, is_hidden, is_predefined, predefined_key, created_at, updated_at`,
 		categoryID, userID, req.Name, req.Icon, req.Color, req.IsHidden, isPredefined, req.PredefinedKey).Scan(
 		&category.ID, &category.UserID, &category.Name, &category.Icon, &category.Color,
 		&category.IsHidden, &category.IsPredefined, &category.PredefinedKey, &rawCreatedAt, &rawUpdatedAt)
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			// UUID exists but is owned by another user — refuse silently
+			// overwriting another user's category.
+			c.JSON(409, gin.H{"error": "category ID conflict with another user", "code": "ID_OWNED_BY_ANOTHER_USER"})
+			return
+		}
 		c.JSON(500, gin.H{"error": "failed to create category"})
 		return
 	}

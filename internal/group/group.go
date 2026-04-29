@@ -84,6 +84,13 @@ type CreateGroupTransactionRequest struct {
 	Description  *string      `json:"description,omitempty" validate:"omitempty,max=255"`
 	Notes        *string      `json:"notes,omitempty"`
 	Splits       []SplitInput `json:"splits" validate:"required,min=1,dive"`
+	// UpdatedAt is the client-side wall-clock for this version of the row,
+	// in epoch ms. When syncing offline-queued writes, the server uses it as
+	// a last-write-wins guard: an upsert that finds a newer row server-side
+	// is rejected with 409 STALE_WRITE so a stale device cannot overwrite a
+	// fresher edit from another device. Optional — defaults to NOW() on the
+	// server (no LWW protection in that case).
+	UpdatedAt *int64 `json:"updated_at,omitempty"`
 }
 
 type UpdateGroupTransactionRequest struct {

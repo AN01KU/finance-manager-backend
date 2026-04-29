@@ -91,11 +91,35 @@ func CreateGroupTransaction(c *gin.Context, database *db.DB) {
 		return
 	}
 
+	// Mixed-currency reject: every user involved in the transaction (payer +
+	// every split member) must share the same users.currency. Without this,
+	// totals and balances silently mis-sum. Multi-currency support is R2.
+	var distinctCurrencies int
+	if err := database.Pool.QueryRow(c.Request.Context(),
+		`SELECT COUNT(DISTINCT currency) FROM users WHERE id = ANY($1)`,
+		toCheck,
+	).Scan(&distinctCurrencies); err != nil {
+		c.JSON(500, gin.H{"error": "failed to validate currencies"})
+		return
+	}
+	if distinctCurrencies > 1 {
+		c.JSON(400, gin.H{"error": "group transaction users have different currencies", "code": "MIXED_CURRENCY_GROUP_TX"})
+		return
+	}
+
 	gtDate := time.UnixMilli(req.Date).UTC()
 
 	gtID := uuid.New()
 	if req.ID != nil {
 		gtID = *req.ID
+	}
+
+	// LWW: prefer the client-supplied updated_at when present so a stale device
+	// can be detected against a newer server-side row. Fallback to NOW() when
+	// absent (legacy behavior; no LWW protection but never blocks).
+	updatedAt := time.Now()
+	if req.UpdatedAt != nil {
+		updatedAt = time.UnixMilli(*req.UpdatedAt).UTC()
 	}
 
 	tx, err := database.Pool.Begin(c.Request.Context())
@@ -114,7 +138,7 @@ func CreateGroupTransaction(c *gin.Context, database *db.DB) {
 	var rawGTDate, rawGTCreatedAt, rawGTUpdatedAt time.Time
 	err = tx.QueryRow(c.Request.Context(),
 		`INSERT INTO group_transactions (id, group_id, paid_by_user_id, total_amount, category, date, description, notes, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		 ON CONFLICT (id) DO UPDATE SET
 		   paid_by_user_id = EXCLUDED.paid_by_user_id,
 		   total_amount = EXCLUDED.total_amount,
@@ -123,17 +147,38 @@ func CreateGroupTransaction(c *gin.Context, database *db.DB) {
 		   description = EXCLUDED.description,
 		   notes = EXCLUDED.notes,
 		   is_deleted = FALSE,
-		   updated_at = NOW()
+		   updated_at = EXCLUDED.updated_at
 		 WHERE group_transactions.group_id = EXCLUDED.group_id
+		   AND group_transactions.updated_at <= EXCLUDED.updated_at
 		 RETURNING id, group_id, paid_by_user_id, total_amount, category, date, description, notes, is_deleted, created_at, updated_at`,
-		gtID, groupID, req.PaidByUserID, totalAmount, req.Category, gtDate, req.Description, req.Notes,
+		gtID, groupID, req.PaidByUserID, totalAmount, req.Category, gtDate, req.Description, req.Notes, updatedAt,
 	).Scan(
 		&gt.ID, &gt.GroupID, &gt.PaidByUserID, &gt.TotalAmount, &gt.Category, &rawGTDate,
 		&gt.Description, &gt.Notes, &gt.IsDeleted, &rawGTCreatedAt, &rawGTUpdatedAt,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			c.JSON(409, gin.H{"error": "group transaction ID already exists in another group"})
+			// Distinguish: row exists but the WHERE rejected the update.
+			// Either (a) UUID belongs to another group, or (b) the existing
+			// row is newer than this incoming write (stale write). Stale
+			// reject = full no-op (splits untouched, since we return before
+			// applySplitsInPlace).
+			var existingGroupID uuid.UUID
+			var existingUpdatedAt time.Time
+			lookupErr := database.Pool.QueryRow(c.Request.Context(),
+				`SELECT group_id, updated_at FROM group_transactions WHERE id = $1`, gtID,
+			).Scan(&existingGroupID, &existingUpdatedAt)
+			if lookupErr == nil {
+				if existingGroupID != groupID {
+					c.JSON(409, gin.H{"error": "group transaction ID already exists in another group", "code": "ID_OWNED_BY_ANOTHER_GROUP"})
+					return
+				}
+				if existingUpdatedAt.After(updatedAt) {
+					c.JSON(409, gin.H{"error": "stale write: a newer version exists on the server", "code": "STALE_WRITE"})
+					return
+				}
+			}
+			c.JSON(409, gin.H{"error": "group transaction ID conflict"})
 			return
 		}
 		c.JSON(500, gin.H{"error": "failed to create group transaction"})
@@ -642,6 +687,23 @@ func UpdateGroupTransaction(c *gin.Context, database *db.DB) {
 		}
 		if len(missing) > 0 {
 			c.JSON(400, gin.H{"error": fmt.Sprintf("user %s is not a member of the group", missing[0])})
+			return
+		}
+
+		// Mixed-currency reject on splits change: payer (fixed on update) +
+		// every desired split member must share the same users.currency.
+		// Multi-currency support is R2.
+		ccCheck := append([]uuid.UUID{paidByUserID}, uids...)
+		var distinctCurrencies int
+		if err := database.Pool.QueryRow(c.Request.Context(),
+			`SELECT COUNT(DISTINCT currency) FROM users WHERE id = ANY($1)`,
+			ccCheck,
+		).Scan(&distinctCurrencies); err != nil {
+			c.JSON(500, gin.H{"error": "failed to validate currencies"})
+			return
+		}
+		if distinctCurrencies > 1 {
+			c.JSON(400, gin.H{"error": "group transaction users have different currencies", "code": "MIXED_CURRENCY_GROUP_TX"})
 			return
 		}
 	}
