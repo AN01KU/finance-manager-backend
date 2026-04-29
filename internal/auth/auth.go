@@ -258,10 +258,15 @@ func Logout(c *gin.Context, service *AuthService) {
 		return
 	}
 
+	// Tolerate an empty body — clients that just want "logout this user, all
+	// devices" send POST /auth/logout with no payload. ShouldBindJSON returns
+	// io.EOF on empty body, which we treat as "no specific session".
 	var req LogoutRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(400, gin.H{"error": err.Error()})
-		return
+	if c.Request.ContentLength > 0 {
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(400, gin.H{"error": err.Error()})
+			return
+		}
 	}
 
 	if req.SyncSessionID != nil {
@@ -279,6 +284,10 @@ func Logout(c *gin.Context, service *AuthService) {
 		// No specific session provided — invalidate all active sessions
 		invalidateAllSessions(c.Request.Context(), service.DB, userID, "logout")
 	}
+
+	// Revoke all JWTs issued before now so the bearer token cannot keep
+	// reading data after logout.
+	invalidateJWTs(c.Request.Context(), service.DB, userID)
 
 	c.JSON(200, gin.H{"message": "logged out successfully"})
 }
@@ -397,9 +406,13 @@ func UpdateMe(c *gin.Context, service *AuthService) {
 	}
 	u.CreatedAt = helpers.FromTime(rawCreatedAt)
 
-	// Password or email change — invalidate all sync sessions to force re-login
+	// Password or email change — invalidate all sync sessions AND all JWTs
+	// to force re-login. Without the JWT bump, an attacker holding a leaked
+	// bearer token could continue to read /me, /transactions, etc. for up
+	// to 24h after the credential change.
 	if req.Password != nil || req.Email != nil {
 		invalidateAllSessions(c.Request.Context(), service.DB, userID, "credentials_changed")
+		invalidateJWTs(c.Request.Context(), service.DB, userID)
 	}
 
 	c.JSON(200, u)
@@ -477,6 +490,18 @@ func invalidateAllSessions(ctx context.Context, database *db.DB, userID uuid.UUI
 		`UPDATE sync_sessions SET invalidated_at = now(), invalidation_reason = $1
 		 WHERE user_id = $2 AND invalidated_at IS NULL`,
 		reason, userID,
+	)
+}
+
+// invalidateJWTs bumps users.tokens_invalidated_after to NOW() so any JWT
+// issued before this instant is rejected by JWTAuth. Used on logout,
+// password change, and email change to ensure the JWT cannot outlive the
+// security event.
+func invalidateJWTs(ctx context.Context, database *db.DB, userID uuid.UUID) {
+	_, _ = database.Pool.Exec(ctx,
+		`UPDATE users SET tokens_invalidated_after = now(), updated_at = now()
+		 WHERE id = $1`,
+		userID,
 	)
 }
 

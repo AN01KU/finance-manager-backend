@@ -3,6 +3,7 @@ package middleware
 import (
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
@@ -44,15 +45,27 @@ func JWTAuth(jwtSecret string, database *db.DB) gin.HandlerFunc {
 			return
 		}
 
-		// Verify the user still exists (revokes tokens for deleted users).
+		// Verify the user still exists AND that this JWT was issued after the
+		// user's last token-invalidation event (logout / password change /
+		// email change). Without this check, a JWT remains valid for its
+		// full 24h TTL even after the user logs out — an attacker with a
+		// leaked token can still read /me, /transactions, etc.
 		if database != nil {
-			var exists bool
-			if err := database.Pool.QueryRow(c.Request.Context(),
-				"SELECT EXISTS(SELECT 1 FROM users WHERE id = $1)", claims.UserID,
-			).Scan(&exists); err != nil || !exists {
+			var tokensInvalidatedAfter *time.Time
+			err := database.Pool.QueryRow(c.Request.Context(),
+				"SELECT tokens_invalidated_after FROM users WHERE id = $1", claims.UserID,
+			).Scan(&tokensInvalidatedAfter)
+			if err != nil {
 				c.JSON(http.StatusUnauthorized, gin.H{"error": "user no longer exists"})
 				c.Abort()
 				return
+			}
+			if tokensInvalidatedAfter != nil {
+				if claims.IssuedAt == nil || !claims.IssuedAt.Time.After(*tokensInvalidatedAfter) {
+					c.JSON(http.StatusUnauthorized, gin.H{"error": "token revoked"})
+					c.Abort()
+					return
+				}
 			}
 		}
 
