@@ -61,7 +61,7 @@ func JWTAuth(jwtSecret string, database *db.DB) gin.HandlerFunc {
 				return
 			}
 			if tokensInvalidatedAfter != nil {
-				if claims.IssuedAt == nil || !claims.IssuedAt.Time.After(*tokensInvalidatedAfter) {
+				if claims.IssuedAt == nil || !claims.IssuedAt.After(*tokensInvalidatedAfter) {
 					c.JSON(http.StatusUnauthorized, gin.H{"error": "token revoked"})
 					c.Abort()
 					return
