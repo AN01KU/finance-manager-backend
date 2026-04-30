@@ -13,6 +13,12 @@ CREATE TABLE users (
     -- whose `iat` is <= this value is rejected as stale. Bumped to NOW()
     -- on logout, password change, and email change.
     tokens_invalidated_after TIMESTAMPTZ,
+    -- Per-account login throttle: incremented on each bcrypt mismatch,
+    -- reset on success. When attempts hits the threshold the account is
+    -- locked until login_locked_until passes. Defends against credential
+    -- stuffing via botnets that bypass per-IP rate limiting.
+    failed_login_attempts INTEGER NOT NULL DEFAULT 0,
+    login_locked_until TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );

@@ -175,6 +175,23 @@ func CreateSettlement(c *gin.Context, db *db.DB) {
 		return
 	}
 
+	// Mixed-currency reject: from_user and to_user must share the same
+	// users.currency. Otherwise pairwiseDebt sums mismatched amounts and
+	// the excess-portion personal txs get booked in arbitrary currencies.
+	// Multi-currency support is R2.
+	var distinctCurrencies int
+	if err := db.Pool.QueryRow(c.Request.Context(),
+		`SELECT COUNT(DISTINCT currency) FROM users WHERE id IN ($1, $2)`,
+		req.FromUser, req.ToUser,
+	).Scan(&distinctCurrencies); err != nil {
+		c.JSON(500, gin.H{"error": "failed to validate currencies"})
+		return
+	}
+	if distinctCurrencies > 1 {
+		c.JSON(400, gin.H{"error": "settlement parties have different currencies", "code": "MIXED_CURRENCY_SETTLEMENT"})
+		return
+	}
+
 	// Use a DB transaction so settlement + income transaction are atomic
 	dbTx, err := db.Pool.Begin(c.Request.Context())
 	if err != nil {
@@ -425,6 +442,21 @@ func UpdateSettlement(c *gin.Context, database *db.DB) {
 	// server-managed and have no externally-referenced IDs — they only ever
 	// existed as a side effect of this settlement.
 	if newAmount != nil {
+		// Re-validate currencies in case a party changed users.currency
+		// between create and update — guards the same invariant as Create.
+		var distinctCurrencies int
+		if err := dbTx.QueryRow(c.Request.Context(),
+			`SELECT COUNT(DISTINCT currency) FROM users WHERE id IN ($1, $2)`,
+			s.FromUser, s.ToUser,
+		).Scan(&distinctCurrencies); err != nil {
+			c.JSON(500, gin.H{"error": "failed to validate currencies"})
+			return
+		}
+		if distinctCurrencies > 1 {
+			c.JSON(400, gin.H{"error": "settlement parties have different currencies", "code": "MIXED_CURRENCY_SETTLEMENT"})
+			return
+		}
+
 		if _, err = dbTx.Exec(c.Request.Context(),
 			`DELETE FROM transactions WHERE settlement_id = $1`, id); err != nil {
 			c.JSON(500, gin.H{"error": "failed to clear linked transactions"})

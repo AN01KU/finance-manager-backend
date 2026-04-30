@@ -36,8 +36,12 @@ func StartSoftDeleteCleanup(ctx context.Context, database *db.DB) {
 }
 
 func purgeSoftDeleted(ctx context.Context, database *db.DB) error {
-	// Hard-delete personal transactions that were soft-deleted more than 1 day ago.
-	// This covers both group-linked personal rows and any legacy soft-deleted plain txns.
+	// Order: delete the most-dependent tables first so FK CASCADE / SET NULL
+	// doesn't fight us on shared rows.
+	//   transactions     → may reference settlements / group_transactions / groups (SET NULL on FK)
+	//   group_transactions → references groups (CASCADE on FK)
+	//   settlements      → references groups (CASCADE on FK)
+	//   groups           → top-level
 	txTag, err := database.Pool.Exec(ctx,
 		`DELETE FROM transactions
 		 WHERE is_deleted = TRUE
@@ -47,7 +51,6 @@ func purgeSoftDeleted(ctx context.Context, database *db.DB) error {
 		return fmt.Errorf("purge soft-deleted transactions: %w", err)
 	}
 
-	// Hard-delete group_transactions that were soft-deleted more than 1 day ago.
 	gtTag, err := database.Pool.Exec(ctx,
 		`DELETE FROM group_transactions
 		 WHERE is_deleted = TRUE
@@ -57,10 +60,31 @@ func purgeSoftDeleted(ctx context.Context, database *db.DB) error {
 		return fmt.Errorf("purge soft-deleted group_transactions: %w", err)
 	}
 
+	settleTag, err := database.Pool.Exec(ctx,
+		`DELETE FROM settlements
+		 WHERE is_deleted = TRUE
+		   AND updated_at < NOW() - INTERVAL '1 day'`,
+	)
+	if err != nil {
+		return fmt.Errorf("purge soft-deleted settlements: %w", err)
+	}
+
+	groupTag, err := database.Pool.Exec(ctx,
+		`DELETE FROM groups
+		 WHERE is_deleted = TRUE
+		   AND updated_at < NOW() - INTERVAL '1 day'`,
+	)
+	if err != nil {
+		return fmt.Errorf("purge soft-deleted groups: %w", err)
+	}
+
 	txCount := txTag.RowsAffected()
 	gtCount := gtTag.RowsAffected()
-	if txCount > 0 || gtCount > 0 {
-		log.Printf("[TRANSACTION] purged %d soft-deleted transactions, %d group_transactions", txCount, gtCount)
+	settleCount := settleTag.RowsAffected()
+	groupCount := groupTag.RowsAffected()
+	if txCount > 0 || gtCount > 0 || settleCount > 0 || groupCount > 0 {
+		log.Printf("[TRANSACTION] purged %d transactions, %d group_transactions, %d settlements, %d groups",
+			txCount, gtCount, settleCount, groupCount)
 	}
 	return nil
 }
