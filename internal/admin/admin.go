@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"html/template"
 	"log"
@@ -16,7 +17,11 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/yanonymousV2/finance-manager-backend/internal/category"
 )
 
 const (
@@ -133,7 +138,7 @@ func New(pool *pgxpool.Pool, username, password string, logStore *LogStore) *Adm
 	dir := filepath.Join("internal", "admin", "templates")
 	layoutFile := filepath.Join(dir, "layout.html")
 
-	pages := []string{"dashboard", "tables", "table_browse", "row_form", "sql", "logs", "users", "user_detail", "groups", "group_detail", "recurring", "audit", "search"}
+	pages := []string{"dashboard", "tables", "table_browse", "row_form", "sql", "logs", "users", "user_detail", "groups", "group_detail", "recurring", "audit", "search", "categories"}
 	tmpls := make(map[string]*template.Template, len(pages))
 	for _, page := range pages {
 		pageFile := filepath.Join(dir, page+".html")
@@ -185,6 +190,13 @@ func (a *Admin) RegisterRoutes(r *gin.Engine, rateLimiter gin.HandlerFunc) {
 		protected.POST("/rows/delete", a.rowDelete)
 		protected.GET("/logs", a.logsPage)
 		protected.POST("/logs/clear", a.logsClear)
+		protected.GET("/categories", a.categoriesPage)
+		protected.POST("/categories/new", a.categoryCreate)
+		protected.POST("/categories/:id/edit", a.categoryEdit)
+		protected.POST("/categories/:id/hide", a.categoryHide)
+		protected.POST("/categories/:id/unhide", a.categoryUnhide)
+		protected.POST("/categories/:id/hard-delete", a.categoryHardDelete)
+		protected.GET("/category-icons/:key", a.categoryIconServe)
 		protected.GET("/logout", a.logout)
 	}
 }
@@ -220,6 +232,22 @@ func (a *Admin) validSession(token string) bool {
 		return false
 	}
 	return true
+}
+
+// JSONAuthMiddleware is the JSON-API equivalent of the HTML authMiddleware:
+// instead of redirecting to /admin/login on a missing/invalid session, it
+// returns a 401 JSON error. Use this for admin JSON endpoints
+// (e.g. /admin/predefined-categories) registered alongside the HTML admin
+// panel so they share the same cookie-session auth.
+func (a *Admin) JSONAuthMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		cookie, err := c.Cookie(sessionCookieName)
+		if err != nil || !a.validSession(cookie) {
+			c.AbortWithStatusJSON(401, gin.H{"error": "admin session required"})
+			return
+		}
+		c.Next()
+	}
 }
 
 func (a *Admin) authMiddleware() gin.HandlerFunc {
@@ -1581,6 +1609,222 @@ func pgCastType(c *gin.Context, pool *pgxpool.Pool, table, column string) string
 	default:
 		return dataType
 	}
+}
+
+// --- Predefined Categories ---
+
+type catRow struct {
+	ID          string
+	Key         string
+	Name        string
+	Icon        string
+	Color       string
+	IsHidden    bool
+	IsProtected bool
+}
+
+func (a *Admin) categoriesPage(c *gin.Context) {
+	rows, err := a.pool.Query(c.Request.Context(),
+		`SELECT id, key, name, icon, color, is_hidden
+		   FROM predefined_categories
+		  ORDER BY name ASC`)
+	if err != nil {
+		c.String(500, "DB error: %v", err)
+		return
+	}
+	defer rows.Close()
+
+	var cats []catRow
+	for rows.Next() {
+		var cr catRow
+		var id [16]byte
+		if err := rows.Scan(&id, &cr.Key, &cr.Name, &cr.Icon, &cr.Color, &cr.IsHidden); err != nil {
+			continue
+		}
+		cr.ID = formatValue(id)
+		cr.IsProtected = cr.Key == category.ProtectedKey
+		cats = append(cats, cr)
+	}
+
+	a.render(c, "categories.html", gin.H{
+		"Title":      "Categories",
+		"Active":     "categories",
+		"Categories": cats,
+		"IconKeys":   category.ValidIconKeys(),
+		"Success":    c.Query("success"),
+		"Error":      c.Query("error"),
+	})
+}
+
+// catRedirect sends the user back to /admin/categories with an optional
+// success or error message attached as a query string.
+func catRedirect(c *gin.Context, success, errMsg string) {
+	q := url.Values{}
+	if success != "" {
+		q.Set("success", success)
+	}
+	if errMsg != "" {
+		q.Set("error", errMsg)
+	}
+	dest := "/admin/categories"
+	if encoded := q.Encode(); encoded != "" {
+		dest += "?" + encoded
+	}
+	c.Redirect(http.StatusFound, dest)
+}
+
+func (a *Admin) categoryCreate(c *gin.Context) {
+	key := strings.TrimSpace(c.PostForm("key"))
+	name := strings.TrimSpace(c.PostForm("name"))
+	icon := strings.TrimSpace(c.PostForm("icon"))
+	color := strings.TrimSpace(c.PostForm("color"))
+
+	if key == "" || name == "" || icon == "" || color == "" {
+		catRedirect(c, "", "All fields are required")
+		return
+	}
+	if !category.IsValidIconKey(icon) {
+		catRedirect(c, "", "Invalid icon key: "+icon)
+		return
+	}
+
+	_, err := a.pool.Exec(c.Request.Context(),
+		`INSERT INTO predefined_categories (key, name, icon, color)
+		 VALUES ($1, $2, $3, $4)`,
+		key, name, icon, color)
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			catRedirect(c, "", "Key already exists: "+key)
+			return
+		}
+		catRedirect(c, "", "Failed to create: "+err.Error())
+		return
+	}
+	catRedirect(c, "Created "+name, "")
+}
+
+func (a *Admin) categoryEdit(c *gin.Context) {
+	id := c.Param("id")
+	name := strings.TrimSpace(c.PostForm("name"))
+	icon := strings.TrimSpace(c.PostForm("icon"))
+	color := strings.TrimSpace(c.PostForm("color"))
+
+	if name == "" || icon == "" || color == "" {
+		catRedirect(c, "", "Name, icon and color are required")
+		return
+	}
+	if !category.IsValidIconKey(icon) {
+		catRedirect(c, "", "Invalid icon key: "+icon)
+		return
+	}
+
+	tag, err := a.pool.Exec(c.Request.Context(),
+		`UPDATE predefined_categories
+		    SET name = $1, icon = $2, color = $3, updated_at = NOW()
+		  WHERE id = $4`,
+		name, icon, color, id)
+	if err != nil {
+		catRedirect(c, "", "Update failed: "+err.Error())
+		return
+	}
+	if tag.RowsAffected() == 0 {
+		catRedirect(c, "", "Category not found")
+		return
+	}
+	catRedirect(c, "Updated "+name, "")
+}
+
+// categorySetHidden flips the is_hidden flag on a predefined category and
+// rejects the change for the protected key.
+func (a *Admin) categorySetHidden(c *gin.Context, hidden bool) {
+	id := c.Param("id")
+
+	var key string
+	if err := a.pool.QueryRow(c.Request.Context(),
+		`SELECT key FROM predefined_categories WHERE id = $1`, id).Scan(&key); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			catRedirect(c, "", "Category not found")
+			return
+		}
+		catRedirect(c, "", "Lookup failed: "+err.Error())
+		return
+	}
+	if key == category.ProtectedKey && hidden {
+		catRedirect(c, "", "The protected category \"other\" cannot be hidden")
+		return
+	}
+
+	if _, err := a.pool.Exec(c.Request.Context(),
+		`UPDATE predefined_categories SET is_hidden = $1, updated_at = NOW() WHERE id = $2`,
+		hidden, id); err != nil {
+		catRedirect(c, "", "Update failed: "+err.Error())
+		return
+	}
+	if hidden {
+		catRedirect(c, "Hid "+key, "")
+	} else {
+		catRedirect(c, "Unhid "+key, "")
+	}
+}
+
+func (a *Admin) categoryHide(c *gin.Context)   { a.categorySetHidden(c, true) }
+func (a *Admin) categoryUnhide(c *gin.Context) { a.categorySetHidden(c, false) }
+
+func (a *Admin) categoryHardDelete(c *gin.Context) {
+	id := c.Param("id")
+
+	var key string
+	if err := a.pool.QueryRow(c.Request.Context(),
+		`SELECT key FROM predefined_categories WHERE id = $1`, id).Scan(&key); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			catRedirect(c, "", "Category not found")
+			return
+		}
+		catRedirect(c, "", "Lookup failed: "+err.Error())
+		return
+	}
+	if key == category.ProtectedKey {
+		catRedirect(c, "", "The protected category \"other\" cannot be deleted")
+		return
+	}
+
+	tx, err := a.pool.Begin(c.Request.Context())
+	if err != nil {
+		catRedirect(c, "", "Failed to begin transaction")
+		return
+	}
+	defer tx.Rollback(c.Request.Context())
+
+	if _, err := tx.Exec(c.Request.Context(),
+		`DELETE FROM custom_categories WHERE is_predefined = TRUE AND predefined_key = $1`,
+		key); err != nil {
+		catRedirect(c, "", "Failed to delete user overrides: "+err.Error())
+		return
+	}
+	if _, err := tx.Exec(c.Request.Context(),
+		`DELETE FROM predefined_categories WHERE id = $1`, id); err != nil {
+		catRedirect(c, "", "Failed to delete predefined category: "+err.Error())
+		return
+	}
+	if err := tx.Commit(c.Request.Context()); err != nil {
+		catRedirect(c, "", "Commit failed: "+err.Error())
+		return
+	}
+	catRedirect(c, "Permanently deleted "+key, "")
+}
+
+// categoryIconServe serves the embedded SVG bytes for a given icon key. Used
+// by the admin categories page to render icon previews. Unknown keys → 404.
+func (a *Admin) categoryIconServe(c *gin.Context) {
+	key := c.Param("key")
+	data, ok := category.IconSVG(key)
+	if !ok {
+		c.Status(404)
+		return
+	}
+	c.Header("Cache-Control", "public, max-age=31536000, immutable")
+	c.Data(200, "image/svg+xml", data)
 }
 
 func (a *Admin) render(c *gin.Context, name string, data gin.H) {

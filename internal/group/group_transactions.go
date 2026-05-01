@@ -107,6 +107,12 @@ func CreateGroupTransaction(c *gin.Context, database *db.DB) {
 		return
 	}
 
+	resolvedCategory, err := helpers.ResolveCategoryKey(c.Request.Context(), database.Pool, userID, req.Category)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "failed to resolve category"})
+		return
+	}
+
 	gtDate := time.UnixMilli(req.Date).UTC()
 
 	gtID := uuid.New()
@@ -151,7 +157,7 @@ func CreateGroupTransaction(c *gin.Context, database *db.DB) {
 		 WHERE group_transactions.group_id = EXCLUDED.group_id
 		   AND group_transactions.updated_at <= EXCLUDED.updated_at
 		 RETURNING id, group_id, paid_by_user_id, total_amount, category, date, description, notes, is_deleted, created_at, updated_at`,
-		gtID, groupID, req.PaidByUserID, totalAmount, req.Category, gtDate, req.Description, req.Notes, updatedAt,
+		gtID, groupID, req.PaidByUserID, totalAmount, resolvedCategory, gtDate, req.Description, req.Notes, updatedAt,
 	).Scan(
 		&gt.ID, &gt.GroupID, &gt.PaidByUserID, &gt.TotalAmount, &gt.Category, &rawGTDate,
 		&gt.Description, &gt.Notes, &gt.IsDeleted, &rawGTCreatedAt, &rawGTUpdatedAt,
@@ -191,7 +197,7 @@ func CreateGroupTransaction(c *gin.Context, database *db.DB) {
 	// Apply splits in-place. On first insert this is just N inserts; on
 	// idempotent retry (same id, same group) it becomes upsert + soft-remove,
 	// preserving personal transaction IDs across re-syncs.
-	splits, err := applySplitsInPlace(c.Request.Context(), tx, gt.ID, req.Splits, splitAmounts, req.Category, gtDate, req.Description, req.Notes)
+	splits, err := applySplitsInPlace(c.Request.Context(), tx, gt.ID, req.Splits, splitAmounts, resolvedCategory, gtDate, req.Description, req.Notes)
 	if err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
@@ -589,11 +595,16 @@ func UpdateGroupTransaction(c *gin.Context, database *db.DB) {
 	pn := 1
 
 	if req.Category != nil {
+		resolvedCat, err := helpers.ResolveCategoryKey(c.Request.Context(), database.Pool, userID, *req.Category)
+		if err != nil {
+			c.JSON(500, gin.H{"error": "failed to resolve category"})
+			return
+		}
 		gtQuery += fmt.Sprintf(", category = $%d", n)
-		args = append(args, *req.Category)
+		args = append(args, resolvedCat)
 		n++
 		personalQuery += fmt.Sprintf(", category = $%d", pn)
-		personalArgs = append(personalArgs, *req.Category)
+		personalArgs = append(personalArgs, resolvedCat)
 		pn++
 	}
 	if req.Date != nil {

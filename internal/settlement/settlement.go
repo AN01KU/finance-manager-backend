@@ -231,14 +231,14 @@ func CreateSettlement(c *gin.Context, db *db.DB) {
 	if excess.IsPositive() {
 		if _, err = dbTx.Exec(c.Request.Context(),
 			`INSERT INTO transactions (user_id, type, amount, category, date, description, notes, group_id, settlement_id)
-			 VALUES ($1, 'income', $2, 'Debt & Payments', NOW(), $3, $4, $5, $6)`,
+			 VALUES ($1, 'income', $2, 'other', NOW(), $3, $4, $5, $6)`,
 			req.ToUser, excess, "Settlement excess received", req.Notes, groupID, s.ID); err != nil {
 			c.JSON(500, gin.H{"error": "failed to create income transaction for settlement excess"})
 			return
 		}
 		if _, err = dbTx.Exec(c.Request.Context(),
 			`INSERT INTO transactions (user_id, type, amount, category, date, description, notes, group_id, settlement_id)
-			 VALUES ($1, 'expense', $2, 'Debt & Payments', NOW(), $3, $4, $5, $6)`,
+			 VALUES ($1, 'expense', $2, 'other', NOW(), $3, $4, $5, $6)`,
 			req.FromUser, excess, "Settlement excess paid", req.Notes, groupID, s.ID); err != nil {
 			c.JSON(500, gin.H{"error": "failed to create expense transaction for settlement excess"})
 			return
@@ -472,14 +472,14 @@ func UpdateSettlement(c *gin.Context, database *db.DB) {
 		if excess.IsPositive() {
 			if _, err = dbTx.Exec(c.Request.Context(),
 				`INSERT INTO transactions (user_id, type, amount, category, date, description, notes, group_id, settlement_id)
-				 VALUES ($1, 'income', $2, 'Debt & Payments', NOW(), $3, $4, $5, $6)`,
+				 VALUES ($1, 'income', $2, 'other', NOW(), $3, $4, $5, $6)`,
 				s.ToUser, excess, "Settlement excess received", s.Notes, s.GroupID, s.ID); err != nil {
 				c.JSON(500, gin.H{"error": "failed to recreate income transaction for settlement excess"})
 				return
 			}
 			if _, err = dbTx.Exec(c.Request.Context(),
 				`INSERT INTO transactions (user_id, type, amount, category, date, description, notes, group_id, settlement_id)
-				 VALUES ($1, 'expense', $2, 'Debt & Payments', NOW(), $3, $4, $5, $6)`,
+				 VALUES ($1, 'expense', $2, 'other', NOW(), $3, $4, $5, $6)`,
 				s.FromUser, excess, "Settlement excess paid", s.Notes, s.GroupID, s.ID); err != nil {
 				c.JSON(500, gin.H{"error": "failed to recreate expense transaction for settlement excess"})
 				return

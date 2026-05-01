@@ -7,23 +7,15 @@ CREATE TABLE users (
     username VARCHAR(100) NOT NULL,
     password_hash VARCHAR(255) NOT NULL,
     currency VARCHAR(3) NOT NULL DEFAULT 'INR',
+    timezone VARCHAR(64) NOT NULL DEFAULT 'UTC',
     email_verified BOOLEAN NOT NULL DEFAULT FALSE,
-    -- tokens_invalidated_after is the cutoff used by JWTAuth to revoke
-    -- previously-issued JWTs without storing them server-side: any token
-    -- whose `iat` is <= this value is rejected as stale. Bumped to NOW()
-    -- on logout, password change, and email change.
     tokens_invalidated_after TIMESTAMPTZ,
-    -- Per-account login throttle: incremented on each bcrypt mismatch,
-    -- reset on success. When attempts hits the threshold the account is
-    -- locked until login_locked_until passes. Defends against credential
-    -- stuffing via botnets that bypass per-IP rate limiting.
     failed_login_attempts INTEGER NOT NULL DEFAULT 0,
     login_locked_until TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- Case-insensitive email uniqueness (defense-in-depth alongside app-level normalization).
 CREATE UNIQUE INDEX users_email_lower_idx ON users (LOWER(email));
 
 -- ============================================================================
@@ -68,6 +60,18 @@ CREATE INDEX idx_recurring_transactions_user_id ON recurring_transactions(user_i
 CREATE INDEX idx_recurring_transactions_active ON recurring_transactions(user_id, is_active) WHERE is_active = TRUE;
 
 -- ============================================================================
+-- Recurring skipped occurrences
+-- ============================================================================
+CREATE TABLE recurring_skipped_occurrences (
+    recurring_transaction_id UUID NOT NULL REFERENCES recurring_transactions(id) ON DELETE CASCADE,
+    occurrence_date          DATE NOT NULL,
+    skipped_at               TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (recurring_transaction_id, occurrence_date)
+);
+
+CREATE INDEX idx_recurring_skipped_by_rule ON recurring_skipped_occurrences(recurring_transaction_id);
+
+-- ============================================================================
 -- Personal transactions (expenses + income)
 -- ============================================================================
 CREATE TABLE transactions (
@@ -97,7 +101,6 @@ CREATE INDEX idx_transactions_group_tx_id ON transactions(group_transaction_id) 
 CREATE INDEX idx_transactions_recurring_tx_id ON transactions(recurring_transaction_id) WHERE recurring_transaction_id IS NOT NULL;
 CREATE INDEX idx_transactions_group_id ON transactions(group_id) WHERE group_id IS NOT NULL;
 
--- Deduplicate recurring transaction instances
 CREATE UNIQUE INDEX uq_transactions_recurring_occurrence
     ON transactions (user_id, recurring_transaction_id, date)
     WHERE recurring_transaction_id IS NOT NULL;
@@ -128,6 +131,7 @@ CREATE TABLE custom_categories (
     is_hidden BOOLEAN DEFAULT FALSE,
     is_predefined BOOLEAN DEFAULT FALSE,
     predefined_key VARCHAR(50),
+    key VARCHAR(120) NOT NULL,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW(),
     UNIQUE(user_id, name)
@@ -135,6 +139,7 @@ CREATE TABLE custom_categories (
 
 CREATE INDEX idx_custom_categories_user_id ON custom_categories(user_id);
 CREATE UNIQUE INDEX idx_custom_categories_user_predefined_key ON custom_categories(user_id, predefined_key) WHERE predefined_key IS NOT NULL;
+CREATE UNIQUE INDEX idx_custom_categories_user_key ON custom_categories(user_id, key);
 
 -- ============================================================================
 -- Groups
@@ -161,7 +166,7 @@ CREATE TABLE group_members (
 CREATE INDEX idx_group_members_user_id ON group_members(user_id);
 
 -- ============================================================================
--- Group transactions (master record: who paid, full amount)
+-- Group transactions
 -- ============================================================================
 CREATE TABLE group_transactions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -181,7 +186,6 @@ CREATE INDEX idx_group_transactions_group ON group_transactions(group_id);
 CREATE INDEX idx_group_transactions_not_deleted ON group_transactions(group_id, is_deleted) WHERE is_deleted = FALSE;
 CREATE INDEX idx_group_transactions_paid_by ON group_transactions(paid_by_user_id);
 
--- Group transaction splits (each member's share)
 CREATE TABLE group_transaction_splits (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     group_transaction_id UUID NOT NULL REFERENCES group_transactions(id) ON DELETE CASCADE,
@@ -194,7 +198,6 @@ CREATE TABLE group_transaction_splits (
 CREATE INDEX idx_group_splits_group_tx ON group_transaction_splits(group_transaction_id);
 CREATE INDEX idx_group_splits_user ON group_transaction_splits(user_id);
 
--- FKs from transactions back to groups / group_transactions
 ALTER TABLE transactions
     ADD CONSTRAINT fk_transactions_group
     FOREIGN KEY (group_id) REFERENCES groups(id) ON DELETE SET NULL;
@@ -229,20 +232,18 @@ ALTER TABLE transactions
     FOREIGN KEY (settlement_id) REFERENCES settlements(id) ON DELETE SET NULL;
 
 -- ============================================================================
--- Sync sessions (offline-first sync support)
+-- Sync sessions
 -- ============================================================================
 CREATE TABLE sync_sessions (
     id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id             UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
-    last_seen_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_seen_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     invalidated_at      TIMESTAMPTZ,
     invalidation_reason TEXT
 );
 
 CREATE INDEX idx_sync_sessions_user_id ON sync_sessions(user_id);
--- Partial index for fast lookup of active sessions; matches every read in
--- ValidateSession / SyncSessionGuard / TTL cleanup.
 CREATE INDEX idx_sync_sessions_active ON sync_sessions(id) WHERE invalidated_at IS NULL;
 
 -- ============================================================================
@@ -274,3 +275,65 @@ CREATE TABLE admin_audit_log (
 );
 
 CREATE INDEX idx_admin_audit_log_created_at ON admin_audit_log(created_at DESC);
+
+-- ============================================================================
+-- Predefined categories
+-- ============================================================================
+CREATE TABLE predefined_categories (
+    id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    key        VARCHAR(100) NOT NULL UNIQUE,
+    name       VARCHAR(100) NOT NULL,
+    icon       VARCHAR(100) NOT NULL,
+    color      VARCHAR(7)   NOT NULL,
+    is_hidden  BOOLEAN      NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_predefined_categories_visible ON predefined_categories(is_hidden) WHERE is_hidden = FALSE;
+
+INSERT INTO predefined_categories (key, name, icon, color) VALUES
+    ('food-dining',      'Food & Dining',      'food-dining',      '#FF6B6B'),
+    ('coffee-cafe',      'Coffee & Cafe',      'coffee-cafe',      '#D4A017'),
+    ('groceries',        'Groceries',          'groceries',        '#34C759'),
+    ('dining-out',       'Dining Out',         'dining-out',       '#FF9500'),
+    ('transport',        'Transport',          'transport',        '#007AFF'),
+    ('fuel-petrol',      'Fuel & Petrol',      'fuel-petrol',      '#FF9500'),
+    ('public-transit',   'Public Transit',     'public-transit',   '#5AC8FA'),
+    ('flights',          'Flights',            'flights',          '#5856D6'),
+    ('housing-rent',     'Housing & Rent',     'housing-rent',     '#5AC8FA'),
+    ('health-medical',   'Health & Medical',   'health-medical',   '#34C759'),
+    ('pharmacy',         'Pharmacy',           'pharmacy',         '#00C7BE'),
+    ('gym-fitness',      'Gym & Fitness',      'gym-fitness',      '#FF3B30'),
+    ('yoga-wellness',    'Yoga & Wellness',    'yoga-wellness',    '#BF5AF2'),
+    ('shopping',         'Shopping',           'shopping',         '#FF2D55'),
+    ('clothing',         'Clothing',           'clothing',         '#BF5AF2'),
+    ('electronics',      'Electronics',        'electronics',      '#5856D6'),
+    ('entertainment',    'Entertainment',      'entertainment',    '#FF9500'),
+    ('music',            'Music',              'music',            '#BF5AF2'),
+    ('gaming',           'Gaming',             'gaming',           '#5856D6'),
+    ('books-reading',    'Books & Reading',    'books-reading',    '#A2845E'),
+    ('travel',           'Travel',             'travel',           '#007AFF'),
+    ('hotels',           'Hotels',             'hotels',           '#5AC8FA'),
+    ('subscriptions',    'Subscriptions',      'subscriptions',    '#3A3A3C'),
+    ('streaming',        'Streaming',          'streaming',        '#FF3B30'),
+    ('bills-utilities',  'Bills & Utilities',  'bills-utilities',  '#FF9500'),
+    ('phone-internet',   'Phone & Internet',   'phone-internet',   '#007AFF'),
+    ('electricity-gas',  'Electricity & Gas',  'electricity-gas',  '#FFD60A'),
+    ('insurance',        'Insurance',          'insurance',        '#8E8E93'),
+    ('education',        'Education',          'education',        '#007AFF'),
+    ('online-courses',   'Online Courses',     'online-courses',   '#5856D6'),
+    ('investments',      'Investments',        'investments',      '#34C759'),
+    ('salary-income',    'Salary & Income',    'salary-income',    '#34C759'),
+    ('savings',          'Savings',            'savings',          '#00C7BE'),
+    ('personal-care',    'Personal Care',      'personal-care',    '#FF2D55'),
+    ('haircut-salon',    'Haircut & Salon',    'haircut-salon',    '#BF5AF2'),
+    ('pets',             'Pets',               'pets',             '#A2845E'),
+    ('gifts',            'Gifts',              'gifts',            '#FF2D55'),
+    ('work-office',      'Work & Office',      'work-office',      '#3A3A3C'),
+    ('freelance',        'Freelance',          'freelance',        '#17C5CC'),
+    ('atm-cash',         'ATM & Cash',         'atm-cash',         '#8E8E93'),
+    ('taxes',            'Taxes',              'taxes',            '#3A3A3C'),
+    ('donation-charity', 'Donation & Charity', 'donation-charity', '#FF2D55'),
+    ('baby-kids',        'Baby & Kids',        'baby-kids',        '#5AC8FA'),
+    ('other',            'Other',              'other',            '#8E8E93');

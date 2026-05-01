@@ -18,6 +18,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/crypto/bcrypt"
 
+	"github.com/yanonymousV2/finance-manager-backend/internal/category"
 	"github.com/yanonymousV2/finance-manager-backend/internal/recurring"
 	"github.com/yanonymousV2/finance-manager-backend/internal/user"
 )
@@ -66,6 +67,7 @@ func (p *Portal) RegisterRoutes(r *gin.Engine) {
 		auth.GET("/groups", p.groupsPage)
 		auth.GET("/groups/:id", p.groupDetailPage)
 		auth.GET("/categories", p.categoriesPage)
+		auth.GET("/category-icons/:key", p.categoryIconServe)
 		auth.GET("/recurring", p.recurringPage)
 		auth.GET("/budgets", p.budgetsPage)
 		auth.GET("/profile", p.profilePage)
@@ -294,6 +296,8 @@ func (p *Portal) dashboardPage(c *gin.Context) {
 		budgetPct = int(pct)
 	}
 
+	catNameMap := p.buildCategoryNameMap(c, u.ID)
+
 	// Category breakdown
 	catRows, _ := p.pool.Query(c.Request.Context(),
 		`SELECT category, COALESCE(SUM(amount),0), COUNT(*) FROM transactions
@@ -307,6 +311,7 @@ func (p *Portal) dashboardPage(c *gin.Context) {
 			var r dashCategoryRow
 			var total float64
 			if catRows.Scan(&r.Category, &total, &r.ExpenseCount) == nil {
+				r.Category = resolveDisplayName(catNameMap, r.Category)
 				r.TotalAmount = fmt.Sprintf("%.2f", total)
 				categories = append(categories, r)
 			}
@@ -363,6 +368,7 @@ func (p *Portal) dashboardPage(c *gin.Context) {
 			var amount float64
 			var date time.Time
 			if txRows.Scan(&r.Type, &amount, &r.Category, &r.Description, &date) == nil {
+				r.Category = resolveDisplayName(catNameMap, r.Category)
 				r.Amount = fmt.Sprintf("%.2f", amount)
 				r.Date = date.Format("Jan 2")
 				recentTxs = append(recentTxs, r)
@@ -404,6 +410,7 @@ type portalTx struct {
 
 func (p *Portal) transactionsPage(c *gin.Context) {
 	u := p.currentUser(c)
+	catNameMap := p.buildCategoryNameMap(c, u.ID)
 
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	if page < 1 {
@@ -446,6 +453,7 @@ func (p *Portal) transactionsPage(c *gin.Context) {
 			var amount float64
 			var date time.Time
 			if rows.Scan(&tx.Type, &amount, &tx.Category, &tx.Description, &date, &tx.GroupID, &tx.GroupName, &total) == nil {
+				tx.Category = resolveDisplayName(catNameMap, tx.Category)
 				tx.Amount = fmt.Sprintf("%.2f", amount)
 				tx.Date = date.Format("2006-01-02")
 				txs = append(txs, tx)
@@ -453,16 +461,21 @@ func (p *Portal) transactionsPage(c *gin.Context) {
 		}
 	}
 
-	// Fetch distinct categories for filter dropdown
+	// Fetch distinct categories for filter dropdown (resolve to display names)
 	catRows, _ := p.pool.Query(c.Request.Context(),
 		`SELECT DISTINCT category FROM transactions WHERE user_id=$1 AND is_deleted=FALSE ORDER BY category`, u.ID)
 	var categories []string
 	if catRows != nil {
 		defer catRows.Close()
+		seen := make(map[string]bool)
 		for catRows.Next() {
-			var cat string
-			if catRows.Scan(&cat) == nil {
-				categories = append(categories, cat)
+			var catKey string
+			if catRows.Scan(&catKey) == nil {
+				name := resolveDisplayName(catNameMap, catKey)
+				if !seen[name] {
+					seen[name] = true
+					categories = append(categories, name)
+				}
 			}
 		}
 	}
@@ -488,9 +501,8 @@ func (p *Portal) transactionsPage(c *gin.Context) {
 }
 
 func (p *Portal) transactionsExport(c *gin.Context) {
-	// Proxy through to the existing CSV export endpoint using the same JWT.
-	// Re-issue the JWT as a Bearer token, then redirect — or just serve the CSV directly.
 	u := p.currentUser(c)
+	catNameMap := p.buildCategoryNameMap(c, u.ID)
 
 	rows, err := p.pool.Query(c.Request.Context(),
 		`SELECT t.type, t.amount, t.category, t.date, COALESCE(t.description,''), COALESCE(t.notes,''),
@@ -517,7 +529,7 @@ func (p *Portal) transactionsExport(c *gin.Context) {
 		if rows.Scan(&txType, &amount, &category, &date, &description, &notes, &groupName) == nil {
 			_, _ = fmt.Fprintf(c.Writer, "%s,%s,%.2f,%s,%s,%s,%s\n",
 				date.Format("2006-01-02"), txType, amount,
-				csvEscape(category), csvEscape(description), csvEscape(notes), csvEscape(groupName))
+				csvEscape(resolveDisplayName(catNameMap, category)), csvEscape(description), csvEscape(notes), csvEscape(groupName))
 		}
 	}
 }
@@ -637,6 +649,7 @@ type groupDetailSettlement struct {
 
 func (p *Portal) groupDetailPage(c *gin.Context) {
 	u := p.currentUser(c)
+	catNameMap := p.buildCategoryNameMap(c, u.ID)
 
 	gidStr := c.Param("id")
 	gid, err := uuid.Parse(gidStr)
@@ -711,6 +724,7 @@ func (p *Portal) groupDetailPage(c *gin.Context) {
 			var total, yourShare float64
 			var date time.Time
 			if txRows.Scan(&gtid, &t.Category, &t.Description, &total, &date, &t.PaidBy, &yourShare) == nil {
+				t.Category = resolveDisplayName(catNameMap, t.Category)
 				t.TotalAmount = fmt.Sprintf("%.2f", total)
 				t.YourShare = fmt.Sprintf("%.2f", yourShare)
 				t.Date = date.Format("Jan 2, 2006")
@@ -767,38 +781,133 @@ type portalCategory struct {
 	TotalSpent   string
 }
 
+func (p *Portal) categoryIconServe(c *gin.Context) {
+	key := c.Param("key")
+	data, ok := category.IconSVG(key)
+	if !ok {
+		c.Status(404)
+		return
+	}
+	c.Data(200, "image/svg+xml", data)
+}
+
 func (p *Portal) categoriesPage(c *gin.Context) {
 	u := p.currentUser(c)
 
-	rows, err := p.pool.Query(c.Request.Context(),
-		`SELECT cc.name, cc.icon, cc.color, cc.is_predefined, cc.is_hidden,
-		        COUNT(t.id) AS tx_count,
-		        COALESCE(SUM(CASE WHEN t.type='expense' THEN t.amount ELSE 0 END), 0) AS total_spent
-		 FROM custom_categories cc
-		 LEFT JOIN transactions t ON t.user_id=cc.user_id AND t.category=cc.name AND t.is_deleted=FALSE
-		 WHERE cc.user_id=$1
-		 GROUP BY cc.name, cc.icon, cc.color, cc.is_predefined, cc.is_hidden
-		 ORDER BY cc.is_predefined ASC, cc.name ASC`, u.ID)
+	// Load visible predefined categories.
+	predRows, err := p.pool.Query(c.Request.Context(),
+		`SELECT key, name, icon, color FROM predefined_categories WHERE is_hidden = FALSE ORDER BY name ASC`)
 	if err != nil {
-		log.Printf("[PORTAL] categoriesPage: %v", err)
+		log.Printf("[PORTAL] categoriesPage predefined: %v", err)
 		p.render(c, "categories", gin.H{"Title": "Categories", "Active": "categories"})
 		return
 	}
-	defer rows.Close()
+	defer predRows.Close()
 
-	var categories []portalCategory
-	customCount := 0
-	for rows.Next() {
+	type predefinedEntry struct {
+		Key, Name, Icon, Color string
+	}
+	var predefined []predefinedEntry
+	for predRows.Next() {
+		var e predefinedEntry
+		if err := predRows.Scan(&e.Key, &e.Name, &e.Icon, &e.Color); err == nil {
+			predefined = append(predefined, e)
+		}
+	}
+	predRows.Close()
+
+	// Load user's override and custom rows, with transaction stats.
+	// Transactions now store category keys; join on the effective key for each row.
+	userRows, err := p.pool.Query(c.Request.Context(),
+		`SELECT cc.name, cc.icon, cc.color, cc.is_predefined, cc.is_hidden, cc.predefined_key,
+		        COUNT(t.id) AS tx_count,
+		        COALESCE(SUM(CASE WHEN t.type='expense' THEN t.amount ELSE 0 END), 0) AS total_spent
+		 FROM custom_categories cc
+		 LEFT JOIN transactions t ON t.user_id=cc.user_id AND t.is_deleted=FALSE
+		   AND t.category = CASE WHEN cc.is_predefined THEN cc.predefined_key ELSE cc.key END
+		 WHERE cc.user_id=$1
+		 GROUP BY cc.name, cc.icon, cc.color, cc.is_predefined, cc.is_hidden, cc.predefined_key
+		 ORDER BY cc.name ASC`, u.ID)
+	if err != nil {
+		log.Printf("[PORTAL] categoriesPage user rows: %v", err)
+		p.render(c, "categories", gin.H{"Title": "Categories", "Active": "categories"})
+		return
+	}
+	defer userRows.Close()
+
+	type overrideEntry struct {
+		portalCategory
+		predefinedKey *string
+	}
+	overrides := make(map[string]portalCategory)
+	var customCats []portalCategory
+	for userRows.Next() {
 		var r portalCategory
 		var totalSpent float64
-		if rows.Scan(&r.Name, &r.Icon, &r.Color, &r.IsPredefined, &r.IsHidden, &r.TxCount, &totalSpent) == nil {
-			if totalSpent > 0 {
-				r.TotalSpent = fmt.Sprintf("%.2f", totalSpent)
+		var isPredefined bool
+		var predKey *string
+		if err := userRows.Scan(&r.Name, &r.Icon, &r.Color, &isPredefined, &r.IsHidden, &predKey, &r.TxCount, &totalSpent); err != nil {
+			continue
+		}
+		r.IsPredefined = isPredefined
+		if totalSpent > 0 {
+			r.TotalSpent = fmt.Sprintf("%.2f", totalSpent)
+		}
+		if isPredefined && predKey != nil {
+			overrides[*predKey] = r
+		} else {
+			customCats = append(customCats, r)
+		}
+	}
+
+	// Get per-predefined-key transaction stats for entries that have no override row.
+	type catStats struct {
+		count int
+		total float64
+	}
+	predStats := make(map[string]catStats)
+	statsRows, _ := p.pool.Query(c.Request.Context(),
+		`SELECT category, COUNT(*), COALESCE(SUM(CASE WHEN type='expense' THEN amount ELSE 0 END),0)
+		 FROM transactions WHERE user_id=$1 AND is_deleted=FALSE
+		 GROUP BY category`, u.ID)
+	if statsRows != nil {
+		defer statsRows.Close()
+		for statsRows.Next() {
+			var k string
+			var st catStats
+			if statsRows.Scan(&k, &st.count, &st.total) == nil {
+				predStats[k] = st
 			}
-			if !r.IsPredefined {
-				customCount++
+		}
+	}
+
+	// Merge: predefined (with overrides applied) then custom.
+	var categories []portalCategory
+	for _, p := range predefined {
+		if ov, ok := overrides[p.Key]; ok {
+			categories = append(categories, ov)
+		} else {
+			cat := portalCategory{
+				Name:         p.Name,
+				Icon:         p.Icon,
+				Color:        p.Color,
+				IsPredefined: true,
 			}
-			categories = append(categories, r)
+			if st, ok := predStats[p.Key]; ok {
+				cat.TxCount = st.count
+				if st.total > 0 {
+					cat.TotalSpent = fmt.Sprintf("%.2f", st.total)
+				}
+			}
+			categories = append(categories, cat)
+		}
+	}
+	categories = append(categories, customCats...)
+
+	customCount := 0
+	for _, cat := range categories {
+		if !cat.IsPredefined {
+			customCount++
 		}
 	}
 
@@ -826,6 +935,7 @@ type portalRecurring struct {
 
 func (p *Portal) recurringPage(c *gin.Context) {
 	u := p.currentUser(c)
+	catNameMap := p.buildCategoryNameMap(c, u.ID)
 
 	rows, err := p.pool.Query(c.Request.Context(),
 		`SELECT name, type, category, frequency, amount, COALESCE(notes,''), is_active,
@@ -849,6 +959,7 @@ func (p *Portal) recurringPage(c *gin.Context) {
 		var dayOfMonth *int
 		var daysOfWeekRaw []int32
 		if rows.Scan(&r.Name, &r.Type, &r.Category, &r.Frequency, &amount, &r.Notes, &r.IsActive, &lastAdded, &startDate, &endDate, &dayOfMonth, &daysOfWeekRaw) == nil {
+			r.Category = resolveDisplayName(catNameMap, r.Category)
 			r.Amount = fmt.Sprintf("%.2f", amount)
 			if r.IsActive {
 				activeCount++
@@ -959,6 +1070,7 @@ type profileTopCategory struct {
 
 func (p *Portal) profilePage(c *gin.Context) {
 	u := p.currentUser(c)
+	catNameMap := p.buildCategoryNameMap(c, u.ID)
 
 	// Account creation date
 	var createdAt time.Time
@@ -1004,6 +1116,7 @@ func (p *Portal) profilePage(c *gin.Context) {
 			var r profileTopCategory
 			var spent float64
 			if catRows.Scan(&r.Category, &r.TxCount, &spent) == nil {
+				r.Category = resolveDisplayName(catNameMap, r.Category)
 				r.TotalSpent = fmt.Sprintf("%.2f", spent)
 				topCategories = append(topCategories, r)
 			}
@@ -1047,6 +1160,56 @@ func formatDuration(d time.Duration) string {
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+// buildCategoryNameMap returns a map from category key → display name for the
+// given user. Predefined categories come first; user overrides and custom
+// categories overwrite the predefined entry for the same key.
+func (p *Portal) buildCategoryNameMap(c *gin.Context, userID uuid.UUID) map[string]string {
+	m := make(map[string]string)
+
+	// Load all predefined categories.
+	rows, err := p.pool.Query(c.Request.Context(),
+		`SELECT key, name FROM predefined_categories WHERE is_hidden = FALSE`)
+	if err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var k, name string
+			if rows.Scan(&k, &name) == nil {
+				m[k] = name
+			}
+		}
+	}
+
+	// User overrides: for predefined overrides key is predefined_key; for custom
+	// rows key is the stable key column.
+	uRows, err := p.pool.Query(c.Request.Context(),
+		`SELECT CASE WHEN is_predefined THEN predefined_key ELSE key END AS cat_key, name
+		 FROM custom_categories
+		 WHERE user_id = $1 AND is_hidden = FALSE`, userID)
+	if err == nil {
+		defer uRows.Close()
+		for uRows.Next() {
+			var k, name string
+			if uRows.Scan(&k, &name) == nil && k != "" {
+				m[k] = name
+			}
+		}
+	}
+
+	return m
+}
+
+// resolveDisplayName returns the display name for a category key. Falls back
+// to "Other" when the key is unknown.
+func resolveDisplayName(m map[string]string, key string) string {
+	if name, ok := m[key]; ok {
+		return name
+	}
+	if name, ok := m["other"]; ok {
+		return name
+	}
+	return "Other"
+}
 
 // computeGroupBalance returns the current user's net balance in a group.
 // Positive = others owe the user. Negative = user owes others.

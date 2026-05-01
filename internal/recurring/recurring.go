@@ -125,6 +125,12 @@ func CreateRecurringTransaction(c *gin.Context, db *db.DB) {
 		return
 	}
 
+	resolvedCategory, err := helpers.ResolveCategoryKey(c.Request.Context(), db.Pool, userID, req.Category)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "failed to resolve category"})
+		return
+	}
+
 	recurringID := uuid.New()
 	if req.ID != nil {
 		recurringID = *req.ID
@@ -141,7 +147,7 @@ func CreateRecurringTransaction(c *gin.Context, db *db.DB) {
 	var rt RecurringTransaction
 	var rawStartDate, rawCreatedAt, rawUpdatedAt time.Time
 	var rawEndDate, rawLastAddedDate *time.Time
-	err := db.Pool.QueryRow(c.Request.Context(),
+	err = db.Pool.QueryRow(c.Request.Context(),
 		`INSERT INTO recurring_transactions (id, user_id, type, name, amount, category, frequency, day_of_month, days_of_week, start_date, end_date, is_active, notes, updated_at)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, true, $12, $13)
 		 ON CONFLICT (id) DO UPDATE SET
@@ -159,7 +165,7 @@ func CreateRecurringTransaction(c *gin.Context, db *db.DB) {
 		 WHERE recurring_transactions.user_id = EXCLUDED.user_id
 		   AND recurring_transactions.updated_at <= EXCLUDED.updated_at
 		 RETURNING id, user_id, type, name, amount, category, frequency, day_of_month, days_of_week, start_date, end_date, is_active, last_added_date, notes, created_at, updated_at`,
-		recurringID, userID, req.Type, req.Name, amount, req.Category, req.Frequency, req.DayOfMonth, req.DaysOfWeek, startDate, endDate, req.Notes, updatedAt).Scan(
+		recurringID, userID, req.Type, req.Name, amount, resolvedCategory, req.Frequency, req.DayOfMonth, req.DaysOfWeek, startDate, endDate, req.Notes, updatedAt).Scan(
 		&rt.ID, &rt.UserID, &rt.Type, &rt.Name, &rt.Amount, &rt.Category,
 		&rt.Frequency, &rt.DayOfMonth, &rt.DaysOfWeek, &rawStartDate,
 		&rawEndDate, &rt.IsActive, &rawLastAddedDate, &rt.Notes, &rawCreatedAt, &rawUpdatedAt)
@@ -378,6 +384,16 @@ func UpdateRecurringTransaction(c *gin.Context, db *db.DB) {
 		return
 	}
 
+	var resolvedCategory *string
+	if req.Category != nil {
+		rc, err := helpers.ResolveCategoryKey(c.Request.Context(), db.Pool, userID, *req.Category)
+		if err != nil {
+			c.JSON(500, gin.H{"error": "failed to resolve category"})
+			return
+		}
+		resolvedCategory = &rc
+	}
+
 	// If any schedule-affecting field changes, reset last_added_date so the
 	// generator re-evaluates from start_date under the new rule. Combined with
 	// the (user_id, recurring_transaction_id, date) unique index and the
@@ -408,9 +424,9 @@ func UpdateRecurringTransaction(c *gin.Context, db *db.DB) {
 		args = append(args, parsedAmount)
 		argCount++
 	}
-	if req.Category != nil {
+	if resolvedCategory != nil {
 		query += fmt.Sprintf(", category = $%d", argCount)
-		args = append(args, req.Category)
+		args = append(args, *resolvedCategory)
 		argCount++
 	}
 	if req.Frequency != nil {

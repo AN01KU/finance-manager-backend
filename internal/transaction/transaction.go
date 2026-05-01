@@ -89,6 +89,12 @@ func CreateTransaction(c *gin.Context, database *db.DB) {
 		return
 	}
 
+	resolvedCategory, err := helpers.ResolveCategoryKey(c.Request.Context(), database.Pool, userID, req.Category)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "failed to resolve category"})
+		return
+	}
+
 	date := time.UnixMilli(req.Date).UTC()
 
 	id := uuid.New()
@@ -107,7 +113,7 @@ func CreateTransaction(c *gin.Context, database *db.DB) {
 	var tx Transaction
 	var rawDate, rawCreatedAt, rawUpdatedAt time.Time
 
-	err := database.Pool.QueryRow(c.Request.Context(),
+	err = database.Pool.QueryRow(c.Request.Context(),
 		`WITH ins AS (
 		   INSERT INTO transactions (id, user_id, type, amount, category, date, description, notes, recurring_transaction_id, updated_at)
 		   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
@@ -128,7 +134,7 @@ func CreateTransaction(c *gin.Context, database *db.DB) {
 		 FROM ins
 		 LEFT JOIN group_transactions gt ON ins.group_transaction_id = gt.id
 		 LEFT JOIN groups g ON gt.group_id = g.id`,
-		id, userID, req.Type, amount, req.Category, date,
+		id, userID, req.Type, amount, resolvedCategory, date,
 		req.Description, req.Notes, req.RecurringTransactionID, updatedAt,
 	).Scan(
 		&tx.ID, &tx.UserID, &tx.Type, &tx.Amount, &tx.Category,
@@ -435,8 +441,13 @@ func UpdateTransaction(c *gin.Context, database *db.DB) {
 		n++
 	}
 	if req.Category != nil {
+		resolved, err := helpers.ResolveCategoryKey(c.Request.Context(), database.Pool, userID, *req.Category)
+		if err != nil {
+			c.JSON(500, gin.H{"error": "failed to resolve category"})
+			return
+		}
 		query += fmt.Sprintf(", category = $%d", n)
-		args = append(args, *req.Category)
+		args = append(args, resolved)
 		n++
 	}
 	if req.Date != nil {
