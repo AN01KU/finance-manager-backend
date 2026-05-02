@@ -92,8 +92,8 @@ type Category struct {
 	Name          string               `json:"name,omitempty"`
 	Icon          string               `json:"icon,omitempty"`
 	Color         string               `json:"color,omitempty"`
-	IsHidden      bool                 `json:"is_hidden,omitempty"`
-	IsPredefined  bool                 `json:"is_predefined,omitempty"`
+	IsHidden      bool                 `json:"is_hidden"`
+	IsPredefined  bool                 `json:"is_predefined"`
 	PredefinedKey *string              `json:"predefined_key,omitempty"`
 	IsDeleted     bool                 `json:"is_deleted,omitempty"`
 	DeletedAt     *helpers.EpochMillis `json:"deleted_at,omitempty"`
@@ -249,10 +249,19 @@ func ListCategories(c *gin.Context, d *db.DB) {
 		return
 	}
 
+	// Load all predefined categories so we can synthesise virtual entries for
+	// any that the user has not yet overridden.
+	predefined, err := loadVisiblePredefined(c.Request.Context(), d)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "failed to retrieve predefined categories"})
+		return
+	}
+
 	rows, err := d.Pool.Query(c.Request.Context(),
 		`SELECT id, key, user_id, name, icon, color, is_hidden, is_predefined, predefined_key, deleted_at, created_at, updated_at
 		   FROM custom_categories
 		  WHERE user_id = $1
+		    AND deleted_at IS NULL
 		  ORDER BY created_at ASC`,
 		userID)
 	if err != nil {
@@ -261,6 +270,9 @@ func ListCategories(c *gin.Context, d *db.DB) {
 	}
 	defer rows.Close()
 
+	// Track which predefined keys have an override row so we can skip them
+	// when synthesising virtuals below.
+	overriddenKeys := make(map[string]bool)
 	out := make([]Category, 0)
 	for rows.Next() {
 		var cat Category
@@ -281,12 +293,30 @@ func ListCategories(c *gin.Context, d *db.DB) {
 		// Override rows: expose the predefined key so the client can match it back.
 		if cat.IsPredefined && cat.PredefinedKey != nil {
 			cat.Key = *cat.PredefinedKey
+			overriddenKeys[*cat.PredefinedKey] = true
 		}
 		out = append(out, cat)
 	}
 	if err := rows.Err(); err != nil {
 		c.JSON(500, gin.H{"error": "database iteration failed"})
 		return
+	}
+
+	// Synthesise virtual entries for predefined categories with no override row.
+	for _, p := range predefined {
+		if overriddenKeys[p.Key] {
+			continue
+		}
+		out = append(out, Category{
+			ID:           virtualPredefinedID(userID, p.Key),
+			Key:          p.Key,
+			UserID:       userID,
+			Name:         p.Name,
+			Icon:         p.Icon,
+			Color:        p.Color,
+			IsHidden:     false,
+			IsPredefined: true,
+		})
 	}
 
 	c.JSON(200, gin.H{"data": out})
