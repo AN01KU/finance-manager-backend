@@ -835,10 +835,6 @@ func (p *Portal) categoriesPage(c *gin.Context) {
 	}
 	defer userRows.Close()
 
-	type overrideEntry struct {
-		portalCategory
-		predefinedKey *string
-	}
 	overrides := make(map[string]portalCategory)
 	var customCats []portalCategory
 	for userRows.Next() {

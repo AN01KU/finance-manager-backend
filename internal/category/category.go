@@ -523,7 +523,7 @@ func DeleteCategory(c *gin.Context, d *db.DB) {
 			c.JSON(500, gin.H{"error": "failed to begin transaction"})
 			return
 		}
-		defer tx.Rollback(c.Request.Context())
+		defer tx.Rollback(c.Request.Context()) //nolint:errcheck
 
 		for _, q := range []string{
 			`UPDATE transactions SET category = 'other' WHERE category = $1 AND user_id = $2`,

@@ -262,7 +262,7 @@ func AdminDeletePredefined(c *gin.Context, d *db.DB) {
 		c.JSON(500, gin.H{"error": "failed to begin transaction"})
 		return
 	}
-	defer tx.Rollback(c.Request.Context())
+	defer tx.Rollback(c.Request.Context()) //nolint:errcheck
 
 	// Cascade all transactions that referenced this predefined key to "other".
 	for _, q := range []string{

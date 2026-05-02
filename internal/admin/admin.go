@@ -1794,7 +1794,7 @@ func (a *Admin) categoryHardDelete(c *gin.Context) {
 		catRedirect(c, "", "Failed to begin transaction")
 		return
 	}
-	defer tx.Rollback(c.Request.Context())
+	defer tx.Rollback(c.Request.Context()) //nolint:errcheck
 
 	if _, err := tx.Exec(c.Request.Context(),
 		`DELETE FROM custom_categories WHERE is_predefined = TRUE AND predefined_key = $1`,
