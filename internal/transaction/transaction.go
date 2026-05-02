@@ -89,6 +89,12 @@ func CreateTransaction(c *gin.Context, database *db.DB) {
 		return
 	}
 
+	resolvedCategory, err := helpers.ResolveCategoryKey(c.Request.Context(), database.Pool, userID, req.Category)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "failed to resolve category"})
+		return
+	}
+
 	date := time.UnixMilli(req.Date).UTC()
 
 	id := uuid.New()
@@ -107,7 +113,7 @@ func CreateTransaction(c *gin.Context, database *db.DB) {
 	var tx Transaction
 	var rawDate, rawCreatedAt, rawUpdatedAt time.Time
 
-	err := database.Pool.QueryRow(c.Request.Context(),
+	err = database.Pool.QueryRow(c.Request.Context(),
 		`WITH ins AS (
 		   INSERT INTO transactions (id, user_id, type, amount, category, date, description, notes, recurring_transaction_id, updated_at)
 		   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
@@ -128,7 +134,7 @@ func CreateTransaction(c *gin.Context, database *db.DB) {
 		 FROM ins
 		 LEFT JOIN group_transactions gt ON ins.group_transaction_id = gt.id
 		 LEFT JOIN groups g ON gt.group_id = g.id`,
-		id, userID, req.Type, amount, req.Category, date,
+		id, userID, req.Type, amount, resolvedCategory, date,
 		req.Description, req.Notes, req.RecurringTransactionID, updatedAt,
 	).Scan(
 		&tx.ID, &tx.UserID, &tx.Type, &tx.Amount, &tx.Category,
@@ -379,8 +385,12 @@ func UpdateTransaction(c *gin.Context, database *db.DB) {
 
 	var ownerID uuid.UUID
 	var groupTxID *uuid.UUID
+	// Filter out soft-deleted rows here so a stale client cannot resurrect
+	// (or silently re-update) a transaction that was tombstoned by the
+	// group/settlement cascade.
 	err = database.Pool.QueryRow(c.Request.Context(),
-		`SELECT user_id, group_transaction_id FROM transactions WHERE id = $1`, id,
+		`SELECT user_id, group_transaction_id FROM transactions
+		 WHERE id = $1 AND is_deleted = FALSE`, id,
 	).Scan(&ownerID, &groupTxID)
 	if err != nil {
 		c.JSON(404, gin.H{"error": "transaction not found"})
@@ -431,8 +441,13 @@ func UpdateTransaction(c *gin.Context, database *db.DB) {
 		n++
 	}
 	if req.Category != nil {
+		resolved, err := helpers.ResolveCategoryKey(c.Request.Context(), database.Pool, userID, *req.Category)
+		if err != nil {
+			c.JSON(500, gin.H{"error": "failed to resolve category"})
+			return
+		}
 		query += fmt.Sprintf(", category = $%d", n)
-		args = append(args, *req.Category)
+		args = append(args, resolved)
 		n++
 	}
 	if req.Date != nil {
@@ -456,7 +471,7 @@ func UpdateTransaction(c *gin.Context, database *db.DB) {
 		return
 	}
 
-	query += fmt.Sprintf(` WHERE id = $%d AND user_id = $%d
+	query += fmt.Sprintf(` WHERE id = $%d AND user_id = $%d AND is_deleted = FALSE
 		RETURNING id, user_id, type, amount, category, date, description, notes, recurring_transaction_id, group_transaction_id, settlement_id, is_deleted, created_at, updated_at`, n, n+1)
 	args = append(args, id, userID)
 
@@ -505,9 +520,11 @@ func DeleteTransaction(c *gin.Context, database *db.DB) {
 	var ownerID uuid.UUID
 	var groupTxID *uuid.UUID
 	var recurringTxID *uuid.UUID
+	var txDate time.Time
 	err = database.Pool.QueryRow(c.Request.Context(),
-		`SELECT user_id, group_transaction_id, recurring_transaction_id FROM transactions WHERE id = $1`, id,
-	).Scan(&ownerID, &groupTxID, &recurringTxID)
+		`SELECT user_id, group_transaction_id, recurring_transaction_id, date
+		 FROM transactions WHERE id = $1 AND is_deleted = FALSE`, id,
+	).Scan(&ownerID, &groupTxID, &recurringTxID, &txDate)
 	if err != nil {
 		c.JSON(404, gin.H{"error": "transaction not found"})
 		return
@@ -521,21 +538,11 @@ func DeleteTransaction(c *gin.Context, database *db.DB) {
 		return
 	}
 
-	// For recurring-linked deletes, fetch the date so we can record a skip
-	// row before the row disappears. Without this the next scheduler tick
-	// would happily regenerate the deleted instance.
-	var txDate time.Time
-	if recurringTxID != nil {
-		if err := database.Pool.QueryRow(c.Request.Context(),
-			`SELECT date FROM transactions WHERE id = $1 AND user_id = $2`, id, userID,
-		).Scan(&txDate); err != nil {
-			c.JSON(404, gin.H{"error": "transaction not found"})
-			return
-		}
-	}
-
-	// Hard delete plain and recurring-linked transactions immediately.
-	// Only group-linked transactions use soft delete (handled above via the group endpoint).
+	// Hard-delete personal/recurring-linked transactions on user request.
+	// Group-linked rows are routed to the group endpoint above (which uses
+	// soft delete because cross-user audit history matters there). Pure
+	// personal rows belong to a single user and rollback is the client's
+	// problem, so we don't keep tombstones around.
 	dbTx, err := database.Pool.Begin(c.Request.Context())
 	if err != nil {
 		c.JSON(500, gin.H{"error": "failed to start transaction"})

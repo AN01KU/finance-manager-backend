@@ -21,6 +21,7 @@ type Config struct {
 	ResendAPIKey            string
 	FromEmail               string
 	SyncSessionTTLDays      int
+	TombstoneRetentionDays  int
 	DBMaxConns              int32
 	DBMinConns              int32
 	ReminderThresholdAmount float64
@@ -41,6 +42,7 @@ func Load() *Config {
 		ResendAPIKey:            getEnv("RESEND_API_KEY", ""),
 		FromEmail:               getEnv("FROM_EMAIL", "Finance Manager <noreply@example.com>"),
 		SyncSessionTTLDays:      getEnvInt("SYNC_SESSION_TTL_DAYS", 90),
+		TombstoneRetentionDays:  getEnvInt("TOMBSTONE_RETENTION_DAYS", 30),
 		DBMaxConns:              int32(getEnvInt("DB_MAX_CONNS", 25)),
 		DBMinConns:              int32(getEnvInt("DB_MIN_CONNS", 5)),
 		ReminderThresholdAmount: getEnvFloat("REMINDER_THRESHOLD_AMOUNT", 20.0),

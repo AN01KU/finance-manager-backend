@@ -189,6 +189,13 @@ func GetMe(c *gin.Context, service *AuthService) {
 	c.JSON(200, u)
 }
 
+// Per-account login throttle: lock for lockoutDuration after maxFailedAttempts
+// consecutive bcrypt mismatches. Per-IP rate limiting still applies on top.
+const (
+	maxFailedLoginAttempts = 5
+	loginLockoutDuration   = 15 * time.Minute
+)
+
 func Login(c *gin.Context, service *AuthService) {
 	database := service.DB
 	var req LoginRequest
@@ -204,22 +211,65 @@ func Login(c *gin.Context, service *AuthService) {
 		return
 	}
 
-	// Get user
+	// Get user (including the throttle columns).
 	var u user.User
 	var rawCreatedAt time.Time
+	var failedAttempts int
+	var lockedUntil *time.Time
 	err := database.Pool.QueryRow(c.Request.Context(),
-		"SELECT id, email, username, password_hash, currency, timezone, email_verified, created_at FROM users WHERE email = $1", req.Email).Scan(
-		&u.ID, &u.Email, &u.Username, &u.PasswordHash, &u.Currency, &u.Timezone, &u.EmailVerified, &rawCreatedAt)
+		`SELECT id, email, username, password_hash, currency, timezone, email_verified, created_at,
+		        failed_login_attempts, login_locked_until
+		 FROM users WHERE email = $1`, req.Email).Scan(
+		&u.ID, &u.Email, &u.Username, &u.PasswordHash, &u.Currency, &u.Timezone, &u.EmailVerified, &rawCreatedAt,
+		&failedAttempts, &lockedUntil)
 	if err != nil {
+		// Email not found — return the same 401 as a wrong password to
+		// avoid leaking which emails are registered. We deliberately do NOT
+		// touch the throttle for unknown emails (would also leak existence
+		// via lockouts). Per-IP rate limiting handles enumeration.
 		c.JSON(401, gin.H{"error": "invalid credentials"})
 		return
 	}
 	u.CreatedAt = helpers.FromTime(rawCreatedAt)
 
+	// Account locked? Reject with 429 until the lockout expires.
+	if lockedUntil != nil && lockedUntil.After(time.Now()) {
+		c.JSON(429, gin.H{
+			"error":             "too many failed login attempts; account temporarily locked",
+			"locked_until_unix": lockedUntil.Unix(),
+		})
+		return
+	}
+
 	// Check password
 	if err := bcrypt.CompareHashAndPassword([]byte(u.PasswordHash), []byte(req.Password)); err != nil {
+		// Wrong password — increment counter; lock if threshold hit.
+		newAttempts := failedAttempts + 1
+		if newAttempts >= maxFailedLoginAttempts {
+			_, _ = database.Pool.Exec(c.Request.Context(),
+				`UPDATE users
+				 SET failed_login_attempts = $1,
+				     login_locked_until = now() + $2::interval,
+				     updated_at = now()
+				 WHERE id = $3`,
+				newAttempts, fmt.Sprintf("%d seconds", int(loginLockoutDuration.Seconds())), u.ID)
+		} else {
+			_, _ = database.Pool.Exec(c.Request.Context(),
+				`UPDATE users
+				 SET failed_login_attempts = $1, updated_at = now()
+				 WHERE id = $2`,
+				newAttempts, u.ID)
+		}
 		c.JSON(401, gin.H{"error": "invalid credentials"})
 		return
+	}
+
+	// Success — reset throttle counters.
+	if failedAttempts > 0 || lockedUntil != nil {
+		_, _ = database.Pool.Exec(c.Request.Context(),
+			`UPDATE users
+			 SET failed_login_attempts = 0, login_locked_until = NULL, updated_at = now()
+			 WHERE id = $1`, u.ID)
 	}
 
 	// Generate token

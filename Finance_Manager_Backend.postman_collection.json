@@ -136,7 +136,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"type\": \"expense\",\n  \"amount\": \"350\",\n  \"category\": \"Food & Dining\",\n  \"date\": 1774569600000,\n  \"description\": \"Lunch at office\"\n}"
+              "raw": "{\n  \"type\": \"expense\",\n  \"amount\": \"350\",\n  \"category\": \"food-dining\",\n  \"date\": 1774569600000,\n  \"description\": \"Lunch at office\"\n}"
             },
             "url": { "raw": "{{base_url}}/transactions", "host": ["{{base_url}}"], "path": ["transactions"] }
           }
@@ -153,7 +153,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"type\": \"income\",\n  \"amount\": \"85000\",\n  \"category\": \"Work & Professional\",\n  \"date\": 1774569600000,\n  \"description\": \"March Salary\",\n  \"notes\": \"Net after TDS\"\n}"
+              "raw": "{\n  \"type\": \"income\",\n  \"amount\": \"85000\",\n  \"category\": \"salary-income\",\n  \"date\": 1774569600000,\n  \"description\": \"March Salary\",\n  \"notes\": \"Net after TDS\"\n}"
             },
             "url": { "raw": "{{base_url}}/transactions", "host": ["{{base_url}}"], "path": ["transactions"] }
           }
@@ -170,7 +170,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"id\": \"f1000001-0000-0000-0000-000000000001\",\n  \"type\": \"expense\",\n  \"amount\": \"500\",\n  \"category\": \"Transport\",\n  \"date\": 1774569600000,\n  \"description\": \"Cab to airport\"\n}"
+              "raw": "{\n  \"id\": \"f1000001-0000-0000-0000-000000000001\",\n  \"type\": \"expense\",\n  \"amount\": \"500\",\n  \"category\": \"transport\",\n  \"date\": 1774569600000,\n  \"description\": \"Cab to airport\"\n}"
             },
             "url": { "raw": "{{base_url}}/transactions", "host": ["{{base_url}}"], "path": ["transactions"] }
           }
@@ -186,7 +186,7 @@
               "path": ["transactions"],
               "query": [
                 { "key": "type", "value": "expense", "disabled": true },
-                { "key": "category", "value": "Food & Dining", "disabled": true },
+                { "key": "category", "value": "food-dining", "disabled": true },
                 { "key": "start_date", "value": "1772323200000", "disabled": true },
                 { "key": "end_date", "value": "1774915200000", "disabled": true },
                 { "key": "limit", "value": "20", "disabled": true },
@@ -209,15 +209,15 @@
           }
         },
         {
-          "name": "List Transactions (Debt & Payments — settlements)",
+          "name": "List Transactions (settlements — other)",
           "request": {
             "method": "GET",
             "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
             "url": {
-              "raw": "{{base_url}}/transactions?category=Debt & Payments",
+              "raw": "{{base_url}}/transactions?category=other",
               "host": ["{{base_url}}"],
               "path": ["transactions"],
-              "query": [{ "key": "category", "value": "Debt & Payments" }]
+              "query": [{ "key": "category", "value": "other" }]
             }
           }
         },
@@ -239,7 +239,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"amount\": \"400\",\n  \"description\": \"Updated description\"\n}"
+              "raw": "{\n  \"amount\": \"400\",\n  \"category\": \"dining-out\",\n  \"description\": \"Updated description\"\n}"
             },
             "url": { "raw": "{{base_url}}/transactions/a1000001-0000-0000-0000-000000000000", "host": ["{{base_url}}"], "path": ["transactions", "a1000001-0000-0000-0000-000000000000"] }
           }
@@ -269,7 +269,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"type\": \"expense\",\n  \"name\": \"House Rent\",\n  \"amount\": \"15000\",\n  \"category\": \"Housing\",\n  \"frequency\": \"monthly\",\n  \"day_of_month\": 1,\n  \"start_date\": 1767225600000,\n  \"notes\": \"Monthly rent\"\n}"
+              "raw": "{\n  \"type\": \"expense\",\n  \"name\": \"House Rent\",\n  \"amount\": \"15000\",\n  \"category\": \"housing-rent\",\n  \"frequency\": \"monthly\",\n  \"day_of_month\": 1,\n  \"start_date\": 1767225600000,\n  \"notes\": \"Monthly rent\"\n}"
             },
             "url": { "raw": "{{base_url}}/recurring-transactions", "host": ["{{base_url}}"], "path": ["recurring-transactions"] }
           }
@@ -286,7 +286,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"type\": \"income\",\n  \"name\": \"Monthly Salary\",\n  \"amount\": \"85000\",\n  \"category\": \"Work & Professional\",\n  \"frequency\": \"monthly\",\n  \"day_of_month\": 1,\n  \"start_date\": 1767225600000,\n  \"notes\": \"Net salary after TDS\"\n}"
+              "raw": "{\n  \"type\": \"income\",\n  \"name\": \"Monthly Salary\",\n  \"amount\": \"85000\",\n  \"category\": \"salary-income\",\n  \"frequency\": \"monthly\",\n  \"day_of_month\": 1,\n  \"start_date\": 1767225600000,\n  \"notes\": \"Net salary after TDS\"\n}"
             },
             "url": { "raw": "{{base_url}}/recurring-transactions", "host": ["{{base_url}}"], "path": ["recurring-transactions"] }
           }
@@ -301,7 +301,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"type\": \"expense\",\n  \"name\": \"Weekly groceries\",\n  \"amount\": \"800\",\n  \"category\": \"Food & Dining\",\n  \"frequency\": \"weekly\",\n  \"days_of_week\": [6],\n  \"start_date\": 1767225600000\n}"
+              "raw": "{\n  \"type\": \"expense\",\n  \"name\": \"Weekly groceries\",\n  \"amount\": \"800\",\n  \"category\": \"groceries\",\n  \"frequency\": \"weekly\",\n  \"days_of_week\": [6],\n  \"start_date\": 1767225600000\n}"
             },
             "url": { "raw": "{{base_url}}/recurring-transactions", "host": ["{{base_url}}"], "path": ["recurring-transactions"] }
           }
@@ -337,7 +337,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"amount\": \"16000\",\n  \"is_active\": true\n}"
+              "raw": "{\n  \"amount\": \"16000\",\n  \"category\": \"housing-rent\",\n  \"is_active\": true\n}"
             },
             "url": { "raw": "{{base_url}}/recurring-transactions/22222222-0001-0001-0001-222222222222", "host": ["{{base_url}}"], "path": ["recurring-transactions", "22222222-0001-0001-0001-222222222222"] }
           }
@@ -431,11 +431,20 @@
       "name": "Categories",
       "item": [
         {
-          "name": "List Categories",
+          "name": "Get Predefined Categories (no auth)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{base_url}}/predefined-categories", "host": ["{{base_url}}"], "path": ["predefined-categories"] }
+          }
+        },
+        {
+          "name": "List User Categories (overrides + custom only)",
           "request": {
             "method": "GET",
             "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
-            "url": { "raw": "{{base_url}}/categories", "host": ["{{base_url}}"], "path": ["categories"] }
+            "url": { "raw": "{{base_url}}/categories", "host": ["{{base_url}}"], "path": ["categories"] },
+            "description": "Returns only the user's custom categories and predefined overrides. Client merges with GET /predefined-categories to build the full list."
           }
         },
         {
@@ -450,38 +459,39 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"Investments\",\n  \"icon\": \"chart.line.uptrend.xyaxis.circle.fill\",\n  \"color\": \"#27AE60\"\n}"
+              "raw": "{\n  \"name\": \"Crypto\",\n  \"icon\": \"investments\",\n  \"color\": \"#F0B90B\"\n}"
             },
             "url": { "raw": "{{base_url}}/categories", "host": ["{{base_url}}"], "path": ["categories"] }
           }
         },
         {
-          "name": "Create Category (client ID)",
-          "request": {
-            "method": "POST",
-            "header": [
-              { "key": "Authorization", "value": "Bearer {{token}}" },
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "X-Sync-Session-ID", "value": "{{sync_session_id}}", "disabled": true },
-              { "key": "X-Sync-Version", "value": "1", "disabled": true }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"id\": \"e1000001-0000-0000-0000-000000000001\",\n  \"name\": \"Crypto\",\n  \"icon\": \"bitcoinsign.circle.fill\",\n  \"color\": \"#F7931A\"\n}"
-            },
-            "url": { "raw": "{{base_url}}/categories", "host": ["{{base_url}}"], "path": ["categories"] }
-          }
-        },
-        {
-          "name": "Update Category",
+          "name": "Update Category (rename / recolor / hide)",
           "request": {
             "method": "PUT",
             "header": [
               { "key": "Authorization", "value": "Bearer {{token}}" },
               { "key": "Content-Type", "value": "application/json" }
             ],
-            "body": { "mode": "raw", "raw": "{\n  \"name\": \"Investments & Savings\",\n  \"is_hidden\": false\n}" },
+            "body": { "mode": "raw", "raw": "{\n  \"name\": \"Crypto & Web3\",\n  \"color\": \"#F7931A\",\n  \"is_hidden\": false\n}" },
             "url": { "raw": "{{base_url}}/categories/:id", "host": ["{{base_url}}"], "path": ["categories", ":id"], "variable": [{ "key": "id", "value": "" }] }
+          }
+        },
+        {
+          "name": "Override Predefined Category",
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"color\": \"#FF4757\"\n}" },
+            "url": {
+              "raw": "{{base_url}}/categories/:id",
+              "host": ["{{base_url}}"],
+              "path": ["categories", ":id"],
+              "variable": [{ "key": "id", "value": "" }],
+              "description": "Pass the virtual UUID returned by GET /categories for a predefined entry. Creates an override row server-side."
+            }
           }
         },
         {
@@ -615,7 +625,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"paid_by_user_id\": \"aaaaaaaa-0001-0001-0001-aaaaaaaaaaaa\",\n  \"total_amount\": \"1200\",\n  \"category\": \"Food & Dining\",\n  \"date\": 1774569600000,\n  \"description\": \"Dinner split 3 ways\",\n  \"splits\": [\n    { \"user_id\": \"aaaaaaaa-0001-0001-0001-aaaaaaaaaaaa\", \"amount\": \"400\" },\n    { \"user_id\": \"bbbbbbbb-0002-0002-0002-bbbbbbbbbbbb\", \"amount\": \"400\" },\n    { \"user_id\": \"cccccccc-0003-0003-0003-cccccccccccc\", \"amount\": \"400\" }\n  ]\n}"
+              "raw": "{\n  \"paid_by_user_id\": \"aaaaaaaa-0001-0001-0001-aaaaaaaaaaaa\",\n  \"total_amount\": \"1200\",\n  \"category\": \"food-dining\",\n  \"date\": 1774569600000,\n  \"description\": \"Dinner split 3 ways\",\n  \"splits\": [\n    { \"user_id\": \"aaaaaaaa-0001-0001-0001-aaaaaaaaaaaa\", \"amount\": \"400\" },\n    { \"user_id\": \"bbbbbbbb-0002-0002-0002-bbbbbbbbbbbb\", \"amount\": \"400\" },\n    { \"user_id\": \"cccccccc-0003-0003-0003-cccccccccccc\", \"amount\": \"400\" }\n  ]\n}"
             },
             "url": { "raw": "{{base_url}}/groups/eeeeeeee-0001-0001-0001-eeeeeeeeeeee/transactions", "host": ["{{base_url}}"], "path": ["groups", "eeeeeeee-0001-0001-0001-eeeeeeeeeeee", "transactions"] }
           }
@@ -632,7 +642,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"paid_by_user_id\": \"aaaaaaaa-0001-0001-0001-aaaaaaaaaaaa\",\n  \"total_amount\": \"3000\",\n  \"category\": \"Travel\",\n  \"date\": 1774569600000,\n  \"description\": \"Taxi to airport\",\n  \"splits\": [\n    { \"user_id\": \"aaaaaaaa-0001-0001-0001-aaaaaaaaaaaa\", \"amount\": \"1500\" },\n    { \"user_id\": \"bbbbbbbb-0002-0002-0002-bbbbbbbbbbbb\", \"amount\": \"1000\" },\n    { \"user_id\": \"cccccccc-0003-0003-0003-cccccccccccc\", \"amount\": \"500\" }\n  ]\n}"
+              "raw": "{\n  \"paid_by_user_id\": \"aaaaaaaa-0001-0001-0001-aaaaaaaaaaaa\",\n  \"total_amount\": \"3000\",\n  \"category\": \"travel\",\n  \"date\": 1774569600000,\n  \"description\": \"Taxi to airport\",\n  \"splits\": [\n    { \"user_id\": \"aaaaaaaa-0001-0001-0001-aaaaaaaaaaaa\", \"amount\": \"1500\" },\n    { \"user_id\": \"bbbbbbbb-0002-0002-0002-bbbbbbbbbbbb\", \"amount\": \"1000\" },\n    { \"user_id\": \"cccccccc-0003-0003-0003-cccccccccccc\", \"amount\": \"500\" }\n  ]\n}"
             },
             "url": { "raw": "{{base_url}}/groups/eeeeeeee-0001-0001-0001-eeeeeeeeeeee/transactions", "host": ["{{base_url}}"], "path": ["groups", "eeeeeeee-0001-0001-0001-eeeeeeeeeeee", "transactions"] }
           }
@@ -663,7 +673,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"description\": \"Updated description\",\n  \"notes\": \"Some note\"\n}"
+              "raw": "{\n  \"category\": \"groceries\",\n  \"description\": \"Updated description\",\n  \"notes\": \"Some note\"\n}"
             },
             "url": { "raw": "{{base_url}}/groups/eeeeeeee-0001-0001-0001-eeeeeeeeeeee/transactions/b1000001-0000-0000-0000-000000000000", "host": ["{{base_url}}"], "path": ["groups", "eeeeeeee-0001-0001-0001-eeeeeeeeeeee", "transactions", "b1000001-0000-0000-0000-000000000000"] }
           }

@@ -1,3 +1,4 @@
+DROP TABLE IF EXISTS predefined_categories CASCADE;
 DROP TABLE IF EXISTS admin_audit_log CASCADE;
 DROP TABLE IF EXISTS device_tokens CASCADE;
 DROP TABLE IF EXISTS sync_sessions CASCADE;
@@ -9,6 +10,7 @@ DROP TABLE IF EXISTS groups CASCADE;
 DROP TABLE IF EXISTS custom_categories CASCADE;
 DROP TABLE IF EXISTS monthly_budgets CASCADE;
 DROP TABLE IF EXISTS transactions CASCADE;
+DROP TABLE IF EXISTS recurring_skipped_occurrences CASCADE;
 DROP TABLE IF EXISTS recurring_transactions CASCADE;
 DROP TABLE IF EXISTS email_verifications CASCADE;
 DROP TABLE IF EXISTS users CASCADE;

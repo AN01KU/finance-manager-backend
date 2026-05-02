@@ -106,7 +106,10 @@ func Seed(ctx context.Context, database *db.DB) error {
 	log.Println("[seed] ✓ Sync sessions")
 
 	// ── Category overrides & custom categories ────────────────────────────────
-	// Predefined categories are served from code — DB rows only for overrides and custom.
+	// Predefined categories live in the predefined_categories table — rows here
+	// are user overrides (is_predefined = TRUE + predefined_key) or fully custom
+	// (is_predefined = FALSE + predefined_key = NULL). Icons must be kebab-case
+	// keys matching one of the embedded SVG icons.
 	type catRow struct {
 		userID        uuid.UUID
 		name          string
@@ -120,28 +123,34 @@ func Seed(ctx context.Context, database *db.DB) error {
 
 	categoryRows := []catRow{
 		// Ankush: override — hide Shopping
-		{UserAnkushID, "Shopping", "bag.circle.fill", "#FFEAA7", true, true, strPtr("shopping")},
+		{UserAnkushID, "Shopping", "shopping", "#FFEAA7", true, true, strPtr("shopping")},
 		// Ankush: override — recolor Food & Dining
-		{UserAnkushID, "Food & Dining", "fork.knife.circle.fill", "#FF4757", false, true, strPtr("foodDining")},
+		{UserAnkushID, "Food & Dining", "food-dining", "#FF4757", false, true, strPtr("food-dining")},
 		// Ankush: custom categories
-		{UserAnkushID, "Subscriptions", "antenna.radiowaves.left.and.right.circle.fill", "#6C5CE7", false, false, nil},
-		{UserAnkushID, "Gym & Fitness", "figure.run.circle.fill", "#00B894", false, false, nil},
+		{UserAnkushID, "Crypto", "investments", "#F0B90B", false, false, nil},
+		{UserAnkushID, "Side Hustle", "freelance", "#27AE60", false, false, nil},
 
 		// Priya: override — rename & recolor Transport
-		{UserPriyaID, "Commute", "bus.fill", "#1ABC9C", false, true, strPtr("transport")},
+		{UserPriyaID, "Commute", "public-transit", "#1ABC9C", false, true, strPtr("transport")},
 		// Priya: custom category
-		{UserPriyaID, "Skincare", "sparkles", "#FF69B4", false, false, nil},
+		{UserPriyaID, "Skincare", "personal-care", "#FF69B4", false, false, nil},
 
 		// Rahul: override — hide Entertainment
-		{UserRahulID, "Entertainment", "gamecontroller.circle.fill", "#BC6C25", true, true, strPtr("entertainment")},
+		{UserRahulID, "Entertainment", "entertainment", "#BC6C25", true, true, strPtr("entertainment")},
 	}
 
 	for _, cc := range categoryRows {
+		var catKey string
+		if cc.isPredefined && cc.predefinedKey != nil {
+			catKey = "oc-" + *cc.predefinedKey
+		} else {
+			catKey = "cc-" + uuid.New().String()
+		}
 		if _, err := database.Pool.Exec(ctx,
-			`INSERT INTO custom_categories (user_id, name, icon, color, is_hidden, is_predefined, predefined_key)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7)
+			`INSERT INTO custom_categories (user_id, name, icon, color, is_hidden, is_predefined, predefined_key, key)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 			 ON CONFLICT (user_id, name) DO NOTHING`,
-			cc.userID, cc.name, cc.icon, cc.color, cc.isHidden, cc.isPredefined, cc.predefinedKey); err != nil {
+			cc.userID, cc.name, cc.icon, cc.color, cc.isHidden, cc.isPredefined, cc.predefinedKey, catKey); err != nil {
 			return fmt.Errorf("insert category %s: %w", cc.name, err)
 		}
 	}
@@ -188,11 +197,11 @@ func Seed(ctx context.Context, database *db.DB) error {
 		lastAdded  *time.Time
 		notes      string
 	}{
-		{RecurringRentID, "expense", "House Rent", 15000.00, "Housing", "monthly", intPtr(1), nil, lastMonth, nil, true, &today, "Monthly rent for flat"},
-		{RecurringNetflixID, "expense", "Netflix", 649.00, "Subscriptions", "monthly", intPtr(15), nil, lastMonth, nil, true, &lastMonth, "Streaming subscription"},
-		{RecurringGymID, "expense", "Gym Membership", 1200.00, "Gym & Fitness", "monthly", intPtr(5), nil, lastMonth, nil, true, &today, "Monthly gym fee"},
-		{RecurringInactiveID, "expense", "Spotify", 119.00, "Subscriptions", "monthly", intPtr(20), nil, lastMonth.AddDate(-1, 0, 0), &lastMonth, false, &lastMonth, "Cancelled — switched to YouTube Music"},
-		{RecurringSalaryID, "income", "Monthly Salary", 85000.00, "Work & Professional", "monthly", intPtr(1), nil, lastMonth, nil, true, &today, "Net salary after TDS"},
+		{RecurringRentID, "expense", "House Rent", 15000.00, "housing-rent", "monthly", intPtr(1), nil, lastMonth, nil, true, &today, "Monthly rent for flat"},
+		{RecurringNetflixID, "expense", "Netflix", 649.00, "streaming", "monthly", intPtr(15), nil, lastMonth, nil, true, &lastMonth, "Streaming subscription"},
+		{RecurringGymID, "expense", "Gym Membership", 1200.00, "gym-fitness", "monthly", intPtr(5), nil, lastMonth, nil, true, &today, "Monthly gym fee"},
+		{RecurringInactiveID, "expense", "Spotify", 119.00, "streaming", "monthly", intPtr(20), nil, lastMonth.AddDate(-1, 0, 0), &lastMonth, false, &lastMonth, "Cancelled — switched to YouTube Music"},
+		{RecurringSalaryID, "income", "Monthly Salary", 85000.00, "salary-income", "monthly", intPtr(1), nil, lastMonth, nil, true, &today, "Net salary after TDS"},
 	}
 
 	for _, r := range recs {
@@ -224,43 +233,43 @@ func Seed(ctx context.Context, database *db.DB) error {
 
 	personalTxs := []txRow{
 		// Today — expenses
-		{uuid.MustParse("a1000001-0000-0000-0000-000000000000"), "expense", 320.00, "Food & Dining", today, "Lunch - Subway", "", false, nil},
-		{uuid.MustParse("a1000002-0000-0000-0000-000000000000"), "expense", 45.00, "Transport", today, "Auto to office", "", false, nil},
-		{uuid.MustParse("a1000003-0000-0000-0000-000000000000"), "expense", 15000.00, "Housing", today, "House Rent - March", "Paid via UPI", false, &RecurringRentID},
-		{uuid.MustParse("a1000004-0000-0000-0000-000000000000"), "expense", 1200.00, "Gym & Fitness", today, "Gym Membership March", "", false, &RecurringGymID},
+		{uuid.MustParse("a1000001-0000-0000-0000-000000000000"), "expense", 320.00, "food-dining", today, "Lunch - Subway", "", false, nil},
+		{uuid.MustParse("a1000002-0000-0000-0000-000000000000"), "expense", 45.00, "transport", today, "Auto to office", "", false, nil},
+		{uuid.MustParse("a1000003-0000-0000-0000-000000000000"), "expense", 15000.00, "housing-rent", today, "House Rent - March", "Paid via UPI", false, &RecurringRentID},
+		{uuid.MustParse("a1000004-0000-0000-0000-000000000000"), "expense", 1200.00, "gym-fitness", today, "Gym Membership March", "", false, &RecurringGymID},
 		// Today — income (salary)
-		{uuid.MustParse("a1000005-0000-0000-0000-000000000000"), "income", 85000.00, "Work & Professional", today, "March Salary", "Net after TDS", false, &RecurringSalaryID},
+		{uuid.MustParse("a1000005-0000-0000-0000-000000000000"), "income", 85000.00, "salary-income", today, "March Salary", "Net after TDS", false, &RecurringSalaryID},
 
 		// Yesterday
-		{uuid.MustParse("a2000001-0000-0000-0000-000000000000"), "expense", 580.00, "Food & Dining", yesterday, "Dinner - Barbeque Nation", "Split with friends", false, nil},
-		{uuid.MustParse("a2000002-0000-0000-0000-000000000000"), "expense", 199.00, "Shopping", yesterday, "T-shirt from Myntra", "", false, nil},
-		{uuid.MustParse("a2000003-0000-0000-0000-000000000000"), "expense", 60.00, "Transport", yesterday, "Cab to mall", "", false, nil},
-		{uuid.MustParse("a2000004-0000-0000-0000-000000000000"), "expense", 250.00, "Health & Medical", yesterday, "Pharmacy - vitamins", "", false, nil},
+		{uuid.MustParse("a2000001-0000-0000-0000-000000000000"), "expense", 580.00, "dining-out", yesterday, "Dinner - Barbeque Nation", "Split with friends", false, nil},
+		{uuid.MustParse("a2000002-0000-0000-0000-000000000000"), "expense", 199.00, "clothing", yesterday, "T-shirt from Myntra", "", false, nil},
+		{uuid.MustParse("a2000003-0000-0000-0000-000000000000"), "expense", 60.00, "transport", yesterday, "Cab to mall", "", false, nil},
+		{uuid.MustParse("a2000004-0000-0000-0000-000000000000"), "expense", 250.00, "pharmacy", yesterday, "Pharmacy - vitamins", "", false, nil},
 
 		// 2 days ago
-		{uuid.MustParse("a3000001-0000-0000-0000-000000000000"), "expense", 120.00, "Food & Dining", twoDaysAgo, "Coffee + snacks", "", false, nil},
-		{uuid.MustParse("a3000002-0000-0000-0000-000000000000"), "expense", 1499.00, "Entertainment", twoDaysAgo, "Movie tickets (2x)", "", false, nil},
-		{uuid.MustParse("a3000003-0000-0000-0000-000000000000"), "expense", 649.00, "Subscriptions", twoDaysAgo, "Netflix - March", "", false, &RecurringNetflixID},
+		{uuid.MustParse("a3000001-0000-0000-0000-000000000000"), "expense", 120.00, "coffee-cafe", twoDaysAgo, "Coffee + snacks", "", false, nil},
+		{uuid.MustParse("a3000002-0000-0000-0000-000000000000"), "expense", 1499.00, "entertainment", twoDaysAgo, "Movie tickets (2x)", "", false, nil},
+		{uuid.MustParse("a3000003-0000-0000-0000-000000000000"), "expense", 649.00, "streaming", twoDaysAgo, "Netflix - March", "", false, &RecurringNetflixID},
 
 		// 3 days ago
-		{uuid.MustParse("a4000001-0000-0000-0000-000000000000"), "expense", 85.00, "Transport", threeDaysAgo, "Metro card recharge", "", false, nil},
-		{uuid.MustParse("a4000002-0000-0000-0000-000000000000"), "expense", 450.00, "Food & Dining", threeDaysAgo, "Grocery shopping", "", false, nil},
-		{uuid.MustParse("a4000003-0000-0000-0000-000000000000"), "expense", 2000.00, "Education", threeDaysAgo, "Udemy course", "Go programming advanced", false, nil},
+		{uuid.MustParse("a4000001-0000-0000-0000-000000000000"), "expense", 85.00, "public-transit", threeDaysAgo, "Metro card recharge", "", false, nil},
+		{uuid.MustParse("a4000002-0000-0000-0000-000000000000"), "expense", 450.00, "groceries", threeDaysAgo, "Grocery shopping", "", false, nil},
+		{uuid.MustParse("a4000003-0000-0000-0000-000000000000"), "expense", 2000.00, "online-courses", threeDaysAgo, "Udemy course", "Go programming advanced", false, nil},
 
 		// Last week
-		{uuid.MustParse("a5000001-0000-0000-0000-000000000000"), "expense", 3200.00, "Shopping", lastWeek, "Nike shoes", "", false, nil},
-		{uuid.MustParse("a5000002-0000-0000-0000-000000000000"), "expense", 780.00, "Food & Dining", lastWeek, "Team lunch at office", "", false, nil},
-		{uuid.MustParse("a5000003-0000-0000-0000-000000000000"), "expense", 400.00, "Utilities", lastWeek, "Electricity bill", "", false, nil},
+		{uuid.MustParse("a5000001-0000-0000-0000-000000000000"), "expense", 3200.00, "shopping", lastWeek, "Nike shoes", "", false, nil},
+		{uuid.MustParse("a5000002-0000-0000-0000-000000000000"), "expense", 780.00, "dining-out", lastWeek, "Team lunch at office", "", false, nil},
+		{uuid.MustParse("a5000003-0000-0000-0000-000000000000"), "expense", 400.00, "electricity-gas", lastWeek, "Electricity bill", "", false, nil},
 		// Last week — freelance income
-		{uuid.MustParse("a5000004-0000-0000-0000-000000000000"), "income", 15000.00, "Work & Professional", lastWeek, "Freelance project payment", "Client: ABC Corp", false, nil},
+		{uuid.MustParse("a5000004-0000-0000-0000-000000000000"), "income", 15000.00, "freelance", lastWeek, "Freelance project payment", "Client: ABC Corp", false, nil},
 
 		// Last month
-		{uuid.MustParse("a6000001-0000-0000-0000-000000000000"), "expense", 5000.00, "Health & Medical", lastMonth, "Dentist appointment", "", false, nil},
-		{uuid.MustParse("a6000002-0000-0000-0000-000000000000"), "expense", 1500.00, "Books & Media", lastMonth, "Books - programming", "", false, nil},
+		{uuid.MustParse("a6000001-0000-0000-0000-000000000000"), "expense", 5000.00, "health-medical", lastMonth, "Dentist appointment", "", false, nil},
+		{uuid.MustParse("a6000002-0000-0000-0000-000000000000"), "expense", 1500.00, "books-reading", lastMonth, "Books - programming", "", false, nil},
 
 		// Soft-deleted
-		{uuid.MustParse("a7000001-0000-0000-0000-000000000000"), "expense", 200.00, "Food & Dining", yesterday, "Duplicate entry", "Added by mistake", true, nil},
-		{uuid.MustParse("a7000002-0000-0000-0000-000000000000"), "expense", 500.00, "Shopping", twoDaysAgo, "Cancelled order", "Returned item", true, nil},
+		{uuid.MustParse("a7000001-0000-0000-0000-000000000000"), "expense", 200.00, "food-dining", yesterday, "Duplicate entry", "Added by mistake", true, nil},
+		{uuid.MustParse("a7000002-0000-0000-0000-000000000000"), "expense", 500.00, "shopping", twoDaysAgo, "Cancelled order", "Returned item", true, nil},
 	}
 
 	for _, t := range personalTxs {
@@ -327,49 +336,49 @@ func Seed(ctx context.Context, database *db.DB) error {
 		// Roommates — Ankush paid rent deposit
 		{
 			uuid.MustParse("b1000001-0000-0000-0000-000000000000"),
-			GroupRoommatesID, UserAnkushID, 9000.00, "Housing", lastMonth, "Security Deposit Split",
+			GroupRoommatesID, UserAnkushID, 9000.00, "housing-rent", lastMonth, "Security Deposit Split",
 			[]splitInput{{UserAnkushID, 3000.00}, {UserPriyaID, 3000.00}, {UserRahulID, 3000.00}},
 		},
 		// Roommates — Priya paid electricity
 		{
 			uuid.MustParse("b1000002-0000-0000-0000-000000000000"),
-			GroupRoommatesID, UserPriyaID, 1800.00, "Utilities", lastWeek, "Electricity Bill Feb",
+			GroupRoommatesID, UserPriyaID, 1800.00, "electricity-gas", lastWeek, "Electricity Bill Feb",
 			[]splitInput{{UserAnkushID, 600.00}, {UserPriyaID, 600.00}, {UserRahulID, 600.00}},
 		},
 		// Roommates — Rahul paid wifi
 		{
 			uuid.MustParse("b1000003-0000-0000-0000-000000000000"),
-			GroupRoommatesID, UserRahulID, 999.00, "Utilities", twoDaysAgo, "WiFi Bill March",
+			GroupRoommatesID, UserRahulID, 999.00, "phone-internet", twoDaysAgo, "WiFi Bill March",
 			[]splitInput{{UserAnkushID, 333.00}, {UserPriyaID, 333.00}, {UserRahulID, 333.00}},
 		},
 		// Roommates — Ankush paid groceries today
 		{
 			uuid.MustParse("b1000004-0000-0000-0000-000000000000"),
-			GroupRoommatesID, UserAnkushID, 2400.00, "Food & Dining", today, "Monthly groceries",
+			GroupRoommatesID, UserAnkushID, 2400.00, "groceries", today, "Monthly groceries",
 			[]splitInput{{UserAnkushID, 800.00}, {UserPriyaID, 800.00}, {UserRahulID, 800.00}},
 		},
 		// Goa Trip — Ankush paid hotel
 		{
 			uuid.MustParse("b2000001-0000-0000-0000-000000000000"),
-			GroupTripGoaID, UserAnkushID, 12000.00, "Travel", lastMonth, "Hotel booking - 3 nights",
+			GroupTripGoaID, UserAnkushID, 12000.00, "travel", lastMonth, "Hotel booking - 3 nights",
 			[]splitInput{{UserAnkushID, 4000.00}, {UserSaraID, 4000.00}, {UserPriyaID, 4000.00}},
 		},
 		// Goa Trip — Sara paid food
 		{
 			uuid.MustParse("b2000002-0000-0000-0000-000000000000"),
-			GroupTripGoaID, UserSaraID, 3600.00, "Food & Dining", lastMonth, "Beach shack dinners",
+			GroupTripGoaID, UserSaraID, 3600.00, "food-dining", lastMonth, "Beach shack dinners",
 			[]splitInput{{UserAnkushID, 1200.00}, {UserSaraID, 1200.00}, {UserPriyaID, 1200.00}},
 		},
 		// Goa Trip — Priya paid activities
 		{
 			uuid.MustParse("b2000003-0000-0000-0000-000000000000"),
-			GroupTripGoaID, UserPriyaID, 4500.00, "Entertainment", lastMonth.AddDate(0, 0, 1), "Water sports & activities",
+			GroupTripGoaID, UserPriyaID, 4500.00, "entertainment", lastMonth.AddDate(0, 0, 1), "Water sports & activities",
 			[]splitInput{{UserAnkushID, 1500.00}, {UserSaraID, 1500.00}, {UserPriyaID, 1500.00}},
 		},
 		// Manali Trip (Ankush NOT a member)
 		{
 			uuid.MustParse("b3000001-0000-0000-0000-000000000000"),
-			GroupOldTripID, UserPriyaID, 9000.00, "Travel", lastMonth.AddDate(0, -1, 0), "Bus tickets Manali",
+			GroupOldTripID, UserPriyaID, 9000.00, "travel", lastMonth.AddDate(0, -1, 0), "Bus tickets Manali",
 			[]splitInput{{UserPriyaID, 3000.00}, {UserRahulID, 3000.00}, {UserSaraID, 3000.00}},
 		},
 	}
@@ -465,7 +474,7 @@ func Seed(ctx context.Context, database *db.DB) error {
 		// Income transaction for to_user (received money)
 		if _, err := database.Pool.Exec(ctx,
 			`INSERT INTO transactions (user_id, type, amount, category, date, description, group_id, settlement_id)
-			 VALUES ($1, 'income', $2, 'Debt & Payments', $3, 'Settlement received', $4, $5)`,
+			 VALUES ($1, 'income', $2, 'other', $3, 'Settlement received', $4, $5)`,
 			st.to, st.amount, st.date, st.groupID, st.id); err != nil {
 			return fmt.Errorf("insert settlement income tx: %w", err)
 		}
@@ -473,7 +482,7 @@ func Seed(ctx context.Context, database *db.DB) error {
 		// Expense transaction for from_user (paid money)
 		if _, err := database.Pool.Exec(ctx,
 			`INSERT INTO transactions (user_id, type, amount, category, date, description, group_id, settlement_id)
-			 VALUES ($1, 'expense', $2, 'Debt & Payments', $3, 'Settlement paid', $4, $5)`,
+			 VALUES ($1, 'expense', $2, 'other', $3, 'Settlement paid', $4, $5)`,
 			st.from, st.amount, st.date, st.groupID, st.id); err != nil {
 			return fmt.Errorf("insert settlement expense tx: %w", err)
 		}

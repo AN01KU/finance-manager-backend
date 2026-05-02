@@ -92,7 +92,7 @@ func main() {
 	// Start background jobs
 	sync.StartSessionCleanup(ctx, database, cfg.SyncSessionTTLDays)
 	recurring.StartBackgroundGeneration(ctx, database)
-	transaction.StartSoftDeleteCleanup(ctx, database)
+	transaction.StartSoftDeleteCleanup(ctx, database, cfg.TombstoneRetentionDays)
 
 	// Initialize push notification client (optional — disabled if PUSHY_API_KEY is empty)
 	pushClient := notify.New(cfg.PushyAPIKey, database.Pool)
@@ -144,6 +144,20 @@ func main() {
 		}
 		c.JSON(200, gin.H{"status": "healthy", "database": "connected"})
 	})
+
+	// Public predefined categories list (no auth, no sync guard).
+	r.GET("/predefined-categories", func(c *gin.Context) { category.GetPredefinedCategoriesHandler(c, database) })
+
+	// Admin JSON API for predefined categories — protected by the admin
+	// cookie session (same auth as the HTML admin panel).
+	adminAPI := r.Group("/admin")
+	adminAPI.Use(adminPanel.JSONAuthMiddleware())
+	{
+		adminAPI.GET("/predefined-categories", func(c *gin.Context) { category.AdminListPredefined(c, database) })
+		adminAPI.POST("/predefined-categories", func(c *gin.Context) { category.AdminCreatePredefined(c, database) })
+		adminAPI.PATCH("/predefined-categories/:id", func(c *gin.Context) { category.AdminUpdatePredefined(c, database) })
+		adminAPI.DELETE("/predefined-categories/:id", func(c *gin.Context) { category.AdminDeletePredefined(c, database) })
+	}
 
 	// Email client (optional — disabled if RESEND_API_KEY is empty)
 	emailClient := email.New(cfg.ResendAPIKey, cfg.FromEmail)
