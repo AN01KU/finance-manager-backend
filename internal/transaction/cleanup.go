@@ -9,16 +9,21 @@ import (
 	"github.com/yanonymousV2/finance-manager-backend/internal/db"
 )
 
-// StartSoftDeleteCleanup runs a background goroutine that hard-deletes soft-deleted
-// transactions (and their parent group_transactions) older than 1 day.
+// StartSoftDeleteCleanup runs a background goroutine that:
+//   - hard-deletes soft-deleted transactions/groups older than 1 day
+//   - hard-deletes soft-deleted custom_category tombstones older than tombstoneRetentionDays
+//
 // It stops when the context is cancelled.
-func StartSoftDeleteCleanup(ctx context.Context, database *db.DB) {
+func StartSoftDeleteCleanup(ctx context.Context, database *db.DB, tombstoneRetentionDays int) {
 	ticker := time.NewTicker(24 * time.Hour)
 	go func() {
 		defer ticker.Stop()
 		// Run once immediately on startup, then on each tick.
 		if err := purgeSoftDeleted(ctx, database); err != nil {
 			log.Printf("[TRANSACTION] soft-delete cleanup error: %v", err)
+		}
+		if err := purgeCategoryTombstones(ctx, database, tombstoneRetentionDays); err != nil {
+			log.Printf("[TRANSACTION] category tombstone purge error: %v", err)
 		}
 		for {
 			select {
@@ -29,10 +34,29 @@ func StartSoftDeleteCleanup(ctx context.Context, database *db.DB) {
 				if err := purgeSoftDeleted(ctx, database); err != nil {
 					log.Printf("[TRANSACTION] soft-delete cleanup error: %v", err)
 				}
+				if err := purgeCategoryTombstones(ctx, database, tombstoneRetentionDays); err != nil {
+					log.Printf("[TRANSACTION] category tombstone purge error: %v", err)
+				}
 			}
 		}
 	}()
-	log.Println("✓ Transaction soft-delete cleanup started (TTL=1 day)")
+	log.Printf("✓ Transaction soft-delete cleanup started (TTL=1 day, category tombstones=%d days)", tombstoneRetentionDays)
+}
+
+func purgeCategoryTombstones(ctx context.Context, database *db.DB, retentionDays int) error {
+	tag, err := database.Pool.Exec(ctx,
+		`DELETE FROM custom_categories
+		 WHERE deleted_at IS NOT NULL
+		   AND deleted_at < NOW() - MAKE_INTERVAL(days => $1)`,
+		retentionDays,
+	)
+	if err != nil {
+		return fmt.Errorf("purge category tombstones: %w", err)
+	}
+	if tag.RowsAffected() > 0 {
+		log.Printf("[TRANSACTION] purged %d category tombstones (>%d days old)", tag.RowsAffected(), retentionDays)
+	}
+	return nil
 }
 
 func purgeSoftDeleted(ctx context.Context, database *db.DB) error {

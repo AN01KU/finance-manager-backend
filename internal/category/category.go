@@ -86,17 +86,19 @@ func IconSVG(key string) ([]byte, bool) {
 // either a predefined category (with optional user override applied), or a
 // user's custom category.
 type Category struct {
-	ID            uuid.UUID           `json:"id"`
-	Key           string              `json:"key"`
-	UserID        uuid.UUID           `json:"user_id"`
-	Name          string              `json:"name"`
-	Icon          string              `json:"icon"`
-	Color         string              `json:"color"`
-	IsHidden      bool                `json:"is_hidden"`
-	IsPredefined  bool                `json:"is_predefined"`
-	PredefinedKey *string             `json:"predefined_key,omitempty"`
-	CreatedAt     helpers.EpochMillis `json:"created_at"`
-	UpdatedAt     helpers.EpochMillis `json:"updated_at"`
+	ID            uuid.UUID            `json:"id"`
+	Key           string               `json:"key"`
+	UserID        uuid.UUID            `json:"user_id"`
+	Name          string               `json:"name,omitempty"`
+	Icon          string               `json:"icon,omitempty"`
+	Color         string               `json:"color,omitempty"`
+	IsHidden      bool                 `json:"is_hidden,omitempty"`
+	IsPredefined  bool                 `json:"is_predefined,omitempty"`
+	PredefinedKey *string              `json:"predefined_key,omitempty"`
+	IsDeleted     bool                 `json:"is_deleted,omitempty"`
+	DeletedAt     *helpers.EpochMillis `json:"deleted_at,omitempty"`
+	CreatedAt     helpers.EpochMillis  `json:"created_at,omitempty"`
+	UpdatedAt     helpers.EpochMillis  `json:"updated_at,omitempty"`
 }
 
 // PredefinedCategory is the public shape returned by GET /predefined-categories.
@@ -217,14 +219,7 @@ func CreateCategory(c *gin.Context, d *db.DB) {
 		return
 	}
 
-	// Fetch the username to build the stable category key.
-	var username string
-	if err := d.Pool.QueryRow(c.Request.Context(),
-		`SELECT username FROM users WHERE id = $1`, userID).Scan(&username); err != nil {
-		c.JSON(500, gin.H{"error": "failed to resolve user"})
-		return
-	}
-	catKey := username + "-cc-" + uuid.New().String()
+	catKey := "cc-" + uuid.New().String()
 
 	cat := Category{}
 	var rawCreatedAt, rawUpdatedAt time.Time
@@ -254,16 +249,11 @@ func ListCategories(c *gin.Context, d *db.DB) {
 		return
 	}
 
-	predefined, err := loadVisiblePredefined(c.Request.Context(), d)
-	if err != nil {
-		c.JSON(500, gin.H{"error": "failed to load predefined categories"})
-		return
-	}
-
 	rows, err := d.Pool.Query(c.Request.Context(),
-		`SELECT id, key, user_id, name, icon, color, is_hidden, is_predefined, predefined_key, created_at, updated_at
+		`SELECT id, key, user_id, name, icon, color, is_hidden, is_predefined, predefined_key, deleted_at, created_at, updated_at
 		   FROM custom_categories
-		  WHERE user_id = $1`,
+		  WHERE user_id = $1
+		  ORDER BY created_at ASC`,
 		userID)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "failed to retrieve categories"})
@@ -271,55 +261,33 @@ func ListCategories(c *gin.Context, d *db.DB) {
 	}
 	defer rows.Close()
 
-	overrides := make(map[string]Category)
-	var customCats []Category
+	out := make([]Category, 0)
 	for rows.Next() {
 		var cat Category
 		var rawCreatedAt, rawUpdatedAt time.Time
+		var rawDeletedAt *time.Time
 		if err := rows.Scan(&cat.ID, &cat.Key, &cat.UserID, &cat.Name, &cat.Icon, &cat.Color,
-			&cat.IsHidden, &cat.IsPredefined, &cat.PredefinedKey, &rawCreatedAt, &rawUpdatedAt); err != nil {
+			&cat.IsHidden, &cat.IsPredefined, &cat.PredefinedKey, &rawDeletedAt, &rawCreatedAt, &rawUpdatedAt); err != nil {
 			c.JSON(500, gin.H{"error": "failed to scan category"})
 			return
 		}
 		cat.CreatedAt = helpers.FromTime(rawCreatedAt)
 		cat.UpdatedAt = helpers.FromTime(rawUpdatedAt)
-
-		if cat.IsPredefined && cat.PredefinedKey != nil {
-			// Override rows: the key clients use to reference this category is the predefined key.
-			cat.Key = *cat.PredefinedKey
-			overrides[*cat.PredefinedKey] = cat
-		} else {
-			customCats = append(customCats, cat)
+		if rawDeletedAt != nil {
+			t := helpers.FromTime(*rawDeletedAt)
+			cat.DeletedAt = &t
+			cat.IsDeleted = true
 		}
+		// Override rows: expose the predefined key so the client can match it back.
+		if cat.IsPredefined && cat.PredefinedKey != nil {
+			cat.Key = *cat.PredefinedKey
+		}
+		out = append(out, cat)
 	}
 	if err := rows.Err(); err != nil {
 		c.JSON(500, gin.H{"error": "database iteration failed"})
 		return
 	}
-
-	now := helpers.FromTime(time.Now())
-	out := make([]Category, 0, len(predefined)+len(customCats))
-	for _, p := range predefined {
-		if override, ok := overrides[p.Key]; ok {
-			out = append(out, override)
-			continue
-		}
-		key := p.Key
-		out = append(out, Category{
-			ID:            virtualPredefinedID(userID, p.Key),
-			Key:           p.Key,
-			UserID:        userID,
-			Name:          p.Name,
-			Icon:          p.Icon,
-			Color:         p.Color,
-			IsHidden:      false,
-			IsPredefined:  true,
-			PredefinedKey: &key,
-			CreatedAt:     now,
-			UpdatedAt:     now,
-		})
-	}
-	out = append(out, customCats...)
 
 	c.JSON(200, gin.H{"data": out})
 }
@@ -408,7 +376,7 @@ func UpdateCategory(c *gin.Context, d *db.DB) {
 			isHidden = *req.IsHidden
 		}
 
-		overrideKey := "override-" + matched.Key + "-" + userID.String()
+		overrideKey := "oc-" + matched.Key
 		var cat Category
 		var rawCreatedAt, rawUpdatedAt time.Time
 		err = d.Pool.QueryRow(c.Request.Context(),
@@ -518,7 +486,7 @@ func DeleteCategory(c *gin.Context, d *db.DB) {
 	}
 
 	// For custom (non-predefined) categories, cascade transactions to "other"
-	// before removing the row so no transaction references a dangling key.
+	// before soft-deleting so no transaction references a dangling key.
 	if predefinedKey == nil {
 		tx, err := d.Pool.Begin(c.Request.Context())
 		if err != nil {
@@ -536,7 +504,6 @@ func DeleteCategory(c *gin.Context, d *db.DB) {
 				return
 			}
 		}
-		// Group transactions: scope to paid_by_user_id since only the creator set the category.
 		if _, err := tx.Exec(c.Request.Context(),
 			`UPDATE group_transactions SET category = 'other' WHERE category = $1 AND paid_by_user_id = $2`,
 			customKey, userID); err != nil {
@@ -544,7 +511,7 @@ func DeleteCategory(c *gin.Context, d *db.DB) {
 			return
 		}
 		if _, err := tx.Exec(c.Request.Context(),
-			`DELETE FROM custom_categories WHERE id = $1`, categoryID); err != nil {
+			`UPDATE custom_categories SET deleted_at = NOW(), updated_at = NOW() WHERE id = $1`, categoryID); err != nil {
 			c.JSON(500, gin.H{"error": "failed to delete category"})
 			return
 		}
@@ -556,10 +523,11 @@ func DeleteCategory(c *gin.Context, d *db.DB) {
 		return
 	}
 
-	// Predefined override row — just remove it; the user reverts to the predefined default.
+	// Predefined override row — soft-delete so the client gets a tombstone and
+	// knows to revert to the predefined default.
 	if _, err := d.Pool.Exec(c.Request.Context(),
-		`DELETE FROM custom_categories WHERE id = $1`, categoryID); err != nil {
-		c.JSON(500, gin.H{"error": "failed to delete category"})
+		`UPDATE custom_categories SET deleted_at = NOW(), updated_at = NOW() WHERE id = $1`, categoryID); err != nil {
+		c.JSON(500, gin.H{"error": "failed to reset category"})
 		return
 	}
 	c.JSON(200, gin.H{"message": "category reset to default"})

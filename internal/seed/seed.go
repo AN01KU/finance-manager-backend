@@ -112,7 +112,6 @@ func Seed(ctx context.Context, database *db.DB) error {
 	// keys matching one of the embedded SVG icons.
 	type catRow struct {
 		userID        uuid.UUID
-		username      string
 		name          string
 		icon          string
 		color         string
@@ -124,28 +123,28 @@ func Seed(ctx context.Context, database *db.DB) error {
 
 	categoryRows := []catRow{
 		// Ankush: override — hide Shopping
-		{UserAnkushID, "Ankush", "Shopping", "shopping", "#FFEAA7", true, true, strPtr("shopping")},
+		{UserAnkushID, "Shopping", "shopping", "#FFEAA7", true, true, strPtr("shopping")},
 		// Ankush: override — recolor Food & Dining
-		{UserAnkushID, "Ankush", "Food & Dining", "food-dining", "#FF4757", false, true, strPtr("food-dining")},
+		{UserAnkushID, "Food & Dining", "food-dining", "#FF4757", false, true, strPtr("food-dining")},
 		// Ankush: custom categories
-		{UserAnkushID, "Ankush", "Crypto", "investments", "#F0B90B", false, false, nil},
-		{UserAnkushID, "Ankush", "Side Hustle", "freelance", "#27AE60", false, false, nil},
+		{UserAnkushID, "Crypto", "investments", "#F0B90B", false, false, nil},
+		{UserAnkushID, "Side Hustle", "freelance", "#27AE60", false, false, nil},
 
 		// Priya: override — rename & recolor Transport
-		{UserPriyaID, "Priya", "Commute", "public-transit", "#1ABC9C", false, true, strPtr("transport")},
+		{UserPriyaID, "Commute", "public-transit", "#1ABC9C", false, true, strPtr("transport")},
 		// Priya: custom category
-		{UserPriyaID, "Priya", "Skincare", "personal-care", "#FF69B4", false, false, nil},
+		{UserPriyaID, "Skincare", "personal-care", "#FF69B4", false, false, nil},
 
 		// Rahul: override — hide Entertainment
-		{UserRahulID, "Rahul", "Entertainment", "entertainment", "#BC6C25", true, true, strPtr("entertainment")},
+		{UserRahulID, "Entertainment", "entertainment", "#BC6C25", true, true, strPtr("entertainment")},
 	}
 
 	for _, cc := range categoryRows {
 		var catKey string
 		if cc.isPredefined && cc.predefinedKey != nil {
-			catKey = "override-" + *cc.predefinedKey + "-" + cc.userID.String()
+			catKey = "oc-" + *cc.predefinedKey
 		} else {
-			catKey = cc.username + "-cc-" + uuid.New().String()
+			catKey = "cc-" + uuid.New().String()
 		}
 		if _, err := database.Pool.Exec(ctx,
 			`INSERT INTO custom_categories (user_id, name, icon, color, is_hidden, is_predefined, predefined_key, key)

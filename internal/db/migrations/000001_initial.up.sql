@@ -132,6 +132,7 @@ CREATE TABLE custom_categories (
     is_predefined BOOLEAN DEFAULT FALSE,
     predefined_key VARCHAR(50),
     key VARCHAR(120) NOT NULL,
+    deleted_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW(),
     UNIQUE(user_id, name)

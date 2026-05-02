@@ -92,7 +92,7 @@ func main() {
 	// Start background jobs
 	sync.StartSessionCleanup(ctx, database, cfg.SyncSessionTTLDays)
 	recurring.StartBackgroundGeneration(ctx, database)
-	transaction.StartSoftDeleteCleanup(ctx, database)
+	transaction.StartSoftDeleteCleanup(ctx, database, cfg.TombstoneRetentionDays)
 
 	// Initialize push notification client (optional — disabled if PUSHY_API_KEY is empty)
 	pushClient := notify.New(cfg.PushyAPIKey, database.Pool)
