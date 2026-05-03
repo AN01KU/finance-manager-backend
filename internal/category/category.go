@@ -14,6 +14,7 @@ import (
 	"github.com/go-playground/validator/v10"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/yanonymousV2/finance-manager-backend/internal/db"
 	"github.com/yanonymousV2/finance-manager-backend/internal/helpers"
@@ -110,10 +111,19 @@ type PredefinedCategory struct {
 	Color string    `json:"color"`
 }
 
+// CreateCategoryRequest is the body for POST /categories.
+//
+//   - Without predefined_key: creates a new custom category. name/icon/color
+//     are all required.
+//   - With predefined_key: creates an override row for the given predefined
+//     category. Any of name/icon/color may be omitted to inherit the
+//     predefined defaults. Fails with 409 if an override already exists, or
+//     404 if the key is unknown or admin-hidden.
 type CreateCategoryRequest struct {
-	Name  string `json:"name"  validate:"required,min=1,max=100"`
-	Icon  string `json:"icon"  validate:"required,min=1,max=100"`
-	Color string `json:"color" validate:"required,len=7"`
+	Name          *string `json:"name,omitempty"           validate:"omitempty,min=1,max=100"`
+	Icon          *string `json:"icon,omitempty"           validate:"omitempty,min=1,max=100"`
+	Color         *string `json:"color,omitempty"          validate:"omitempty,len=7"`
+	PredefinedKey *string `json:"predefined_key,omitempty" validate:"omitempty,min=1,max=50"`
 }
 
 type UpdateCategoryRequest struct {
@@ -192,9 +202,9 @@ func GetPredefinedCategoriesHandler(c *gin.Context, d *db.DB) {
 	c.JSON(200, gin.H{"data": out})
 }
 
-// CreateCategory creates a new custom (non-predefined) user category.
-// Predefined overrides are not created here — those are produced by
-// PATCH /categories/:id against a virtual predefined UUID.
+// CreateCategory creates either a custom user category or a predefined
+// override row (when predefined_key is supplied). See CreateCategoryRequest
+// for the exact field semantics of each mode.
 func CreateCategory(c *gin.Context, d *db.DB) {
 	userID, ok := middleware.RequireUserID(c)
 	if !ok {
@@ -210,12 +220,23 @@ func CreateCategory(c *gin.Context, d *db.DB) {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
-	if !IsValidIconKey(req.Icon) {
+	if req.Icon != nil && !IsValidIconKey(*req.Icon) {
 		c.JSON(400, gin.H{"error": "invalid icon key", "code": "INVALID_ICON"})
 		return
 	}
-	if !hexColorRegex.MatchString(req.Color) {
+	if req.Color != nil && !hexColorRegex.MatchString(*req.Color) {
 		c.JSON(400, gin.H{"error": "color must be hex #RRGGBB", "code": "INVALID_COLOR"})
+		return
+	}
+
+	if req.PredefinedKey != nil {
+		createPredefinedOverride(c, d, userID, req)
+		return
+	}
+
+	// Custom category: name/icon/color are all required.
+	if req.Name == nil || req.Icon == nil || req.Color == nil {
+		c.JSON(400, gin.H{"error": "name, icon and color are required for custom categories"})
 		return
 	}
 
@@ -227,13 +248,86 @@ func CreateCategory(c *gin.Context, d *db.DB) {
 		`INSERT INTO custom_categories (user_id, name, icon, color, is_hidden, is_predefined, predefined_key, key)
 		 VALUES ($1, $2, $3, $4, FALSE, FALSE, NULL, $5)
 		 RETURNING id, key, user_id, name, icon, color, is_hidden, is_predefined, predefined_key, created_at, updated_at`,
-		userID, req.Name, req.Icon, req.Color, catKey).Scan(
+		userID, *req.Name, *req.Icon, *req.Color, catKey).Scan(
 		&cat.ID, &cat.Key, &cat.UserID, &cat.Name, &cat.Icon, &cat.Color,
 		&cat.IsHidden, &cat.IsPredefined, &cat.PredefinedKey, &rawCreatedAt, &rawUpdatedAt)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "failed to create category"})
 		return
 	}
+	cat.CreatedAt = helpers.FromTime(rawCreatedAt)
+	cat.UpdatedAt = helpers.FromTime(rawUpdatedAt)
+	c.JSON(201, cat)
+}
+
+// createPredefinedOverride inserts a custom_categories row that overrides the
+// named predefined category for this user. Omitted fields fall back to the
+// predefined defaults. Returns:
+//   - 404 if the predefined key is unknown or admin-hidden.
+//   - 409 if the user already has an override row for that key (caller
+//     should switch to PATCH /categories/:id).
+func createPredefinedOverride(c *gin.Context, d *db.DB, userID uuid.UUID, req CreateCategoryRequest) {
+	key := *req.PredefinedKey
+
+	// Look up the predefined defaults. is_hidden = TRUE means the admin has
+	// retired the category from user-facing surfaces — reject the override.
+	var def predefinedRow
+	err := d.Pool.QueryRow(c.Request.Context(),
+		`SELECT key, name, icon, color
+		   FROM predefined_categories
+		  WHERE key = $1
+		    AND is_hidden = FALSE`, key).Scan(&def.Key, &def.Name, &def.Icon, &def.Color)
+	if errors.Is(err, pgx.ErrNoRows) {
+		c.JSON(404, gin.H{
+			"error": fmt.Sprintf("predefined category %q does not exist or is no longer available", key),
+			"code":  "PREDEFINED_NOT_FOUND",
+		})
+		return
+	}
+	if err != nil {
+		c.JSON(500, gin.H{"error": "failed to load predefined category"})
+		return
+	}
+
+	name := def.Name
+	icon := def.Icon
+	color := def.Color
+	if req.Name != nil {
+		name = *req.Name
+	}
+	if req.Icon != nil {
+		icon = *req.Icon
+	}
+	if req.Color != nil {
+		color = *req.Color
+	}
+
+	overrideID := virtualPredefinedID(userID, def.Key)
+	overrideKey := "oc-" + def.Key
+
+	cat := Category{}
+	var rawCreatedAt, rawUpdatedAt time.Time
+	err = d.Pool.QueryRow(c.Request.Context(),
+		`INSERT INTO custom_categories (id, user_id, name, icon, color, is_hidden, is_predefined, predefined_key, key)
+		 VALUES ($1, $2, $3, $4, $5, FALSE, TRUE, $6, $7)
+		 RETURNING id, key, user_id, name, icon, color, is_hidden, is_predefined, predefined_key, created_at, updated_at`,
+		overrideID, userID, name, icon, color, def.Key, overrideKey).Scan(
+		&cat.ID, &cat.Key, &cat.UserID, &cat.Name, &cat.Icon, &cat.Color,
+		&cat.IsHidden, &cat.IsPredefined, &cat.PredefinedKey, &rawCreatedAt, &rawUpdatedAt)
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			c.JSON(409, gin.H{
+				"error": fmt.Sprintf("an override for predefined category %q already exists; use PATCH /categories/:id to update it", def.Key),
+				"code":  "OVERRIDE_ALREADY_EXISTS",
+			})
+			return
+		}
+		c.JSON(500, gin.H{"error": "failed to create category override"})
+		return
+	}
+	// Clients reference this row by the predefined key, not the synthetic override key.
+	cat.Key = def.Key
 	cat.CreatedAt = helpers.FromTime(rawCreatedAt)
 	cat.UpdatedAt = helpers.FromTime(rawUpdatedAt)
 	c.JSON(201, cat)
