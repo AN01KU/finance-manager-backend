@@ -119,11 +119,16 @@ type PredefinedCategory struct {
 //     category. Any of name/icon/color may be omitted to inherit the
 //     predefined defaults. Fails with 409 if an override already exists, or
 //     404 if the key is unknown or admin-hidden.
+//
+// is_hidden is optional in both modes and defaults to false. Setting it true
+// when creating a predefined override is the supported way to hide a
+// predefined category for this user.
 type CreateCategoryRequest struct {
 	Name          *string `json:"name,omitempty"           validate:"omitempty,min=1,max=100"`
 	Icon          *string `json:"icon,omitempty"           validate:"omitempty,min=1,max=100"`
 	Color         *string `json:"color,omitempty"          validate:"omitempty,len=7"`
 	PredefinedKey *string `json:"predefined_key,omitempty" validate:"omitempty,min=1,max=50"`
+	IsHidden      *bool   `json:"is_hidden,omitempty"`
 }
 
 type UpdateCategoryRequest struct {
@@ -241,14 +246,18 @@ func CreateCategory(c *gin.Context, d *db.DB) {
 	}
 
 	catKey := "cc-" + uuid.New().String()
+	isHidden := false
+	if req.IsHidden != nil {
+		isHidden = *req.IsHidden
+	}
 
 	cat := Category{}
 	var rawCreatedAt, rawUpdatedAt time.Time
 	err := d.Pool.QueryRow(c.Request.Context(),
 		`INSERT INTO custom_categories (user_id, name, icon, color, is_hidden, is_predefined, predefined_key, key)
-		 VALUES ($1, $2, $3, $4, FALSE, FALSE, NULL, $5)
+		 VALUES ($1, $2, $3, $4, $5, FALSE, NULL, $6)
 		 RETURNING id, key, user_id, name, icon, color, is_hidden, is_predefined, predefined_key, created_at, updated_at`,
-		userID, *req.Name, *req.Icon, *req.Color, catKey).Scan(
+		userID, *req.Name, *req.Icon, *req.Color, isHidden, catKey).Scan(
 		&cat.ID, &cat.Key, &cat.UserID, &cat.Name, &cat.Icon, &cat.Color,
 		&cat.IsHidden, &cat.IsPredefined, &cat.PredefinedKey, &rawCreatedAt, &rawUpdatedAt)
 	if err != nil {
@@ -292,6 +301,7 @@ func createPredefinedOverride(c *gin.Context, d *db.DB, userID uuid.UUID, req Cr
 	name := def.Name
 	icon := def.Icon
 	color := def.Color
+	isHidden := false
 	if req.Name != nil {
 		name = *req.Name
 	}
@@ -301,6 +311,9 @@ func createPredefinedOverride(c *gin.Context, d *db.DB, userID uuid.UUID, req Cr
 	if req.Color != nil {
 		color = *req.Color
 	}
+	if req.IsHidden != nil {
+		isHidden = *req.IsHidden
+	}
 
 	overrideID := virtualPredefinedID(userID, def.Key)
 	overrideKey := "oc-" + def.Key
@@ -309,9 +322,9 @@ func createPredefinedOverride(c *gin.Context, d *db.DB, userID uuid.UUID, req Cr
 	var rawCreatedAt, rawUpdatedAt time.Time
 	err = d.Pool.QueryRow(c.Request.Context(),
 		`INSERT INTO custom_categories (id, user_id, name, icon, color, is_hidden, is_predefined, predefined_key, key)
-		 VALUES ($1, $2, $3, $4, $5, FALSE, TRUE, $6, $7)
+		 VALUES ($1, $2, $3, $4, $5, $6, TRUE, $7, $8)
 		 RETURNING id, key, user_id, name, icon, color, is_hidden, is_predefined, predefined_key, created_at, updated_at`,
-		overrideID, userID, name, icon, color, def.Key, overrideKey).Scan(
+		overrideID, userID, name, icon, color, isHidden, def.Key, overrideKey).Scan(
 		&cat.ID, &cat.Key, &cat.UserID, &cat.Name, &cat.Icon, &cat.Color,
 		&cat.IsHidden, &cat.IsPredefined, &cat.PredefinedKey, &rawCreatedAt, &rawUpdatedAt)
 	if err != nil {
