@@ -239,21 +239,12 @@ func CreateCategory(c *gin.Context, d *db.DB) {
 	c.JSON(201, cat)
 }
 
-// ListCategories returns the merged list for the authenticated user:
-// non-hidden predefined categories (with user overrides applied), plus all of
-// the user's custom categories. Predefined categories without an override row
-// are returned with a deterministic virtual UUID — no DB row exists.
+// ListCategories returns the authenticated user's own custom_categories rows
+// (including override rows for predefined categories). Clients fetch the
+// predefined catalogue separately via GET /predefined-categories.
 func ListCategories(c *gin.Context, d *db.DB) {
 	userID, ok := middleware.RequireUserID(c)
 	if !ok {
-		return
-	}
-
-	// Load all predefined categories so we can synthesise virtual entries for
-	// any that the user has not yet overridden.
-	predefined, err := loadVisiblePredefined(c.Request.Context(), d)
-	if err != nil {
-		c.JSON(500, gin.H{"error": "failed to retrieve predefined categories"})
 		return
 	}
 
@@ -270,9 +261,6 @@ func ListCategories(c *gin.Context, d *db.DB) {
 	}
 	defer rows.Close()
 
-	// Track which predefined keys have an override row so we can skip them
-	// when synthesising virtuals below.
-	overriddenKeys := make(map[string]bool)
 	out := make([]Category, 0)
 	for rows.Next() {
 		var cat Category
@@ -293,30 +281,12 @@ func ListCategories(c *gin.Context, d *db.DB) {
 		// Override rows: expose the predefined key so the client can match it back.
 		if cat.IsPredefined && cat.PredefinedKey != nil {
 			cat.Key = *cat.PredefinedKey
-			overriddenKeys[*cat.PredefinedKey] = true
 		}
 		out = append(out, cat)
 	}
 	if err := rows.Err(); err != nil {
 		c.JSON(500, gin.H{"error": "database iteration failed"})
 		return
-	}
-
-	// Synthesise virtual entries for predefined categories with no override row.
-	for _, p := range predefined {
-		if overriddenKeys[p.Key] {
-			continue
-		}
-		out = append(out, Category{
-			ID:           virtualPredefinedID(userID, p.Key),
-			Key:          p.Key,
-			UserID:       userID,
-			Name:         p.Name,
-			Icon:         p.Icon,
-			Color:        p.Color,
-			IsHidden:     false,
-			IsPredefined: true,
-		})
 	}
 
 	c.JSON(200, gin.H{"data": out})
