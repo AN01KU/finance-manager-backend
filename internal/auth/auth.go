@@ -241,6 +241,19 @@ func Login(c *gin.Context, service *AuthService) {
 		return
 	}
 
+	// Lockout window has elapsed — reset the throttle so this attempt
+	// (and the next maxFailedLoginAttempts-1 wrong guesses) start fresh.
+	// Without this, a single wrong password after the window re-locks
+	// the account immediately at threshold.
+	if lockedUntil != nil {
+		_, _ = database.Pool.Exec(c.Request.Context(),
+			`UPDATE users
+			 SET failed_login_attempts = 0, login_locked_until = NULL, updated_at = now()
+			 WHERE id = $1`, u.ID)
+		failedAttempts = 0
+		lockedUntil = nil
+	}
+
 	// Check password
 	if err := bcrypt.CompareHashAndPassword([]byte(u.PasswordHash), []byte(req.Password)); err != nil {
 		// Wrong password — increment counter; lock if threshold hit.
