@@ -18,6 +18,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/yanonymousV2/finance-manager-backend/internal/db"
+	"github.com/yanonymousV2/finance-manager-backend/internal/middleware"
 	"github.com/yanonymousV2/finance-manager-backend/internal/user"
 )
 
@@ -330,4 +331,50 @@ func TestLogin_BumpsTokenInvalidationButNewJWTSurvives(t *testing.T) {
 		claims.IssuedAt.Time.Format(time.RFC3339Nano),
 		afterBump.Format(time.RFC3339Nano),
 	)
+}
+
+// TestLogin_InvalidatesJWTCacheEntry verifies that Login (which bumps
+// users.tokens_invalidated_after) also drops the in-process JWT cache entry
+// for that user, so the next authenticated request reads the fresh row
+// instead of an ~10s-stale cached value.
+func TestLogin_InvalidatesJWTCacheEntry(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	testDB := setupTestDB(t)
+	defer testDB.Close()
+
+	cache := middleware.NewJWTRevocationCache(10 * time.Second)
+	service := &AuthService{
+		DB:        testDB,
+		JWTSecret: "test-secret",
+		JWTCache:  cache,
+	}
+
+	hashedPassword, _ := bcrypt.GenerateFromPassword([]byte("password123"), bcrypt.DefaultCost)
+	userID := uuid.New()
+	_, err := testDB.Pool.Exec(context.Background(),
+		"INSERT INTO users (id, email, username, password_hash) VALUES ($1, $2, $3, $4)",
+		userID, "cacheinvalidate@example.com", "cacheuser", string(hashedPassword))
+	require.NoError(t, err)
+
+	// Pre-warm the cache with a stale value.
+	stale := time.Now().Add(-1 * time.Hour)
+	cache.Set(userID, &stale)
+	if _, ok := cache.Get(userID); !ok {
+		t.Fatal("cache pre-warm failed")
+	}
+
+	// Login must invalidate the cache entry.
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	body, _ := json.Marshal(LoginRequest{
+		Email:    "cacheinvalidate@example.com",
+		Password: "password123",
+	})
+	c.Request = httptest.NewRequest("POST", "/auth/login", bytes.NewBuffer(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+	Login(c, service)
+	require.Equal(t, 200, w.Code)
+
+	_, ok := cache.Get(userID)
+	assert.False(t, ok, "Login must drop the JWT cache entry so the next request reads the fresh tokens_invalidated_after")
 }

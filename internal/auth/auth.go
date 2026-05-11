@@ -67,7 +67,12 @@ type AuthService struct {
 	JWTSecret   string
 	InviteCode  string
 	EmailClient *email.Client
-	OnSignup    func(ctx context.Context, userID uuid.UUID) // called after user creation
+	// JWTCache, if non-nil, is the in-process cache that JWTAuth consults
+	// for users.tokens_invalidated_after. Every code path that bumps the
+	// column (Login, Logout, password change, email change) must call
+	// JWTCache.Invalidate(userID) so the next request reads the fresh row.
+	JWTCache *middleware.JWTRevocationCache
+	OnSignup func(ctx context.Context, userID uuid.UUID) // called after user creation
 }
 
 func Signup(c *gin.Context, service *AuthService) {
@@ -304,6 +309,9 @@ func Login(c *gin.Context, service *AuthService) {
 		`UPDATE users SET tokens_invalidated_after = now() - INTERVAL '1 second',
 		                  updated_at = now()
 		 WHERE id = $1`, u.ID)
+	if service.JWTCache != nil {
+		service.JWTCache.Invalidate(u.ID)
+	}
 
 	// Create sync session
 	syncSessionID, err := createSyncSession(c.Request.Context(), database, u.ID)
@@ -360,7 +368,7 @@ func Logout(c *gin.Context, service *AuthService) {
 
 	// Revoke all JWTs issued before now so the bearer token cannot keep
 	// reading data after logout.
-	invalidateJWTs(c.Request.Context(), service.DB, userID)
+	invalidateJWTs(c.Request.Context(), service, userID)
 
 	c.JSON(200, gin.H{"message": "logged out successfully"})
 }
@@ -485,7 +493,7 @@ func UpdateMe(c *gin.Context, service *AuthService) {
 	// to 24h after the credential change.
 	if req.Password != nil || req.Email != nil {
 		invalidateAllSessions(c.Request.Context(), service.DB, userID, "credentials_changed")
-		invalidateJWTs(c.Request.Context(), service.DB, userID)
+		invalidateJWTs(c.Request.Context(), service, userID)
 	}
 
 	c.JSON(200, u)
@@ -569,13 +577,17 @@ func invalidateAllSessions(ctx context.Context, database *db.DB, userID uuid.UUI
 // invalidateJWTs bumps users.tokens_invalidated_after to NOW() so any JWT
 // issued before this instant is rejected by JWTAuth. Used on logout,
 // password change, and email change to ensure the JWT cannot outlive the
-// security event.
-func invalidateJWTs(ctx context.Context, database *db.DB, userID uuid.UUID) {
-	_, _ = database.Pool.Exec(ctx,
+// security event. Also drops any cached value so the next request reads
+// the fresh row.
+func invalidateJWTs(ctx context.Context, service *AuthService, userID uuid.UUID) {
+	_, _ = service.DB.Pool.Exec(ctx,
 		`UPDATE users SET tokens_invalidated_after = now(), updated_at = now()
 		 WHERE id = $1`,
 		userID,
 	)
+	if service.JWTCache != nil {
+		service.JWTCache.Invalidate(userID)
+	}
 }
 
 func createSyncSession(ctx context.Context, database *db.DB, userID uuid.UUID) (uuid.UUID, error) {

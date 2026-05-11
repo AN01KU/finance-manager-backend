@@ -165,12 +165,18 @@ func main() {
 		log.Println("✓ Email delivery enabled (Resend)")
 	}
 
+	// JWT-revocation cache: ~10s TTL skips the per-request SELECT against
+	// users.tokens_invalidated_after on the warm path. Every code path that
+	// bumps the column must call jwtCache.Invalidate(userID).
+	jwtCache := middleware.NewJWTRevocationCache(10 * time.Second)
+
 	// Auth service
 	authService := &auth.AuthService{
 		DB:          database,
 		JWTSecret:   cfg.JWTSecret,
 		InviteCode:  cfg.InviteCode,
 		EmailClient: emailClient,
+		JWTCache:    jwtCache,
 	}
 
 	// Auth routes (rate limited)
@@ -183,7 +189,7 @@ func main() {
 
 	// Protected routes
 	protected := r.Group("/")
-	protected.Use(middleware.JWTAuth(cfg.JWTSecret, database))
+	protected.Use(middleware.JWTAuth(cfg.JWTSecret, database, jwtCache))
 	syncGuard := sync.SyncSessionGuard(database)
 	{
 		// Auth (protected)

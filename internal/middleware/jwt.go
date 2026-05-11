@@ -13,7 +13,11 @@ import (
 	"github.com/yanonymousV2/finance-manager-backend/internal/user"
 )
 
-func JWTAuth(jwtSecret string, database *db.DB) gin.HandlerFunc {
+// JWTAuth validates the bearer token and the per-user revocation timestamp.
+// If cache is non-nil, the revocation lookup is served from memory for ~ttl
+// after the first hit, eliminating the per-request SELECT against users.
+// Pass nil to retain the original always-query-DB behavior.
+func JWTAuth(jwtSecret string, database *db.DB, cache *JWTRevocationCache) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		authHeader := c.GetHeader("Authorization")
 		if authHeader == "" {
@@ -52,13 +56,25 @@ func JWTAuth(jwtSecret string, database *db.DB) gin.HandlerFunc {
 		// leaked token can still read /me, /transactions, etc.
 		if database != nil {
 			var tokensInvalidatedAfter *time.Time
-			err := database.Pool.QueryRow(c.Request.Context(),
-				"SELECT tokens_invalidated_after FROM users WHERE id = $1", claims.UserID,
-			).Scan(&tokensInvalidatedAfter)
-			if err != nil {
-				c.JSON(http.StatusUnauthorized, gin.H{"error": "user no longer exists"})
-				c.Abort()
-				return
+			var fromCache bool
+			if cache != nil {
+				if v, ok := cache.Get(claims.UserID); ok {
+					tokensInvalidatedAfter = v
+					fromCache = true
+				}
+			}
+			if !fromCache {
+				err := database.Pool.QueryRow(c.Request.Context(),
+					"SELECT tokens_invalidated_after FROM users WHERE id = $1", claims.UserID,
+				).Scan(&tokensInvalidatedAfter)
+				if err != nil {
+					c.JSON(http.StatusUnauthorized, gin.H{"error": "user no longer exists"})
+					c.Abort()
+					return
+				}
+				if cache != nil {
+					cache.Set(claims.UserID, tokensInvalidatedAfter)
+				}
 			}
 			if tokensInvalidatedAfter != nil {
 				if claims.IssuedAt == nil || !claims.IssuedAt.After(*tokensInvalidatedAfter) {
