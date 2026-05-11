@@ -295,6 +295,16 @@ func Login(c *gin.Context, service *AuthService) {
 	// Invalidate any existing active sessions before creating a new one
 	invalidateAllSessions(c.Request.Context(), database, u.ID, "new_login")
 
+	// Bump tokens_invalidated_after so any JWT issued before this login is
+	// rejected by JWTAuth (closes the stolen-device-after-login gap). The
+	// 1-second backwards offset ensures the JWT we just issued — whose
+	// IssuedAt has second-level precision and was stamped a few microseconds
+	// before this UPDATE — still passes its own After-check.
+	_, _ = database.Pool.Exec(c.Request.Context(),
+		`UPDATE users SET tokens_invalidated_after = now() - INTERVAL '1 second',
+		                  updated_at = now()
+		 WHERE id = $1`, u.ID)
+
 	// Create sync session
 	syncSessionID, err := createSyncSession(c.Request.Context(), database, u.ID)
 	if err != nil {

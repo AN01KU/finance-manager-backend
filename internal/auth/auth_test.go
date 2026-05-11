@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/assert"
@@ -17,6 +18,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/yanonymousV2/finance-manager-backend/internal/db"
+	"github.com/yanonymousV2/finance-manager-backend/internal/user"
 )
 
 func setupTestDB(t *testing.T) *db.DB {
@@ -258,4 +260,74 @@ func TestLogin_FailedAttemptsResetAfterLockoutExpires(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, attempts, "fresh attempt after lockout expiry should reset counter to 1")
 	assert.Nil(t, lockedUntil, "lockout column should be cleared on the reset")
+}
+
+// TestLogin_BumpsTokenInvalidationButNewJWTSurvives verifies the security
+// requirement that Login bumps users.tokens_invalidated_after to revoke any
+// JWT that pre-dated this login (closes the stolen-device-after-login gap),
+// while the JWT issued by this very Login call must still pass middleware
+// checks. The 1-second backwards offset on the bump is what reconciles
+// these two requirements.
+func TestLogin_BumpsTokenInvalidationButNewJWTSurvives(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	testDB := setupTestDB(t)
+	defer testDB.Close()
+
+	service := &AuthService{
+		DB:        testDB,
+		JWTSecret: "test-secret",
+	}
+
+	hashedPassword, _ := bcrypt.GenerateFromPassword([]byte("password123"), bcrypt.DefaultCost)
+	userID := uuid.New()
+	_, err := testDB.Pool.Exec(context.Background(),
+		"INSERT INTO users (id, email, username, password_hash) VALUES ($1, $2, $3, $4)",
+		userID, "loginbump@example.com", "bumpuser", string(hashedPassword))
+	require.NoError(t, err)
+
+	// Snapshot any pre-existing tokens_invalidated_after (should be NULL).
+	var beforeBump *time.Time
+	err = testDB.Pool.QueryRow(context.Background(),
+		`SELECT tokens_invalidated_after FROM users WHERE id = $1`, userID).Scan(&beforeBump)
+	require.NoError(t, err)
+	require.Nil(t, beforeBump)
+
+	// Call Login.
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	body, _ := json.Marshal(LoginRequest{
+		Email:    "loginbump@example.com",
+		Password: "password123",
+	})
+	c.Request = httptest.NewRequest("POST", "/auth/login", bytes.NewBuffer(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+	Login(c, service)
+	require.Equal(t, 200, w.Code)
+
+	// The bump must have happened: tokens_invalidated_after is now non-null.
+	var afterBump *time.Time
+	err = testDB.Pool.QueryRow(context.Background(),
+		`SELECT tokens_invalidated_after FROM users WHERE id = $1`, userID).Scan(&afterBump)
+	require.NoError(t, err)
+	require.NotNil(t, afterBump, "Login must bump tokens_invalidated_after")
+
+	// And the JWT just issued by this Login must still pass JWTAuth — i.e.
+	// the bumped timestamp must be at least one second behind the JWT's
+	// IssuedAt, otherwise the token would be revoked the moment it's used.
+	var resp AuthResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+
+	parsed, err := jwt.ParseWithClaims(resp.Token, &user.Claims{}, func(*jwt.Token) (interface{}, error) {
+		return []byte(service.JWTSecret), nil
+	})
+	require.NoError(t, err)
+	require.True(t, parsed.Valid)
+	claims := parsed.Claims.(*user.Claims)
+	require.NotNil(t, claims.IssuedAt)
+	assert.True(t,
+		claims.IssuedAt.After(*afterBump),
+		"new JWT IssuedAt (%s) must be After bumped tokens_invalidated_after (%s)",
+		claims.IssuedAt.Time.Format(time.RFC3339Nano),
+		afterBump.Format(time.RFC3339Nano),
+	)
 }
