@@ -968,7 +968,7 @@ func (p *Portal) recurringPage(c *gin.Context) {
 					dow[i] = int(v)
 				}
 				today := time.Now().UTC().Truncate(24 * time.Hour)
-				next := recurring.NextFutureOccurrence(base, r.Frequency, dayOfMonth, dow, today)
+				next := recurring.NextFutureOccurrence(base, r.Frequency, dayOfMonth, dow, today, time.UTC)
 				if next != nil && (endDate == nil || next.Before(*endDate)) {
 					r.NextDate = next.Format("Jan 2, 2006")
 				}
