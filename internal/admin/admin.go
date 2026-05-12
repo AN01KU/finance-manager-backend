@@ -17,11 +17,13 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/yanonymousV2/finance-manager-backend/internal/category"
+	"github.com/yanonymousV2/finance-manager-backend/internal/recurring"
 )
 
 const (
@@ -138,7 +140,7 @@ func New(pool *pgxpool.Pool, username, password string, logStore *LogStore) *Adm
 	dir := filepath.Join("internal", "admin", "templates")
 	layoutFile := filepath.Join(dir, "layout.html")
 
-	pages := []string{"dashboard", "tables", "table_browse", "row_form", "sql", "logs", "users", "user_detail", "groups", "group_detail", "recurring", "audit", "search", "categories"}
+	pages := []string{"dashboard", "tables", "table_browse", "row_form", "sql", "logs", "users", "user_detail", "groups", "group_detail", "recurring", "search", "categories"}
 	tmpls := make(map[string]*template.Template, len(pages))
 	for _, page := range pages {
 		pageFile := filepath.Join(dir, page+".html")
@@ -183,7 +185,7 @@ func (a *Admin) RegisterRoutes(r *gin.Engine, rateLimiter gin.HandlerFunc) {
 		protected.GET("/groups", a.groupsPage)
 		protected.GET("/groups/:id", a.groupDetail)
 		protected.GET("/recurring", a.recurringPage)
-		protected.GET("/audit", a.auditPage)
+		protected.POST("/recurring/:id/backfill", a.recurringBackfill)
 		protected.GET("/search", a.searchPage)
 		protected.GET("/sql", a.sqlPage)
 		protected.POST("/sql", a.sqlExec)
@@ -234,22 +236,6 @@ func (a *Admin) validSession(token string) bool {
 	return true
 }
 
-// JSONAuthMiddleware is the JSON-API equivalent of the HTML authMiddleware:
-// instead of redirecting to /admin/login on a missing/invalid session, it
-// returns a 401 JSON error. Use this for admin JSON endpoints
-// (e.g. /admin/predefined-categories) registered alongside the HTML admin
-// panel so they share the same cookie-session auth.
-func (a *Admin) JSONAuthMiddleware() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		cookie, err := c.Cookie(sessionCookieName)
-		if err != nil || !a.validSession(cookie) {
-			c.AbortWithStatusJSON(401, gin.H{"error": "admin session required"})
-			return
-		}
-		c.Next()
-	}
-}
-
 func (a *Admin) authMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		cookie, err := c.Cookie(sessionCookieName)
@@ -276,6 +262,7 @@ func (a *Admin) loginSubmit(c *gin.Context) {
 	if usernameMatch && passwordMatch && a.password != "" {
 		token := a.createSession()
 		secure := gin.Mode() == gin.ReleaseMode
+		c.SetSameSite(http.SameSiteStrictMode)
 		c.SetCookie(sessionCookieName, token, sessionMaxAge, "/admin", "", secure, true)
 		c.Redirect(http.StatusFound, "/admin/")
 		return
@@ -292,6 +279,7 @@ func (a *Admin) logout(c *gin.Context) {
 		delete(a.sessions, cookie)
 		a.mu.Unlock()
 	}
+	c.SetSameSite(http.SameSiteStrictMode)
 	c.SetCookie(sessionCookieName, "", -1, "/admin", "", false, true)
 	c.Redirect(http.StatusFound, "/admin/login")
 }
@@ -575,7 +563,6 @@ func (a *Admin) userDelete(c *gin.Context) {
 		c.Redirect(http.StatusFound, "/admin/users/"+uid+"?error="+url.QueryEscape(err.Error()))
 		return
 	}
-	a.logAudit(c, "delete", "users", "User ID: "+uid)
 	c.Redirect(http.StatusFound, "/admin/users?success=User+deleted")
 }
 
@@ -754,6 +741,7 @@ func (a *Admin) groupDetail(c *gin.Context) {
 // --- Recurring ---
 
 type recurringRule struct {
+	ID        string
 	UserEmail string
 	Name      string
 	Type      string
@@ -765,30 +753,11 @@ type recurringRule struct {
 	IsOverdue bool
 }
 
-func isOverdue(frequency string, lastAdded *time.Time, now time.Time) bool {
-	if lastAdded == nil {
-		return false
-	}
-	var next time.Time
-	switch frequency {
-	case "daily":
-		next = lastAdded.AddDate(0, 0, 1)
-	case "weekly":
-		next = lastAdded.AddDate(0, 0, 7)
-	case "monthly":
-		next = lastAdded.AddDate(0, 1, 0)
-	case "yearly":
-		next = lastAdded.AddDate(1, 0, 0)
-	default:
-		return false
-	}
-	return now.After(next)
-}
-
 func (a *Admin) recurringPage(c *gin.Context) {
 	rows, err := a.pool.Query(c.Request.Context(),
-		`SELECT u.email, rt.name, rt.type, rt.amount, rt.category,
-		        rt.frequency, rt.last_added_date, rt.is_active
+		`SELECT rt.id, u.email, rt.name, rt.type, rt.amount, rt.category,
+		        rt.frequency, rt.start_date, rt.day_of_month, rt.days_of_week,
+		        rt.last_added_date, rt.is_active
 		 FROM recurring_transactions rt
 		 JOIN users u ON u.id = rt.user_id
 		 ORDER BY rt.is_active DESC, rt.updated_at DESC`)
@@ -802,19 +771,32 @@ func (a *Admin) recurringPage(c *gin.Context) {
 	var rules []recurringRule
 	for rows.Next() {
 		var r recurringRule
+		var id [16]byte
 		var amount float64
+		var startDate time.Time
+		var dayOfMonth *int
+		var daysOfWeek []int32
 		var lastAdded *time.Time
-		if err := rows.Scan(&r.UserEmail, &r.Name, &r.Type, &amount, &r.Category,
-			&r.Frequency, &lastAdded, &r.IsActive); err != nil {
+		if err := rows.Scan(&id, &r.UserEmail, &r.Name, &r.Type, &amount, &r.Category,
+			&r.Frequency, &startDate, &dayOfMonth, &daysOfWeek,
+			&lastAdded, &r.IsActive); err != nil {
 			continue
 		}
+		r.ID = formatValue(id)
 		r.Amount = fmt.Sprintf("%.2f", amount)
 		if lastAdded != nil {
 			r.LastAdded = lastAdded.Format("2006-01-02")
 		} else {
 			r.LastAdded = "—"
 		}
-		r.IsOverdue = r.IsActive && isOverdue(r.Frequency, lastAdded, now)
+		if r.IsActive {
+			dow := make([]int, len(daysOfWeek))
+			for i, v := range daysOfWeek {
+				dow[i] = int(v)
+			}
+			missed := recurring.MissedOccurrences(startDate, r.Frequency, dayOfMonth, dow, lastAdded, now, time.UTC)
+			r.IsOverdue = len(missed) > 0
+		}
 		rules = append(rules, r)
 	}
 
@@ -825,64 +807,60 @@ func (a *Admin) recurringPage(c *gin.Context) {
 	})
 }
 
-// --- Audit Log ---
-
-func (a *Admin) logAudit(c *gin.Context, action, tableName, details string) {
-	_, _ = a.pool.Exec(c.Request.Context(),
-		`INSERT INTO admin_audit_log (action, table_name, details, admin_user) VALUES ($1, $2, $3, $4)`,
-		action, tableName, details, a.username)
-}
-
-type auditEntry struct {
-	CreatedAt string
-	AdminUser string
-	Action    string
-	TableName string
-	Details   string
-}
-
-func (a *Admin) auditPage(c *gin.Context) {
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	if page < 1 {
-		page = 1
-	}
-	offset := (page - 1) * pageSize
-
-	rows, err := a.pool.Query(c.Request.Context(),
-		`SELECT created_at, admin_user, action, COALESCE(table_name, ''), COALESCE(details, '')
-		 FROM admin_audit_log
-		 ORDER BY created_at DESC
-		 LIMIT $1 OFFSET $2`, pageSize+1, offset)
+func (a *Admin) recurringBackfill(c *gin.Context) {
+	idStr := c.Param("id")
+	ruleID, err := uuid.Parse(idStr)
 	if err != nil {
-		c.String(500, "Error: %v", err)
+		c.JSON(400, gin.H{"error": "invalid recurring transaction id"})
 		return
 	}
-	defer rows.Close()
 
-	var entries []auditEntry
-	for rows.Next() {
-		var e auditEntry
-		var createdAt time.Time
-		if rows.Scan(&createdAt, &e.AdminUser, &e.Action, &e.TableName, &e.Details) == nil {
-			e.CreatedAt = createdAt.Format("2006-01-02 15:04:05")
-			entries = append(entries, e)
+	var txType, name, txCategory, frequency string
+	var amount float64
+	var startDate time.Time
+	var dayOfMonth *int
+	var daysOfWeek []int32
+	var lastAdded *time.Time
+	var userID uuid.UUID
+	err = a.pool.QueryRow(c.Request.Context(),
+		`SELECT user_id, type, name, amount, category, frequency, start_date,
+		        day_of_month, days_of_week, last_added_date
+		 FROM recurring_transactions WHERE id = $1`, ruleID).Scan(
+		&userID, &txType, &name, &amount, &txCategory, &frequency, &startDate,
+		&dayOfMonth, &daysOfWeek, &lastAdded)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			c.JSON(404, gin.H{"error": "recurring transaction not found"})
+			return
+		}
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+
+	dow := make([]int, len(daysOfWeek))
+	for i, v := range daysOfWeek {
+		dow[i] = int(v)
+	}
+
+	missed := recurring.MissedOccurrences(startDate, frequency, dayOfMonth, dow, lastAdded, time.Now(), time.UTC)
+	inserted := 0
+	for _, fireDate := range missed {
+		txID := uuid.New()
+		tag, err := a.pool.Exec(c.Request.Context(),
+			`INSERT INTO transactions (id, user_id, type, amount, category, date, description, recurring_transaction_id, updated_at)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+			 ON CONFLICT (user_id, recurring_transaction_id, date) WHERE recurring_transaction_id IS NOT NULL DO NOTHING`,
+			txID, userID, txType, amount, txCategory, fireDate, name, ruleID)
+		if err != nil {
+			log.Printf("admin: backfill insert error for rule %s date %s: %v", ruleID, fireDate.Format("2006-01-02"), err)
+			continue
+		}
+		if tag.RowsAffected() > 0 {
+			inserted++
 		}
 	}
 
-	hasNext := len(entries) > pageSize
-	if hasNext {
-		entries = entries[:pageSize]
-	}
-
-	a.render(c, "audit.html", gin.H{
-		"Title":    "Audit Log",
-		"Active":   "audit",
-		"Entries":  entries,
-		"Page":     page,
-		"PrevPage": page - 1,
-		"NextPage": page + 1,
-		"HasNext":  hasNext,
-	})
+	c.JSON(200, gin.H{"missed": len(missed), "inserted": inserted})
 }
 
 // --- Search ---
@@ -1166,7 +1144,6 @@ func (a *Admin) rowDelete(c *gin.Context) {
 		c.Redirect(http.StatusFound, "/admin/tables/"+table+"?error="+url.QueryEscape(err.Error()))
 		return
 	}
-	a.logAudit(c, "delete", table, fmt.Sprintf("PK: %v = %v", pkCols, pkVals))
 	c.Redirect(http.StatusFound, "/admin/tables/"+table+"?success=Row+deleted")
 }
 
@@ -1244,7 +1221,6 @@ func (a *Admin) rowCreateSubmit(c *gin.Context) {
 		c.Redirect(http.StatusFound, "/admin/tables/"+table+"/new?error="+url.QueryEscape(err.Error()))
 		return
 	}
-	a.logAudit(c, "create", table, fmt.Sprintf("Columns: %v", insertCols))
 	c.Redirect(http.StatusFound, "/admin/tables/"+table+"?success=Row+created")
 }
 
@@ -1388,7 +1364,6 @@ func (a *Admin) rowEditSubmit(c *gin.Context) {
 		c.Redirect(http.StatusFound, editURL)
 		return
 	}
-	a.logAudit(c, "edit", table, fmt.Sprintf("PK: %v = %v", pkCols, pkVals))
 	c.Redirect(http.StatusFound, "/admin/tables/"+table+"?success=Row+updated")
 }
 
@@ -1515,7 +1490,6 @@ func (a *Admin) sqlExec(c *gin.Context) {
 			data["Error"] = err.Error()
 		} else {
 			data["Success"] = fmt.Sprintf("Query executed successfully. Rows affected: %d", tag.RowsAffected())
-			a.logAudit(c, "sql_exec", "", query)
 		}
 	}
 
@@ -1687,6 +1661,10 @@ func (a *Admin) categoryCreate(c *gin.Context) {
 		catRedirect(c, "", "Invalid icon key: "+icon)
 		return
 	}
+	if !category.IsValidHexColor(color) {
+		catRedirect(c, "", "Color must be a valid #RRGGBB hex value")
+		return
+	}
 
 	_, err := a.pool.Exec(c.Request.Context(),
 		`INSERT INTO predefined_categories (key, name, icon, color)
@@ -1716,6 +1694,10 @@ func (a *Admin) categoryEdit(c *gin.Context) {
 	}
 	if !category.IsValidIconKey(icon) {
 		catRedirect(c, "", "Invalid icon key: "+icon)
+		return
+	}
+	if !category.IsValidHexColor(color) {
+		catRedirect(c, "", "Color must be a valid #RRGGBB hex value")
 		return
 	}
 
@@ -1796,6 +1778,14 @@ func (a *Admin) categoryHardDelete(c *gin.Context) {
 	}
 	defer tx.Rollback(c.Request.Context()) //nolint:errcheck
 
+	for _, table := range []string{"transactions", "recurring_transactions", "group_transactions"} {
+		if _, err := tx.Exec(c.Request.Context(),
+			`UPDATE `+table+` SET category = $1 WHERE category = $2`,
+			category.ProtectedKey, key); err != nil {
+			catRedirect(c, "", "Failed to remap category in "+table+": "+err.Error())
+			return
+		}
+	}
 	if _, err := tx.Exec(c.Request.Context(),
 		`DELETE FROM custom_categories WHERE is_predefined = TRUE AND predefined_key = $1`,
 		key); err != nil {

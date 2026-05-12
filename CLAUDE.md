@@ -22,6 +22,12 @@ go test ./internal/middleware/... ./internal/config/... ./internal/recurring/...
 
 All four must pass cleanly before committing. If any fail, fix them first.
 
+## Operational Constraints
+
+- **Production must run with `GIN_MODE=release`.** This enables the `Secure` flag on admin session cookies, activates rate limiting on `/auth/*`, disables the SQL runner, and skips seed data. Running in debug mode in production will expose the SQL runner and set insecure cookies.
+- **The server must be started from the repo root directory.** The admin dashboard templates are loaded at startup via a relative path (`internal/admin/templates/`). Starting from any other directory will cause template parsing to fail at boot.
+- **Recurring transaction backfill:** the scheduler (`GenerateDueTransactions`) fires today-only — it never back-fills missed dates. To generate transactions for dates already passed, use `POST /admin/recurring/:id/backfill` from the admin panel. This uses the same `MissedOccurrences` algorithm as the scheduler's overdue detection but inserts one row per missed date with ON CONFLICT DO NOTHING.
+
 ## Commands
 
 ```bash

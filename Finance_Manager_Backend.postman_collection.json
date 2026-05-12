@@ -1,13 +1,25 @@
 {
   "info": {
     "name": "Finance Manager Backend",
-    "description": "API collection for the Finance Manager backend. Set the `base_url` collection variable to your server (default: http://localhost:8080). Run Signup or Login first — the token is saved automatically to the `token` collection variable.",
+    "description": "API collection for the Finance Manager backend. Set the `base_url` collection variable to your server (default: http://localhost:8080). Run Signup or Login first \u2014 the token is saved automatically to the `token` collection variable.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
-    { "key": "base_url", "value": "http://localhost:8080", "type": "string" },
-    { "key": "token", "value": "", "type": "string" },
-    { "key": "sync_session_id", "value": "", "type": "string" }
+    {
+      "key": "base_url",
+      "value": "http://localhost:8080",
+      "type": "string"
+    },
+    {
+      "key": "token",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "sync_session_id",
+      "value": "",
+      "type": "string"
+    }
   ],
   "item": [
     {
@@ -17,7 +29,15 @@
           "name": "Health Check",
           "request": {
             "method": "GET",
-            "url": { "raw": "{{base_url}}/health", "host": ["{{base_url}}"], "path": ["health"] }
+            "url": {
+              "raw": "{{base_url}}/health",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "health"
+              ]
+            }
           }
         }
       ]
@@ -46,12 +66,26 @@
           ],
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"email\": \"test@example.com\",\n  \"username\": \"testuser\",\n  \"password\": \"password123\"\n}"
             },
-            "url": { "raw": "{{base_url}}/auth/signup", "host": ["{{base_url}}"], "path": ["auth", "signup"] }
+            "url": {
+              "raw": "{{base_url}}/auth/signup",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "auth",
+                "signup"
+              ]
+            }
           }
         },
         {
@@ -75,12 +109,26 @@
           ],
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"email\": \"ankush@gmail.com\",\n  \"password\": \"12345678\"\n}"
             },
-            "url": { "raw": "{{base_url}}/auth/login", "host": ["{{base_url}}"], "path": ["auth", "login"] }
+            "url": {
+              "raw": "{{base_url}}/auth/login",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "auth",
+                "login"
+              ]
+            }
           }
         },
         {
@@ -88,14 +136,29 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{token}}" },
-              { "key": "Content-Type", "value": "application/json" }
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
             ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"sync_session_id\": \"{{sync_session_id}}\"\n}"
             },
-            "url": { "raw": "{{base_url}}/auth/logout", "host": ["{{base_url}}"], "path": ["auth", "logout"] }
+            "url": {
+              "raw": "{{base_url}}/auth/logout",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "auth",
+                "logout"
+              ]
+            }
           }
         }
       ]
@@ -107,16 +170,42 @@
           "name": "Get Me",
           "request": {
             "method": "GET",
-            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
-            "url": { "raw": "{{base_url}}/me", "host": ["{{base_url}}"], "path": ["me"] }
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/me",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "me"
+              ]
+            }
           }
         },
         {
           "name": "Delete Me",
           "request": {
             "method": "DELETE",
-            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
-            "url": { "raw": "{{base_url}}/me", "host": ["{{base_url}}"], "path": ["me"] }
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/me",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "me"
+              ]
+            }
           }
         }
       ]
@@ -129,16 +218,38 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{token}}" },
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "X-Sync-Session-ID", "value": "{{sync_session_id}}", "disabled": true },
-              { "key": "X-Sync-Version", "value": "1", "disabled": true }
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Sync-Session-ID",
+                "value": "{{sync_session_id}}",
+                "disabled": true
+              },
+              {
+                "key": "X-Sync-Version",
+                "value": "1",
+                "disabled": true
+              }
             ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"type\": \"expense\",\n  \"amount\": \"350\",\n  \"category\": \"food-dining\",\n  \"date\": 1774569600000,\n  \"description\": \"Lunch at office\"\n}"
             },
-            "url": { "raw": "{{base_url}}/transactions", "host": ["{{base_url}}"], "path": ["transactions"] }
+            "url": {
+              "raw": "{{base_url}}/transactions",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "transactions"
+              ]
+            }
           }
         },
         {
@@ -146,16 +257,38 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{token}}" },
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "X-Sync-Session-ID", "value": "{{sync_session_id}}", "disabled": true },
-              { "key": "X-Sync-Version", "value": "1", "disabled": true }
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Sync-Session-ID",
+                "value": "{{sync_session_id}}",
+                "disabled": true
+              },
+              {
+                "key": "X-Sync-Version",
+                "value": "1",
+                "disabled": true
+              }
             ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"type\": \"income\",\n  \"amount\": \"85000\",\n  \"category\": \"salary-income\",\n  \"date\": 1774569600000,\n  \"description\": \"March Salary\",\n  \"notes\": \"Net after TDS\"\n}"
             },
-            "url": { "raw": "{{base_url}}/transactions", "host": ["{{base_url}}"], "path": ["transactions"] }
+            "url": {
+              "raw": "{{base_url}}/transactions",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "transactions"
+              ]
+            }
           }
         },
         {
@@ -163,34 +296,89 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{token}}" },
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "X-Sync-Session-ID", "value": "{{sync_session_id}}", "disabled": true },
-              { "key": "X-Sync-Version", "value": "1", "disabled": true }
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Sync-Session-ID",
+                "value": "{{sync_session_id}}",
+                "disabled": true
+              },
+              {
+                "key": "X-Sync-Version",
+                "value": "1",
+                "disabled": true
+              }
             ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"id\": \"f1000001-0000-0000-0000-000000000001\",\n  \"type\": \"expense\",\n  \"amount\": \"500\",\n  \"category\": \"transport\",\n  \"date\": 1774569600000,\n  \"description\": \"Cab to airport\"\n}"
             },
-            "url": { "raw": "{{base_url}}/transactions", "host": ["{{base_url}}"], "path": ["transactions"] }
+            "url": {
+              "raw": "{{base_url}}/transactions",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "transactions"
+              ]
+            }
           }
         },
         {
           "name": "List Transactions",
           "request": {
             "method": "GET",
-            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
             "url": {
               "raw": "{{base_url}}/transactions",
-              "host": ["{{base_url}}"],
-              "path": ["transactions"],
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "transactions"
+              ],
               "query": [
-                { "key": "type", "value": "expense", "disabled": true },
-                { "key": "category", "value": "food-dining", "disabled": true },
-                { "key": "start_date", "value": "1772323200000", "disabled": true },
-                { "key": "end_date", "value": "1774915200000", "disabled": true },
-                { "key": "limit", "value": "20", "disabled": true },
-                { "key": "offset", "value": "0", "disabled": true }
+                {
+                  "key": "type",
+                  "value": "expense",
+                  "disabled": true
+                },
+                {
+                  "key": "category",
+                  "value": "food-dining",
+                  "disabled": true
+                },
+                {
+                  "key": "start_date",
+                  "value": "1772323200000",
+                  "disabled": true
+                },
+                {
+                  "key": "end_date",
+                  "value": "1774915200000",
+                  "disabled": true
+                },
+                {
+                  "key": "limit",
+                  "value": "20",
+                  "disabled": true
+                },
+                {
+                  "key": "offset",
+                  "value": "0",
+                  "disabled": true
+                }
               ]
             }
           }
@@ -199,25 +387,53 @@
           "name": "List Transactions (income only)",
           "request": {
             "method": "GET",
-            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
             "url": {
               "raw": "{{base_url}}/transactions?type=income",
-              "host": ["{{base_url}}"],
-              "path": ["transactions"],
-              "query": [{ "key": "type", "value": "income" }]
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "transactions"
+              ],
+              "query": [
+                {
+                  "key": "type",
+                  "value": "income"
+                }
+              ]
             }
           }
         },
         {
-          "name": "List Transactions (settlements — other)",
+          "name": "List Transactions (settlements \u2014 other)",
           "request": {
             "method": "GET",
-            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
             "url": {
               "raw": "{{base_url}}/transactions?category=other",
-              "host": ["{{base_url}}"],
-              "path": ["transactions"],
-              "query": [{ "key": "category", "value": "other" }]
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "transactions"
+              ],
+              "query": [
+                {
+                  "key": "category",
+                  "value": "other"
+                }
+              ]
             }
           }
         },
@@ -225,8 +441,22 @@
           "name": "Get Transaction",
           "request": {
             "method": "GET",
-            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
-            "url": { "raw": "{{base_url}}/transactions/a1000001-0000-0000-0000-000000000000", "host": ["{{base_url}}"], "path": ["transactions", "a1000001-0000-0000-0000-000000000000"] }
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/transactions/a1000001-0000-0000-0000-000000000000",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "transactions",
+                "a1000001-0000-0000-0000-000000000000"
+              ]
+            }
           }
         },
         {
@@ -234,22 +464,51 @@
           "request": {
             "method": "PATCH",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{token}}" },
-              { "key": "Content-Type", "value": "application/json" }
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
             ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"amount\": \"400\",\n  \"category\": \"dining-out\",\n  \"description\": \"Updated description\"\n}"
             },
-            "url": { "raw": "{{base_url}}/transactions/a1000001-0000-0000-0000-000000000000", "host": ["{{base_url}}"], "path": ["transactions", "a1000001-0000-0000-0000-000000000000"] }
+            "url": {
+              "raw": "{{base_url}}/transactions/a1000001-0000-0000-0000-000000000000",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "transactions",
+                "a1000001-0000-0000-0000-000000000000"
+              ]
+            }
           }
         },
         {
           "name": "Delete Transaction",
           "request": {
             "method": "DELETE",
-            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
-            "url": { "raw": "{{base_url}}/transactions/a1000001-0000-0000-0000-000000000000", "host": ["{{base_url}}"], "path": ["transactions", "a1000001-0000-0000-0000-000000000000"] }
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/transactions/a1000001-0000-0000-0000-000000000000",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "transactions",
+                "a1000001-0000-0000-0000-000000000000"
+              ]
+            }
           }
         }
       ]
@@ -262,16 +521,38 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{token}}" },
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "X-Sync-Session-ID", "value": "{{sync_session_id}}", "disabled": true },
-              { "key": "X-Sync-Version", "value": "1", "disabled": true }
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Sync-Session-ID",
+                "value": "{{sync_session_id}}",
+                "disabled": true
+              },
+              {
+                "key": "X-Sync-Version",
+                "value": "1",
+                "disabled": true
+              }
             ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"type\": \"expense\",\n  \"name\": \"House Rent\",\n  \"amount\": \"15000\",\n  \"category\": \"housing-rent\",\n  \"frequency\": \"monthly\",\n  \"day_of_month\": 1,\n  \"start_date\": 1767225600000,\n  \"notes\": \"Monthly rent\"\n}"
             },
-            "url": { "raw": "{{base_url}}/recurring-transactions", "host": ["{{base_url}}"], "path": ["recurring-transactions"] }
+            "url": {
+              "raw": "{{base_url}}/recurring-transactions",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "recurring-transactions"
+              ]
+            }
           }
         },
         {
@@ -279,16 +560,38 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{token}}" },
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "X-Sync-Session-ID", "value": "{{sync_session_id}}", "disabled": true },
-              { "key": "X-Sync-Version", "value": "1", "disabled": true }
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Sync-Session-ID",
+                "value": "{{sync_session_id}}",
+                "disabled": true
+              },
+              {
+                "key": "X-Sync-Version",
+                "value": "1",
+                "disabled": true
+              }
             ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"type\": \"income\",\n  \"name\": \"Monthly Salary\",\n  \"amount\": \"85000\",\n  \"category\": \"salary-income\",\n  \"frequency\": \"monthly\",\n  \"day_of_month\": 1,\n  \"start_date\": 1767225600000,\n  \"notes\": \"Net salary after TDS\"\n}"
             },
-            "url": { "raw": "{{base_url}}/recurring-transactions", "host": ["{{base_url}}"], "path": ["recurring-transactions"] }
+            "url": {
+              "raw": "{{base_url}}/recurring-transactions",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "recurring-transactions"
+              ]
+            }
           }
         },
         {
@@ -296,26 +599,55 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{token}}" },
-              { "key": "Content-Type", "value": "application/json" }
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
             ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"type\": \"expense\",\n  \"name\": \"Weekly groceries\",\n  \"amount\": \"800\",\n  \"category\": \"groceries\",\n  \"frequency\": \"weekly\",\n  \"days_of_week\": [6],\n  \"start_date\": 1767225600000\n}"
             },
-            "url": { "raw": "{{base_url}}/recurring-transactions", "host": ["{{base_url}}"], "path": ["recurring-transactions"] }
+            "url": {
+              "raw": "{{base_url}}/recurring-transactions",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "recurring-transactions"
+              ]
+            }
           }
         },
         {
           "name": "List Recurring Transactions",
           "request": {
             "method": "GET",
-            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
             "url": {
               "raw": "{{base_url}}/recurring-transactions",
-              "host": ["{{base_url}}"],
-              "path": ["recurring-transactions"],
-              "query": [{ "key": "active", "value": "true", "disabled": true }]
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "recurring-transactions"
+              ],
+              "query": [
+                {
+                  "key": "active",
+                  "value": "true",
+                  "disabled": true
+                }
+              ]
             }
           }
         },
@@ -323,8 +655,22 @@
           "name": "Get Recurring Transaction",
           "request": {
             "method": "GET",
-            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
-            "url": { "raw": "{{base_url}}/recurring-transactions/22222222-0001-0001-0001-222222222222", "host": ["{{base_url}}"], "path": ["recurring-transactions", "22222222-0001-0001-0001-222222222222"] }
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/recurring-transactions/22222222-0001-0001-0001-222222222222",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "recurring-transactions",
+                "22222222-0001-0001-0001-222222222222"
+              ]
+            }
           }
         },
         {
@@ -332,98 +678,142 @@
           "request": {
             "method": "PUT",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{token}}" },
-              { "key": "Content-Type", "value": "application/json" }
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
             ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"amount\": \"16000\",\n  \"category\": \"housing-rent\",\n  \"is_active\": true\n}"
             },
-            "url": { "raw": "{{base_url}}/recurring-transactions/22222222-0001-0001-0001-222222222222", "host": ["{{base_url}}"], "path": ["recurring-transactions", "22222222-0001-0001-0001-222222222222"] }
+            "url": {
+              "raw": "{{base_url}}/recurring-transactions/22222222-0001-0001-0001-222222222222",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "recurring-transactions",
+                "22222222-0001-0001-0001-222222222222"
+              ]
+            }
           }
         },
         {
           "name": "Delete Recurring Transaction",
           "request": {
             "method": "DELETE",
-            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
-            "url": { "raw": "{{base_url}}/recurring-transactions/22222222-0001-0001-0001-222222222222", "host": ["{{base_url}}"], "path": ["recurring-transactions", "22222222-0001-0001-0001-222222222222"] }
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/recurring-transactions/22222222-0001-0001-0001-222222222222",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "recurring-transactions",
+                "22222222-0001-0001-0001-222222222222"
+              ]
+            }
           }
         }
       ]
     },
     {
-      "name": "Budgets",
+      "name": "Budget",
       "item": [
         {
-          "name": "Create/Update Budget",
-          "request": {
-            "method": "POST",
-            "header": [
-              { "key": "Authorization", "value": "Bearer {{token}}" },
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "X-Sync-Session-ID", "value": "{{sync_session_id}}", "disabled": true },
-              { "key": "X-Sync-Version", "value": "1", "disabled": true }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"limit\": \"30000\",\n  \"month\": 3,\n  \"year\": 2026\n}"
-            },
-            "url": { "raw": "{{base_url}}/budgets", "host": ["{{base_url}}"], "path": ["budgets"] }
-          }
-        },
-        {
-          "name": "Create Budget (client ID)",
-          "request": {
-            "method": "POST",
-            "header": [
-              { "key": "Authorization", "value": "Bearer {{token}}" },
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "X-Sync-Session-ID", "value": "{{sync_session_id}}", "disabled": true },
-              { "key": "X-Sync-Version", "value": "1", "disabled": true }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"id\": \"d1000001-0000-0000-0000-000000000001\",\n  \"limit\": \"25000\",\n  \"month\": 4,\n  \"year\": 2026\n}"
-            },
-            "url": { "raw": "{{base_url}}/budgets", "host": ["{{base_url}}"], "path": ["budgets"] }
-          }
-        },
-        {
-          "name": "List Budgets",
+          "name": "Get Budget",
           "request": {
             "method": "GET",
-            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
             "url": {
-              "raw": "{{base_url}}/budgets",
-              "host": ["{{base_url}}"],
-              "path": ["budgets"],
-              "query": [
-                { "key": "month", "value": "3", "disabled": true },
-                { "key": "year", "value": "2026", "disabled": true }
+              "raw": "{{base_url}}/me/budget",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "me",
+                "budget"
               ]
             }
-          }
+          },
+          "response": []
         },
         {
-          "name": "Update Budget",
+          "name": "Set Budget",
           "request": {
             "method": "PUT",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{token}}" },
-              { "key": "Content-Type", "value": "application/json" }
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
             ],
-            "body": { "mode": "raw", "raw": "{\n  \"limit\": \"35000\"\n}" },
-            "url": { "raw": "{{base_url}}/budgets/:id", "host": ["{{base_url}}"], "path": ["budgets", ":id"], "variable": [{ "key": "id", "value": "" }] }
-          }
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"limit\": 30000\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/me/budget",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "me",
+                "budget"
+              ]
+            }
+          },
+          "response": []
         },
         {
-          "name": "Delete Budget",
+          "name": "Clear Budget (set limit null)",
           "request": {
-            "method": "DELETE",
-            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
-            "url": { "raw": "{{base_url}}/budgets/:id", "host": ["{{base_url}}"], "path": ["budgets", ":id"], "variable": [{ "key": "id", "value": "" }] }
-          }
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"limit\": null\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/me/budget",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "me",
+                "budget"
+              ]
+            }
+          },
+          "response": []
         }
       ]
     },
@@ -435,15 +825,36 @@
           "request": {
             "method": "GET",
             "header": [],
-            "url": { "raw": "{{base_url}}/predefined-categories", "host": ["{{base_url}}"], "path": ["predefined-categories"] }
+            "url": {
+              "raw": "{{base_url}}/predefined-categories",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "predefined-categories"
+              ]
+            }
           }
         },
         {
           "name": "List User Categories (overrides + custom only)",
           "request": {
             "method": "GET",
-            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
-            "url": { "raw": "{{base_url}}/categories", "host": ["{{base_url}}"], "path": ["categories"] },
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/categories",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "categories"
+              ]
+            },
             "description": "Returns only the user's custom categories and predefined overrides. Client merges with GET /predefined-categories to build the full list."
           }
         },
@@ -452,16 +863,38 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{token}}" },
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "X-Sync-Session-ID", "value": "{{sync_session_id}}", "disabled": true },
-              { "key": "X-Sync-Version", "value": "1", "disabled": true }
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Sync-Session-ID",
+                "value": "{{sync_session_id}}",
+                "disabled": true
+              },
+              {
+                "key": "X-Sync-Version",
+                "value": "1",
+                "disabled": true
+              }
             ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"name\": \"Crypto\",\n  \"icon\": \"investments\",\n  \"color\": \"#F0B90B\"\n}"
             },
-            "url": { "raw": "{{base_url}}/categories", "host": ["{{base_url}}"], "path": ["categories"] }
+            "url": {
+              "raw": "{{base_url}}/categories",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "categories"
+              ]
+            }
           }
         },
         {
@@ -469,11 +902,35 @@
           "request": {
             "method": "PUT",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{token}}" },
-              { "key": "Content-Type", "value": "application/json" }
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
             ],
-            "body": { "mode": "raw", "raw": "{\n  \"name\": \"Crypto & Web3\",\n  \"color\": \"#F7931A\",\n  \"is_hidden\": false\n}" },
-            "url": { "raw": "{{base_url}}/categories/:id", "host": ["{{base_url}}"], "path": ["categories", ":id"], "variable": [{ "key": "id", "value": "" }] }
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Crypto & Web3\",\n  \"color\": \"#F7931A\",\n  \"is_hidden\": false\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/categories/:id",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "categories",
+                ":id"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": ""
+                }
+              ]
+            }
           }
         },
         {
@@ -481,15 +938,34 @@
           "request": {
             "method": "PUT",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{token}}" },
-              { "key": "Content-Type", "value": "application/json" }
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
             ],
-            "body": { "mode": "raw", "raw": "{\n  \"color\": \"#FF4757\"\n}" },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"color\": \"#FF4757\"\n}"
+            },
             "url": {
               "raw": "{{base_url}}/categories/:id",
-              "host": ["{{base_url}}"],
-              "path": ["categories", ":id"],
-              "variable": [{ "key": "id", "value": "" }],
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "categories",
+                ":id"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": ""
+                }
+              ],
               "description": "Pass the virtual UUID returned by GET /categories for a predefined entry. Creates an override row server-side."
             }
           }
@@ -498,8 +974,28 @@
           "name": "Delete Category",
           "request": {
             "method": "DELETE",
-            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
-            "url": { "raw": "{{base_url}}/categories/:id", "host": ["{{base_url}}"], "path": ["categories", ":id"], "variable": [{ "key": "id", "value": "" }] }
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/categories/:id",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "categories",
+                ":id"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": ""
+                }
+              ]
+            }
           }
         }
       ]
@@ -511,14 +1007,32 @@
           "name": "Monthly Dashboard",
           "request": {
             "method": "GET",
-            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
             "url": {
               "raw": "{{base_url}}/dashboard/monthly",
-              "host": ["{{base_url}}"],
-              "path": ["dashboard", "monthly"],
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "dashboard",
+                "monthly"
+              ],
               "query": [
-                { "key": "month", "value": "3", "disabled": true },
-                { "key": "year", "value": "2026", "disabled": true }
+                {
+                  "key": "month",
+                  "value": "3",
+                  "disabled": true
+                },
+                {
+                  "key": "year",
+                  "value": "2026",
+                  "disabled": true
+                }
               ]
             }
           }
@@ -533,35 +1047,93 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{token}}" },
-              { "key": "Content-Type", "value": "application/json" }
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
             ],
-            "body": { "mode": "raw", "raw": "{\n  \"name\": \"Weekend Trip\"\n}" },
-            "url": { "raw": "{{base_url}}/groups", "host": ["{{base_url}}"], "path": ["groups"] }
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Weekend Trip\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/groups",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "groups"
+              ]
+            }
           }
         },
         {
           "name": "List Groups",
           "request": {
             "method": "GET",
-            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
-            "url": { "raw": "{{base_url}}/groups", "host": ["{{base_url}}"], "path": ["groups"] }
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/groups",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "groups"
+              ]
+            }
           }
         },
         {
           "name": "Get Group (Roommates)",
           "request": {
             "method": "GET",
-            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
-            "url": { "raw": "{{base_url}}/groups/eeeeeeee-0001-0001-0001-eeeeeeeeeeee", "host": ["{{base_url}}"], "path": ["groups", "eeeeeeee-0001-0001-0001-eeeeeeeeeeee"] }
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/groups/eeeeeeee-0001-0001-0001-eeeeeeeeeeee",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "groups",
+                "eeeeeeee-0001-0001-0001-eeeeeeeeeeee"
+              ]
+            }
           }
         },
         {
           "name": "Get Group (Goa Trip)",
           "request": {
             "method": "GET",
-            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
-            "url": { "raw": "{{base_url}}/groups/ffffffff-0002-0002-0002-ffffffffffff", "host": ["{{base_url}}"], "path": ["groups", "ffffffff-0002-0002-0002-ffffffffffff"] }
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/groups/ffffffff-0002-0002-0002-ffffffffffff",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "groups",
+                "ffffffff-0002-0002-0002-ffffffffffff"
+              ]
+            }
           }
         },
         {
@@ -569,43 +1141,142 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{token}}" },
-              { "key": "Content-Type", "value": "application/json" }
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
             ],
-            "body": { "mode": "raw", "raw": "{\n  \"email\": \"sara@gmail.com\"\n}" },
-            "url": { "raw": "{{base_url}}/groups/eeeeeeee-0001-0001-0001-eeeeeeeeeeee/add-member", "host": ["{{base_url}}"], "path": ["groups", "eeeeeeee-0001-0001-0001-eeeeeeeeeeee", "add-member"] }
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"sara@gmail.com\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/groups/eeeeeeee-0001-0001-0001-eeeeeeeeeeee/add-member",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "groups",
+                "eeeeeeee-0001-0001-0001-eeeeeeeeeeee",
+                "add-member"
+              ]
+            }
           }
         },
         {
           "name": "Get Members",
           "request": {
             "method": "GET",
-            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
-            "url": { "raw": "{{base_url}}/groups/eeeeeeee-0001-0001-0001-eeeeeeeeeeee/members", "host": ["{{base_url}}"], "path": ["groups", "eeeeeeee-0001-0001-0001-eeeeeeeeeeee", "members"] }
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/groups/eeeeeeee-0001-0001-0001-eeeeeeeeeeee/members",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "groups",
+                "eeeeeeee-0001-0001-0001-eeeeeeeeeeee",
+                "members"
+              ]
+            }
           }
         },
         {
           "name": "Get Balances",
           "request": {
             "method": "GET",
-            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
-            "url": { "raw": "{{base_url}}/groups/eeeeeeee-0001-0001-0001-eeeeeeeeeeee/balances", "host": ["{{base_url}}"], "path": ["groups", "eeeeeeee-0001-0001-0001-eeeeeeeeeeee", "balances"] }
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/groups/eeeeeeee-0001-0001-0001-eeeeeeeeeeee/balances",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "groups",
+                "eeeeeeee-0001-0001-0001-eeeeeeeeeeee",
+                "balances"
+              ]
+            }
           }
         },
         {
           "name": "Get Group Settlements (Goa Trip)",
           "request": {
             "method": "GET",
-            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
-            "url": { "raw": "{{base_url}}/groups/ffffffff-0002-0002-0002-ffffffffffff/settlements?limit=20&offset=0", "host": ["{{base_url}}"], "path": ["groups", "ffffffff-0002-0002-0002-ffffffffffff", "settlements"], "query": [{ "key": "limit", "value": "20" }, { "key": "offset", "value": "0" }] }
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/groups/ffffffff-0002-0002-0002-ffffffffffff/settlements?limit=20&offset=0",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "groups",
+                "ffffffff-0002-0002-0002-ffffffffffff",
+                "settlements"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "20"
+                },
+                {
+                  "key": "offset",
+                  "value": "0"
+                }
+              ]
+            }
           }
         },
         {
           "name": "Get Group Settlements (Roommates)",
           "request": {
             "method": "GET",
-            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
-            "url": { "raw": "{{base_url}}/groups/eeeeeeee-0001-0001-0001-eeeeeeeeeeee/settlements?limit=20&offset=0", "host": ["{{base_url}}"], "path": ["groups", "eeeeeeee-0001-0001-0001-eeeeeeeeeeee", "settlements"], "query": [{ "key": "limit", "value": "20" }, { "key": "offset", "value": "0" }] }
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/groups/eeeeeeee-0001-0001-0001-eeeeeeeeeeee/settlements?limit=20&offset=0",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "groups",
+                "eeeeeeee-0001-0001-0001-eeeeeeeeeeee",
+                "settlements"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "20"
+                },
+                {
+                  "key": "offset",
+                  "value": "0"
+                }
+              ]
+            }
           }
         }
       ]
@@ -618,16 +1289,40 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{token}}" },
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "X-Sync-Session-ID", "value": "{{sync_session_id}}", "disabled": true },
-              { "key": "X-Sync-Version", "value": "1", "disabled": true }
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Sync-Session-ID",
+                "value": "{{sync_session_id}}",
+                "disabled": true
+              },
+              {
+                "key": "X-Sync-Version",
+                "value": "1",
+                "disabled": true
+              }
             ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"paid_by_user_id\": \"aaaaaaaa-0001-0001-0001-aaaaaaaaaaaa\",\n  \"total_amount\": \"1200\",\n  \"category\": \"food-dining\",\n  \"date\": 1774569600000,\n  \"description\": \"Dinner split 3 ways\",\n  \"splits\": [\n    { \"user_id\": \"aaaaaaaa-0001-0001-0001-aaaaaaaaaaaa\", \"amount\": \"400\" },\n    { \"user_id\": \"bbbbbbbb-0002-0002-0002-bbbbbbbbbbbb\", \"amount\": \"400\" },\n    { \"user_id\": \"cccccccc-0003-0003-0003-cccccccccccc\", \"amount\": \"400\" }\n  ]\n}"
             },
-            "url": { "raw": "{{base_url}}/groups/eeeeeeee-0001-0001-0001-eeeeeeeeeeee/transactions", "host": ["{{base_url}}"], "path": ["groups", "eeeeeeee-0001-0001-0001-eeeeeeeeeeee", "transactions"] }
+            "url": {
+              "raw": "{{base_url}}/groups/eeeeeeee-0001-0001-0001-eeeeeeeeeeee/transactions",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "groups",
+                "eeeeeeee-0001-0001-0001-eeeeeeeeeeee",
+                "transactions"
+              ]
+            }
           }
         },
         {
@@ -635,32 +1330,87 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{token}}" },
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "X-Sync-Session-ID", "value": "{{sync_session_id}}", "disabled": true },
-              { "key": "X-Sync-Version", "value": "1", "disabled": true }
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Sync-Session-ID",
+                "value": "{{sync_session_id}}",
+                "disabled": true
+              },
+              {
+                "key": "X-Sync-Version",
+                "value": "1",
+                "disabled": true
+              }
             ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"paid_by_user_id\": \"aaaaaaaa-0001-0001-0001-aaaaaaaaaaaa\",\n  \"total_amount\": \"3000\",\n  \"category\": \"travel\",\n  \"date\": 1774569600000,\n  \"description\": \"Taxi to airport\",\n  \"splits\": [\n    { \"user_id\": \"aaaaaaaa-0001-0001-0001-aaaaaaaaaaaa\", \"amount\": \"1500\" },\n    { \"user_id\": \"bbbbbbbb-0002-0002-0002-bbbbbbbbbbbb\", \"amount\": \"1000\" },\n    { \"user_id\": \"cccccccc-0003-0003-0003-cccccccccccc\", \"amount\": \"500\" }\n  ]\n}"
             },
-            "url": { "raw": "{{base_url}}/groups/eeeeeeee-0001-0001-0001-eeeeeeeeeeee/transactions", "host": ["{{base_url}}"], "path": ["groups", "eeeeeeee-0001-0001-0001-eeeeeeeeeeee", "transactions"] }
+            "url": {
+              "raw": "{{base_url}}/groups/eeeeeeee-0001-0001-0001-eeeeeeeeeeee/transactions",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "groups",
+                "eeeeeeee-0001-0001-0001-eeeeeeeeeeee",
+                "transactions"
+              ]
+            }
           }
         },
         {
           "name": "List Group Transactions",
           "request": {
             "method": "GET",
-            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
-            "url": { "raw": "{{base_url}}/groups/eeeeeeee-0001-0001-0001-eeeeeeeeeeee/transactions", "host": ["{{base_url}}"], "path": ["groups", "eeeeeeee-0001-0001-0001-eeeeeeeeeeee", "transactions"] }
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/groups/eeeeeeee-0001-0001-0001-eeeeeeeeeeee/transactions",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "groups",
+                "eeeeeeee-0001-0001-0001-eeeeeeeeeeee",
+                "transactions"
+              ]
+            }
           }
         },
         {
           "name": "Get Group Transaction",
           "request": {
             "method": "GET",
-            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
-            "url": { "raw": "{{base_url}}/groups/eeeeeeee-0001-0001-0001-eeeeeeeeeeee/transactions/b1000001-0000-0000-0000-000000000000", "host": ["{{base_url}}"], "path": ["groups", "eeeeeeee-0001-0001-0001-eeeeeeeeeeee", "transactions", "b1000001-0000-0000-0000-000000000000"] }
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/groups/eeeeeeee-0001-0001-0001-eeeeeeeeeeee/transactions/b1000001-0000-0000-0000-000000000000",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "groups",
+                "eeeeeeee-0001-0001-0001-eeeeeeeeeeee",
+                "transactions",
+                "b1000001-0000-0000-0000-000000000000"
+              ]
+            }
           }
         },
         {
@@ -668,22 +1418,55 @@
           "request": {
             "method": "PATCH",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{token}}" },
-              { "key": "Content-Type", "value": "application/json" }
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
             ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"category\": \"groceries\",\n  \"description\": \"Updated description\",\n  \"notes\": \"Some note\"\n}"
             },
-            "url": { "raw": "{{base_url}}/groups/eeeeeeee-0001-0001-0001-eeeeeeeeeeee/transactions/b1000001-0000-0000-0000-000000000000", "host": ["{{base_url}}"], "path": ["groups", "eeeeeeee-0001-0001-0001-eeeeeeeeeeee", "transactions", "b1000001-0000-0000-0000-000000000000"] }
+            "url": {
+              "raw": "{{base_url}}/groups/eeeeeeee-0001-0001-0001-eeeeeeeeeeee/transactions/b1000001-0000-0000-0000-000000000000",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "groups",
+                "eeeeeeee-0001-0001-0001-eeeeeeeeeeee",
+                "transactions",
+                "b1000001-0000-0000-0000-000000000000"
+              ]
+            }
           }
         },
         {
           "name": "Delete Group Transaction",
           "request": {
             "method": "DELETE",
-            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
-            "url": { "raw": "{{base_url}}/groups/eeeeeeee-0001-0001-0001-eeeeeeeeeeee/transactions/b1000001-0000-0000-0000-000000000000", "host": ["{{base_url}}"], "path": ["groups", "eeeeeeee-0001-0001-0001-eeeeeeeeeeee", "transactions", "b1000001-0000-0000-0000-000000000000"] }
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/groups/eeeeeeee-0001-0001-0001-eeeeeeeeeeee/transactions/b1000001-0000-0000-0000-000000000000",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "groups",
+                "eeeeeeee-0001-0001-0001-eeeeeeeeeeee",
+                "transactions",
+                "b1000001-0000-0000-0000-000000000000"
+              ]
+            }
           }
         }
       ]
@@ -692,33 +1475,61 @@
       "name": "Settlements",
       "item": [
         {
-          "name": "Create Settlement (Roommates — Priya pays Ankush)",
+          "name": "Create Settlement (Roommates \u2014 Priya pays Ankush)",
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{token}}" },
-              { "key": "Content-Type", "value": "application/json" }
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
             ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"group_id\": \"eeeeeeee-0001-0001-0001-eeeeeeeeeeee\",\n  \"from_user\": \"bbbbbbbb-0002-0002-0002-bbbbbbbbbbbb\",\n  \"to_user\": \"aaaaaaaa-0001-0001-0001-aaaaaaaaaaaa\",\n  \"amount\": \"800\",\n  \"notes\": \"Settling electricity + wifi\"\n}"
             },
-            "url": { "raw": "{{base_url}}/settlements", "host": ["{{base_url}}"], "path": ["settlements"] }
+            "url": {
+              "raw": "{{base_url}}/settlements",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "settlements"
+              ]
+            }
           }
         },
         {
-          "name": "Create Settlement (Goa Trip — Sara pays Ankush)",
+          "name": "Create Settlement (Goa Trip \u2014 Sara pays Ankush)",
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{token}}" },
-              { "key": "Content-Type", "value": "application/json" }
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
             ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"group_id\": \"ffffffff-0002-0002-0002-ffffffffffff\",\n  \"from_user\": \"dddddddd-0004-0004-0004-dddddddddddd\",\n  \"to_user\": \"aaaaaaaa-0001-0001-0001-aaaaaaaaaaaa\",\n  \"amount\": \"500\",\n  \"notes\": \"Partial hotel payment\"\n}"
             },
-            "url": { "raw": "{{base_url}}/settlements", "host": ["{{base_url}}"], "path": ["settlements"] }
+            "url": {
+              "raw": "{{base_url}}/settlements",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "settlements"
+              ]
+            }
           }
         }
       ]
@@ -731,16 +1542,71 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{token}}" },
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "X-Sync-Version", "value": "1" }
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Sync-Version",
+                "value": "1"
+              }
             ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"sync_session_id\": \"{{sync_session_id}}\"\n}"
             },
-            "url": { "raw": "{{base_url}}/sync/preflight", "host": ["{{base_url}}"], "path": ["sync", "preflight"] }
+            "url": {
+              "raw": "{{base_url}}/sync/preflight",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "sync",
+                "preflight"
+              ]
+            }
           }
+        }
+      ]
+    },
+    {
+      "name": "Admin",
+      "item": [
+        {
+          "name": "Recurring Backfill",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "admin_session={{admin_session}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/admin/recurring/:id/backfill",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "admin",
+                "recurring",
+                ":id",
+                "backfill"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "22222222-0001-0001-0001-222222222222",
+                  "description": "recurring_transactions.id"
+                }
+              ]
+            }
+          },
+          "response": []
         }
       ]
     }

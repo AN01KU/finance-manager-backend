@@ -343,6 +343,15 @@ func nextOccurrence(startDate time.Time, frequency string, dayOfMonth *int, days
 	return &last
 }
 
+// MissedOccurrences returns every date the rule should have fired on or before
+// `today` that hasn't been generated yet (strictly after `lastAdded` when set).
+// All comparisons use `loc`; pass time.UTC when no timezone context is available.
+// This is the exported version of allMissedOccurrences for use by callers outside
+// this package (e.g. the admin backfill endpoint).
+func MissedOccurrences(startDate time.Time, frequency string, dayOfMonth *int, daysOfWeek []int, lastAdded *time.Time, today time.Time, loc *time.Location) []time.Time {
+	return allMissedOccurrences(startDate, frequency, dayOfMonth, daysOfWeek, lastAdded, today, loc)
+}
+
 // NextFutureOccurrence returns the next occurrence strictly after `today` in
 // the given timezone. Used for the API response's next_occurrence field.
 // Pass time.UTC when the caller has no timezone context.

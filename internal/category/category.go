@@ -58,6 +58,11 @@ func IsValidIconKey(key string) bool {
 	return ok
 }
 
+// IsValidHexColor reports whether s is a valid #RRGGBB hex colour string.
+func IsValidHexColor(s string) bool {
+	return hexColorRegex.MatchString(s)
+}
+
 // ValidIconKeys returns a sorted slice of every valid icon key. Useful for
 // rendering admin <select> pickers.
 func ValidIconKeys() []string {

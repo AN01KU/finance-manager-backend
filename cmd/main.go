@@ -148,17 +148,6 @@ func main() {
 	// Public predefined categories list (no auth, no sync guard).
 	r.GET("/predefined-categories", func(c *gin.Context) { category.GetPredefinedCategoriesHandler(c, database) })
 
-	// Admin JSON API for predefined categories — protected by the admin
-	// cookie session (same auth as the HTML admin panel).
-	adminAPI := r.Group("/admin")
-	adminAPI.Use(adminPanel.JSONAuthMiddleware())
-	{
-		adminAPI.GET("/predefined-categories", func(c *gin.Context) { category.AdminListPredefined(c, database) })
-		adminAPI.POST("/predefined-categories", func(c *gin.Context) { category.AdminCreatePredefined(c, database) })
-		adminAPI.PATCH("/predefined-categories/:id", func(c *gin.Context) { category.AdminUpdatePredefined(c, database) })
-		adminAPI.DELETE("/predefined-categories/:id", func(c *gin.Context) { category.AdminDeletePredefined(c, database) })
-	}
-
 	// Email client (optional — disabled if RESEND_API_KEY is empty)
 	emailClient := email.New(cfg.ResendAPIKey, cfg.FromEmail)
 	if emailClient.Enabled() {
