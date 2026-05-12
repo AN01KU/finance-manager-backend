@@ -553,24 +553,26 @@ func UpdateGroupTransaction(c *gin.Context, database *db.DB) {
 		return
 	}
 
-	isMember, err := helpers.IsGroupMember(c.Request.Context(), database, groupID, userID)
-	if err != nil || !isMember {
-		c.JSON(403, gin.H{"error": "not a member of the group"})
-		return
-	}
-
-	// Only the payer can update
-	var paidByUserID uuid.UUID
+	// Authorization: anyone involved (payer OR any split member) can update.
+	// This matches Delete semantics and prevents "immortal transaction" where
+	// the original payer leaves the group.
+	var currentPaidByUserID uuid.UUID
+	var isInvolved bool
 	err = database.Pool.QueryRow(c.Request.Context(),
-		`SELECT paid_by_user_id FROM group_transactions WHERE id = $1 AND group_id = $2`,
-		txID, groupID,
-	).Scan(&paidByUserID)
+		`SELECT gt.paid_by_user_id,
+		        gt.paid_by_user_id = $3
+		        OR EXISTS (SELECT 1 FROM group_transaction_splits s
+		                   WHERE s.group_transaction_id = gt.id AND s.user_id = $3) AS involved
+		 FROM group_transactions gt
+		 WHERE gt.id = $1 AND gt.group_id = $2 AND gt.is_deleted = FALSE`,
+		txID, groupID, userID,
+	).Scan(&currentPaidByUserID, &isInvolved)
 	if err != nil {
 		c.JSON(404, gin.H{"error": "group transaction not found"})
 		return
 	}
-	if paidByUserID != userID {
-		c.JSON(403, gin.H{"error": "only the payer can update this transaction"})
+	if !isInvolved {
+		c.JSON(403, gin.H{"error": "only the payer or someone in the splits can update this transaction"})
 		return
 	}
 
@@ -585,15 +587,42 @@ func UpdateGroupTransaction(c *gin.Context, database *db.DB) {
 		return
 	}
 
-	gtQuery := `UPDATE group_transactions SET updated_at = NOW()`
-	args := []interface{}{}
-	n := 1
+	// LWW: client may supply the version timestamp it's editing from.
+	updatedAt := time.Now()
+	if req.UpdatedAt != nil {
+		updatedAt = time.UnixMilli(*req.UpdatedAt).UTC()
+	}
+
+	// Resolve the effective payer after this update — used for member + currency checks below.
+	effectivePayer := currentPaidByUserID
+	if req.PaidByUserID != nil {
+		effectivePayer = *req.PaidByUserID
+	}
+
+	gtQuery := `UPDATE group_transactions SET updated_at = $1`
+	args := []interface{}{updatedAt}
+	n := 2 // $1 is updatedAt
 
 	// Track which personal-transaction fields need syncing
 	personalQuery := `UPDATE transactions SET updated_at = NOW()`
 	var personalArgs []interface{}
 	pn := 1
 
+	if req.PaidByUserID != nil {
+		// Validate new payer is a current group member.
+		isMember, err := helpers.IsGroupMember(c.Request.Context(), database, groupID, *req.PaidByUserID)
+		if err != nil {
+			c.JSON(500, gin.H{"error": "failed to validate new payer membership"})
+			return
+		}
+		if !isMember {
+			c.JSON(400, gin.H{"error": "paid_by_user_id is not a member of the group"})
+			return
+		}
+		gtQuery += fmt.Sprintf(", paid_by_user_id = $%d", n)
+		args = append(args, *req.PaidByUserID)
+		n++
+	}
 	if req.Category != nil {
 		resolvedCat, err := helpers.ResolveCategoryKey(c.Request.Context(), database.Pool, userID, *req.Category)
 		if err != nil {
@@ -701,10 +730,9 @@ func UpdateGroupTransaction(c *gin.Context, database *db.DB) {
 			return
 		}
 
-		// Mixed-currency reject on splits change: payer (fixed on update) +
-		// every desired split member must share the same users.currency.
-		// Multi-currency support is R2.
-		ccCheck := append([]uuid.UUID{paidByUserID}, uids...)
+		// Mixed-currency reject: effective payer + all split members must share
+		// the same users.currency. Multi-currency support is R2.
+		ccCheck := append([]uuid.UUID{effectivePayer}, uids...)
 		var distinctCurrencies int
 		if err := database.Pool.QueryRow(c.Request.Context(),
 			`SELECT COUNT(DISTINCT currency) FROM users WHERE id = ANY($1)`,
@@ -717,14 +745,33 @@ func UpdateGroupTransaction(c *gin.Context, database *db.DB) {
 			c.JSON(400, gin.H{"error": "group transaction users have different currencies", "code": "MIXED_CURRENCY_GROUP_TX"})
 			return
 		}
+	} else if req.PaidByUserID != nil {
+		// Payer change without splits: re-check currency against existing split members.
+		var distinctCurrencies int
+		if err := database.Pool.QueryRow(c.Request.Context(),
+			`SELECT COUNT(DISTINCT u.currency)
+			 FROM users u
+			 WHERE u.id = $1
+			    OR u.id IN (SELECT user_id FROM group_transaction_splits WHERE group_transaction_id = $2)`,
+			effectivePayer, txID,
+		).Scan(&distinctCurrencies); err != nil {
+			c.JSON(500, gin.H{"error": "failed to validate currencies"})
+			return
+		}
+		if distinctCurrencies > 1 {
+			c.JSON(400, gin.H{"error": "group transaction users have different currencies", "code": "MIXED_CURRENCY_GROUP_TX"})
+			return
+		}
 	}
 
-	if n == 1 && !hasSplits {
+	if n == 2 && !hasSplits {
 		c.JSON(400, gin.H{"error": "no fields to update"})
 		return
 	}
 
-	gtQuery += fmt.Sprintf(` WHERE id = $%d
+	// LWW guard: reject if server row is newer than client's version.
+	// On conflict: follow-up SELECT distinguishes 404 vs STALE_WRITE.
+	gtQuery += fmt.Sprintf(` WHERE id = $%d AND updated_at <= $1
 		RETURNING id, group_id, paid_by_user_id, total_amount, category, date, description, notes, is_deleted, created_at, updated_at`, n)
 	args = append(args, txID)
 
@@ -741,30 +788,27 @@ func UpdateGroupTransaction(c *gin.Context, database *db.DB) {
 	var gt GroupTransaction
 	var rawDate, rawCreatedAt, rawUpdatedAt time.Time
 
-	if n > 1 {
-		// There are group_transaction fields to update
-		err = dbTx.QueryRow(c.Request.Context(), gtQuery, args...).Scan(
-			&gt.ID, &gt.GroupID, &gt.PaidByUserID, &gt.TotalAmount, &gt.Category, &rawDate,
-			&gt.Description, &gt.Notes, &gt.IsDeleted, &rawCreatedAt, &rawUpdatedAt,
-		)
-		if err != nil {
-			c.JSON(500, gin.H{"error": "failed to update group transaction"})
+	err = dbTx.QueryRow(c.Request.Context(), gtQuery, args...).Scan(
+		&gt.ID, &gt.GroupID, &gt.PaidByUserID, &gt.TotalAmount, &gt.Category, &rawDate,
+		&gt.Description, &gt.Notes, &gt.IsDeleted, &rawCreatedAt, &rawUpdatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			// Distinguish 404 vs stale write via follow-up SELECT.
+			var existingUpdatedAt time.Time
+			lookupErr := database.Pool.QueryRow(c.Request.Context(),
+				`SELECT updated_at FROM group_transactions WHERE id = $1 AND group_id = $2 AND is_deleted = FALSE`,
+				txID, groupID,
+			).Scan(&existingUpdatedAt)
+			if lookupErr == nil && req.UpdatedAt != nil && existingUpdatedAt.After(updatedAt) {
+				c.JSON(409, gin.H{"error": "stale write: a newer version exists on the server", "code": "STALE_WRITE"})
+				return
+			}
+			c.JSON(404, gin.H{"error": "group transaction not found"})
 			return
 		}
-	} else {
-		// Only splits changed, just fetch the current row
-		err = dbTx.QueryRow(c.Request.Context(),
-			`UPDATE group_transactions SET updated_at = NOW() WHERE id = $1
-			 RETURNING id, group_id, paid_by_user_id, total_amount, category, date, description, notes, is_deleted, created_at, updated_at`,
-			txID,
-		).Scan(
-			&gt.ID, &gt.GroupID, &gt.PaidByUserID, &gt.TotalAmount, &gt.Category, &rawDate,
-			&gt.Description, &gt.Notes, &gt.IsDeleted, &rawCreatedAt, &rawUpdatedAt,
-		)
-		if err != nil {
-			c.JSON(500, gin.H{"error": "failed to update group transaction"})
-			return
-		}
+		c.JSON(500, gin.H{"error": "failed to update group transaction"})
+		return
 	}
 	gt.Date = helpers.FromTime(rawDate)
 	gt.CreatedAt = helpers.FromTime(rawCreatedAt)
@@ -780,7 +824,7 @@ func UpdateGroupTransaction(c *gin.Context, database *db.DB) {
 		}
 		gt.Splits = splits
 	} else {
-		// Sync the same field changes to linked personal transactions.
+		// Sync field changes to linked personal transactions.
 		if len(personalArgs) > 1 {
 			if _, err = dbTx.Exec(c.Request.Context(), personalQuery, personalArgs...); err != nil {
 				c.JSON(500, gin.H{"error": "failed to sync personal transactions"})
@@ -788,6 +832,12 @@ func UpdateGroupTransaction(c *gin.Context, database *db.DB) {
 			}
 		}
 	}
+
+	// When paid_by_user_id changes, the old payer's personal expense row (which
+	// is keyed by group_transaction_id but NOT by paid_by_user_id) stays owned
+	// by whoever holds the split for that user. There is no separate "payer
+	// personal tx" — the payer's personal expense is the split row for their
+	// share. No additional sync needed beyond what applySplitsInPlace handles.
 
 	if err := dbTx.Commit(c.Request.Context()); err != nil {
 		c.JSON(500, gin.H{"error": "failed to commit"})

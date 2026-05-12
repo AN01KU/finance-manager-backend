@@ -94,12 +94,16 @@ type CreateGroupTransactionRequest struct {
 }
 
 type UpdateGroupTransactionRequest struct {
-	Category    *string      `json:"category,omitempty" validate:"omitempty,max=100"`
-	Date        *int64       `json:"date,omitempty"`
-	Description *string      `json:"description,omitempty" validate:"omitempty,max=255"`
-	Notes       *string      `json:"notes,omitempty"`
-	TotalAmount *float64     `json:"total_amount,omitempty"`
-	Splits      []SplitInput `json:"splits,omitempty" validate:"omitempty,min=1,dive"`
+	PaidByUserID *uuid.UUID   `json:"paid_by_user_id,omitempty"`
+	Category     *string      `json:"category,omitempty" validate:"omitempty,max=100"`
+	Date         *int64       `json:"date,omitempty"`
+	Description  *string      `json:"description,omitempty" validate:"omitempty,max=255"`
+	Notes        *string      `json:"notes,omitempty"`
+	TotalAmount  *float64     `json:"total_amount,omitempty"`
+	Splits       []SplitInput `json:"splits,omitempty" validate:"omitempty,min=1,dive"`
+	// UpdatedAt is the client-side wall-clock for this version, in epoch ms.
+	// Used as a last-write-wins guard: if the server row is newer, returns 409 STALE_WRITE.
+	UpdatedAt *int64 `json:"updated_at,omitempty"`
 }
 
 type CreateGroupRequest struct {
