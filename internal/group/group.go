@@ -509,7 +509,13 @@ func AddMember(c *gin.Context, database *db.DB) {
 		return
 	}
 	if !exists {
-		c.JSON(404, gin.H{"error": "user not found with this email"})
+		// Anti-enumeration: do not distinguish "no such user" from
+		// "already a member" so a curious member cannot probe whether
+		// arbitrary email addresses have an account on this server.
+		c.JSON(400, gin.H{
+			"error": "could not add member",
+			"code":  "add_member_failed",
+		})
 		return
 	}
 
@@ -519,7 +525,10 @@ func AddMember(c *gin.Context, database *db.DB) {
 		return
 	}
 	if already {
-		c.JSON(400, gin.H{"error": "user already in group"})
+		c.JSON(400, gin.H{
+			"error": "could not add member",
+			"code":  "add_member_failed",
+		})
 		return
 	}
 

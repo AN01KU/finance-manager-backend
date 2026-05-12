@@ -1,10 +1,14 @@
 package group
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"net/http/httptest"
 	"os"
 	"testing"
 
+	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/shopspring/decimal"
@@ -237,4 +241,46 @@ func TestBalanceCalculation(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestAddMember_AntiEnumerationErrorShape verifies that the two failure
+// modes — email is not a registered user, vs email belongs to a user who
+// is already a member — return the same generic 400 error code so a
+// curious member cannot probe whether arbitrary email addresses have an
+// account on this server.
+func TestAddMember_AntiEnumerationErrorShape(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	testDB := setupBalanceTestDB(t)
+	defer testDB.Close()
+
+	creator := createBalanceTestUser(t, testDB, "creator-anti@example.com")
+	already := createBalanceTestUser(t, testDB, "already-anti@example.com")
+	groupID := createBalanceTestGroup(t, testDB, creator)
+	addGroupMember(t, testDB, groupID, already)
+
+	call := func(email string) (int, map[string]interface{}) {
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Set("user_id", creator)
+		c.Params = gin.Params{{Key: "id", Value: groupID.String()}}
+		body, _ := json.Marshal(AddMemberRequest{Email: email})
+		c.Request = httptest.NewRequest("POST",
+			"/groups/"+groupID.String()+"/members", bytes.NewBuffer(body))
+		c.Request.Header.Set("Content-Type", "application/json")
+		AddMember(c, testDB)
+		var resp map[string]interface{}
+		_ = json.Unmarshal(w.Body.Bytes(), &resp)
+		return w.Code, resp
+	}
+
+	statusUnknown, bodyUnknown := call("noone-anti@example.com")
+	statusAlready, bodyAlready := call("already-anti@example.com")
+
+	assert.Equal(t, statusUnknown, statusAlready,
+		"unknown-email and already-member must return the same HTTP status")
+	assert.Equal(t, 400, statusUnknown, "expected anti-enumeration 400")
+	assert.Equal(t, bodyUnknown["code"], bodyAlready["code"],
+		"unknown-email and already-member must return the same error code")
+	assert.Equal(t, "add_member_failed", bodyUnknown["code"],
+		"expected the generic add_member_failed code")
 }
