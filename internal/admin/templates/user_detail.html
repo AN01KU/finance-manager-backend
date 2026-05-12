@@ -14,8 +14,8 @@
         <div class="label">Transactions</div>
     </div>
     <div class="stat-card">
-        <div class="value">{{.User.BudgetCount}}</div>
-        <div class="label">Budgets</div>
+        <div class="value">{{if .User.HasBudget}}Yes{{else}}No{{end}}</div>
+        <div class="label">Budget Set</div>
     </div>
     <div class="stat-card">
         <div class="value">{{.User.GroupCount}}</div>

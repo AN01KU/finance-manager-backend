@@ -1,288 +1,79 @@
 package budget
 
 import (
-	"fmt"
-	"time"
-
 	"github.com/gin-gonic/gin"
 	"github.com/go-playground/validator/v10"
-	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 
 	"github.com/yanonymousV2/finance-manager-backend/internal/db"
-	"github.com/yanonymousV2/finance-manager-backend/internal/helpers"
 	"github.com/yanonymousV2/finance-manager-backend/internal/middleware"
 )
 
 var validate = validator.New()
 
-type MonthlyBudget struct {
-	ID        uuid.UUID           `json:"id"`
-	UserID    uuid.UUID           `json:"user_id"`
-	Year      int                 `json:"year"`
-	Month     int                 `json:"month"`
-	Limit     float64             `json:"limit"`
-	CreatedAt helpers.EpochMillis `json:"created_at"`
-	UpdatedAt helpers.EpochMillis `json:"updated_at"`
+type SetBudgetRequest struct {
+	Limit *float64 `json:"limit" validate:"omitempty,gte=0"`
 }
 
-type CreateBudgetRequest struct {
-	ID    *uuid.UUID `json:"id,omitempty"`
-	Limit float64    `json:"limit" validate:"required"`
-	Month int        `json:"month" validate:"required,min=1,max=12"`
-	Year  int        `json:"year" validate:"required,min=2000,max=2100"`
-}
-
-type UpdateBudgetRequest struct {
-	Limit *float64 `json:"limit,omitempty"`
-	Month *int     `json:"month" validate:"omitempty,min=1,max=12"`
-	Year  *int     `json:"year" validate:"omitempty,min=2000,max=2100"`
-}
-
-// CreateBudget creates or updates the budget for a specific month
-func CreateBudget(c *gin.Context, db *db.DB) {
+// GetBudget returns the user's monthly budget scalar (null if unset).
+func GetBudget(c *gin.Context, database *db.DB) {
 	userID, ok := middleware.RequireUserID(c)
 	if !ok {
 		return
 	}
 
-	var req CreateBudgetRequest
+	var limit *float64
+	var raw *decimal.Decimal
+	if err := database.Pool.QueryRow(c.Request.Context(),
+		`SELECT monthly_budget FROM users WHERE id = $1`, userID,
+	).Scan(&raw); err != nil {
+		c.JSON(500, gin.H{"error": "failed to retrieve budget"})
+		return
+	}
+	if raw != nil {
+		v := raw.InexactFloat64()
+		limit = &v
+	}
+
+	c.JSON(200, gin.H{"limit": limit})
+}
+
+// SetBudget sets or clears the user's monthly budget. Send {"limit": null} to
+// clear it. Requires syncGuard on the route registration.
+func SetBudget(c *gin.Context, database *db.DB) {
+	userID, ok := middleware.RequireUserID(c)
+	if !ok {
+		return
+	}
+
+	var req SetBudgetRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
-
 	if err := validate.Struct(req); err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
 
-	amount := decimal.NewFromFloat(req.Limit)
-
-	if amount.LessThan(decimal.Zero) {
-		c.JSON(400, gin.H{"error": "limit cannot be negative"})
-		return
+	var newLimit *decimal.Decimal
+	if req.Limit != nil {
+		d := decimal.NewFromFloat(*req.Limit)
+		newLimit = &d
 	}
 
-	budgetID := uuid.New()
-	if req.ID != nil {
-		budgetID = *req.ID
-	}
-
-	var budget MonthlyBudget
-	var rawCreatedAt, rawUpdatedAt time.Time
-	err := db.Pool.QueryRow(c.Request.Context(),
-		`INSERT INTO monthly_budgets (id, user_id, budget_limit, month, year, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, NOW())
-		 ON CONFLICT (user_id, month, year)
-		 DO UPDATE SET budget_limit = EXCLUDED.budget_limit, updated_at = NOW()
-		 RETURNING id, user_id, budget_limit, month, year, created_at, updated_at`,
-		budgetID, userID, amount, req.Month, req.Year).Scan(
-		&budget.ID, &budget.UserID, &budget.Limit, &budget.Month, &budget.Year,
-		&rawCreatedAt, &rawUpdatedAt)
-	if err != nil {
+	if _, err := database.Pool.Exec(c.Request.Context(),
+		`UPDATE users SET monthly_budget = $1, updated_at = NOW() WHERE id = $2`,
+		newLimit, userID,
+	); err != nil {
 		c.JSON(500, gin.H{"error": "failed to set budget"})
 		return
 	}
-	budget.CreatedAt = helpers.FromTime(rawCreatedAt)
-	budget.UpdatedAt = helpers.FromTime(rawUpdatedAt)
 
-	c.JSON(200, budget)
-}
-
-// ListBudgets retrieves budgets for a user with optional month/year filtering
-func ListBudgets(c *gin.Context, db *db.DB) {
-	userID, ok := middleware.RequireUserID(c)
-	if !ok {
-		return
+	var out *float64
+	if newLimit != nil {
+		v := newLimit.InexactFloat64()
+		out = &v
 	}
-
-	monthStr := c.Query("month")
-	yearStr := c.Query("year")
-
-	query := `SELECT id, user_id, budget_limit, month, year, created_at, updated_at
-		 FROM monthly_budgets
-		 WHERE user_id = $1`
-	args := []interface{}{userID}
-	argCount := 2
-
-	if monthStr != "" {
-		var month int
-		if _, err := fmt.Sscanf(monthStr, "%d", &month); err != nil || month < 1 || month > 12 {
-			c.JSON(400, gin.H{"error": "invalid month"})
-			return
-		}
-		query += fmt.Sprintf(" AND month = $%d", argCount)
-		args = append(args, month)
-		argCount++
-	}
-
-	if yearStr != "" {
-		var year int
-		if _, err := fmt.Sscanf(yearStr, "%d", &year); err != nil || year < 2000 || year > 2100 {
-			c.JSON(400, gin.H{"error": "invalid year"})
-			return
-		}
-		query += fmt.Sprintf(" AND year = $%d", argCount)
-		args = append(args, year)
-	}
-
-	query += " ORDER BY year DESC, month DESC"
-
-	rows, err := db.Pool.Query(c.Request.Context(), query, args...)
-	if err != nil {
-		c.JSON(500, gin.H{"error": "failed to retrieve budgets"})
-		return
-	}
-	defer rows.Close()
-
-	budgets := []MonthlyBudget{}
-	for rows.Next() {
-		var budget MonthlyBudget
-		var rawCreatedAt, rawUpdatedAt time.Time
-		if err := rows.Scan(&budget.ID, &budget.UserID, &budget.Limit, &budget.Month,
-			&budget.Year, &rawCreatedAt, &rawUpdatedAt); err != nil {
-			c.JSON(500, gin.H{"error": "failed to scan budget"})
-			return
-		}
-		budget.CreatedAt = helpers.FromTime(rawCreatedAt)
-		budget.UpdatedAt = helpers.FromTime(rawUpdatedAt)
-		budgets = append(budgets, budget)
-	}
-	if err := rows.Err(); err != nil {
-		c.JSON(500, gin.H{"error": "database iteration failed"})
-		return
-	}
-
-	c.JSON(200, gin.H{"data": budgets})
-}
-
-// UpdateBudget partially updates a budget by ID
-func UpdateBudget(c *gin.Context, db *db.DB) {
-	userID, ok := middleware.RequireUserID(c)
-	if !ok {
-		return
-	}
-
-	budgetIDStr := c.Param("id")
-	budgetID, err := uuid.Parse(budgetIDStr)
-	if err != nil {
-		c.JSON(400, gin.H{"error": "invalid budget id"})
-		return
-	}
-
-	var req UpdateBudgetRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(400, gin.H{"error": err.Error()})
-		return
-	}
-
-	if err := validate.Struct(req); err != nil {
-		c.JSON(400, gin.H{"error": err.Error()})
-		return
-	}
-
-	// Parse limit if provided
-	var parsedLimit *decimal.Decimal
-	if req.Limit != nil {
-		limit := decimal.NewFromFloat(*req.Limit)
-		if limit.LessThan(decimal.Zero) {
-			c.JSON(400, gin.H{"error": "limit cannot be negative"})
-			return
-		}
-		parsedLimit = &limit
-	}
-
-	// Check ownership
-	var ownerID uuid.UUID
-	err = db.Pool.QueryRow(c.Request.Context(),
-		`SELECT user_id FROM monthly_budgets WHERE id = $1`, budgetID).Scan(&ownerID)
-	if err != nil {
-		c.JSON(404, gin.H{"error": "budget not found"})
-		return
-	}
-	if ownerID != userID {
-		c.JSON(403, gin.H{"error": "not authorized to update this budget"})
-		return
-	}
-
-	// Build update query dynamically
-	query := `UPDATE monthly_budgets SET updated_at = NOW()`
-	args := []interface{}{}
-	argCount := 1
-
-	if parsedLimit != nil {
-		query += fmt.Sprintf(", budget_limit = $%d", argCount)
-		args = append(args, parsedLimit)
-		argCount++
-	}
-	if req.Month != nil {
-		query += fmt.Sprintf(", month = $%d", argCount)
-		args = append(args, *req.Month)
-		argCount++
-	}
-	if req.Year != nil {
-		query += fmt.Sprintf(", year = $%d", argCount)
-		args = append(args, *req.Year)
-		argCount++
-	}
-
-	if argCount == 1 {
-		c.JSON(400, gin.H{"error": "no fields to update"})
-		return
-	}
-
-	query += fmt.Sprintf(" WHERE id = $%d RETURNING id, user_id, budget_limit, month, year, created_at, updated_at", argCount)
-	args = append(args, budgetID)
-
-	var budget MonthlyBudget
-	var rawCreatedAt, rawUpdatedAt time.Time
-	err = db.Pool.QueryRow(c.Request.Context(), query, args...).Scan(
-		&budget.ID, &budget.UserID, &budget.Limit, &budget.Month, &budget.Year,
-		&rawCreatedAt, &rawUpdatedAt)
-	if err != nil {
-		c.JSON(500, gin.H{"error": "failed to update budget"})
-		return
-	}
-	budget.CreatedAt = helpers.FromTime(rawCreatedAt)
-	budget.UpdatedAt = helpers.FromTime(rawUpdatedAt)
-
-	c.JSON(200, budget)
-}
-
-// DeleteBudget deletes a budget by ID
-func DeleteBudget(c *gin.Context, db *db.DB) {
-	userID, ok := middleware.RequireUserID(c)
-	if !ok {
-		return
-	}
-
-	budgetIDStr := c.Param("id")
-	budgetID, err := uuid.Parse(budgetIDStr)
-	if err != nil {
-		c.JSON(400, gin.H{"error": "invalid budget id"})
-		return
-	}
-
-	// Check ownership
-	var ownerID uuid.UUID
-	err = db.Pool.QueryRow(c.Request.Context(),
-		`SELECT user_id FROM monthly_budgets WHERE id = $1`, budgetID).Scan(&ownerID)
-	if err != nil {
-		c.JSON(404, gin.H{"error": "budget not found"})
-		return
-	}
-	if ownerID != userID {
-		c.JSON(403, gin.H{"error": "not authorized to delete this budget"})
-		return
-	}
-
-	_, err = db.Pool.Exec(c.Request.Context(),
-		`DELETE FROM monthly_budgets WHERE id = $1`, budgetID)
-	if err != nil {
-		c.JSON(500, gin.H{"error": "failed to delete budget"})
-		return
-	}
-
-	c.JSON(200, gin.H{"message": "budget deleted successfully"})
+	c.JSON(200, gin.H{"limit": out})
 }

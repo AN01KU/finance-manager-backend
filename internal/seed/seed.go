@@ -156,30 +156,12 @@ func Seed(ctx context.Context, database *db.DB) error {
 	}
 	log.Println("[seed] ✓ Categories")
 
-	// ── Budgets (Ankush) ───────────────────────────────────────────────────────
-	prevMonth := int(now.Month()) - 1
-	prevYear := now.Year()
-	if prevMonth == 0 {
-		prevMonth = 12
-		prevYear--
+	// ── Budget (Ankush) ────────────────────────────────────────────────────────
+	if _, err := database.Pool.Exec(ctx,
+		`UPDATE users SET monthly_budget = 30000.00 WHERE id = $1`, UserAnkushID); err != nil {
+		return fmt.Errorf("set budget: %w", err)
 	}
-
-	for _, b := range []struct {
-		year, month int
-		limit       float64
-	}{
-		{now.Year(), int(now.Month()), 30000.00},
-		{prevYear, prevMonth, 25000.00},
-	} {
-		if _, err := database.Pool.Exec(ctx,
-			`INSERT INTO monthly_budgets (user_id, year, month, budget_limit)
-			 VALUES ($1, $2, $3, $4)
-			 ON CONFLICT (user_id, year, month) DO NOTHING`,
-			UserAnkushID, b.year, b.month, b.limit); err != nil {
-			return fmt.Errorf("insert budget: %w", err)
-		}
-	}
-	log.Println("[seed] ✓ Budgets")
+	log.Println("[seed] ✓ Budget")
 
 	// ── Recurring transactions (Ankush) ────────────────────────────────────────
 	recs := []struct {
@@ -515,7 +497,6 @@ func Cleanup(ctx context.Context, database *db.DB) {
 		fmt.Sprintf(`DELETE FROM group_members WHERE group_id IN (%s)`, joinStrings(groupIDStrs)),
 		fmt.Sprintf(`DELETE FROM groups WHERE id IN (%s)`, joinStrings(groupIDStrs)),
 		fmt.Sprintf(`DELETE FROM recurring_transactions WHERE user_id IN (%s)`, joinStrings(userIDStrs)),
-		fmt.Sprintf(`DELETE FROM monthly_budgets WHERE user_id IN (%s)`, joinStrings(userIDStrs)),
 		fmt.Sprintf(`DELETE FROM custom_categories WHERE user_id IN (%s)`, joinStrings(userIDStrs)),
 		fmt.Sprintf(`DELETE FROM sync_sessions WHERE user_id IN (%s)`, joinStrings(userIDStrs)),
 		fmt.Sprintf(`DELETE FROM users WHERE id IN (%s)`, joinStrings(userIDStrs)),

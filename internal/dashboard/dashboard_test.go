@@ -29,7 +29,7 @@ func setupDashboardTestDB(t *testing.T) *db.DB {
 	require.NoError(t, err)
 
 	_, err = pool.Exec(context.Background(),
-		"TRUNCATE users, groups, group_members, group_transactions, group_transaction_splits, settlements, transactions, monthly_budgets CASCADE")
+		"TRUNCATE users, groups, group_members, group_transactions, group_transaction_splits, settlements, transactions CASCADE")
 	require.NoError(t, err)
 
 	return &db.DB{Pool: pool}

@@ -217,11 +217,9 @@ func main() {
 		protected.PATCH("/recurring-transactions/:id", syncGuard, func(c *gin.Context) { recurring.UpdateRecurringTransaction(c, database) })
 		protected.DELETE("/recurring-transactions/:id", syncGuard, func(c *gin.Context) { recurring.DeleteRecurringTransaction(c, database) })
 
-		// Budgets
-		protected.POST("/budgets", syncGuard, func(c *gin.Context) { budget.CreateBudget(c, database) })
-		protected.GET("/budgets", func(c *gin.Context) { budget.ListBudgets(c, database) })
-		protected.PATCH("/budgets/:id", syncGuard, func(c *gin.Context) { budget.UpdateBudget(c, database) })
-		protected.DELETE("/budgets/:id", syncGuard, func(c *gin.Context) { budget.DeleteBudget(c, database) })
+		// Budget (per-user scalar)
+		protected.GET("/me/budget", func(c *gin.Context) { budget.GetBudget(c, database) })
+		protected.PUT("/me/budget", syncGuard, func(c *gin.Context) { budget.SetBudget(c, database) })
 
 		// Categories
 		protected.POST("/categories", syncGuard, func(c *gin.Context) { category.CreateCategory(c, database) })

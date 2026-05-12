@@ -468,7 +468,7 @@ type userDetailRow struct {
 	Email          string
 	Username       string
 	TxCount        int64
-	BudgetCount    int64
+	HasBudget      bool
 	GroupCount     int64
 	RecurringCount int64
 	CreatedAt      string
@@ -525,12 +525,12 @@ func (a *Admin) userDetail(c *gin.Context) {
 	err := a.pool.QueryRow(c.Request.Context(),
 		`SELECT u.id, u.email, u.username, u.created_at,
 		        (SELECT COUNT(*) FROM transactions WHERE user_id = u.id AND is_deleted = FALSE),
-		        (SELECT COUNT(*) FROM monthly_budgets WHERE user_id = u.id),
+		        u.monthly_budget IS NOT NULL,
 		        (SELECT COUNT(*) FROM group_members WHERE user_id = u.id),
 		        (SELECT COUNT(*) FROM recurring_transactions WHERE user_id = u.id)
 		 FROM users u WHERE u.id = $1`, uid).Scan(
 		&id, &u.Email, &u.Username, &createdAt,
-		&u.TxCount, &u.BudgetCount, &u.GroupCount, &u.RecurringCount)
+		&u.TxCount, &u.HasBudget, &u.GroupCount, &u.RecurringCount)
 	if err != nil {
 		c.Redirect(http.StatusFound, "/admin/users")
 		return

@@ -41,7 +41,7 @@ func New(pool *pgxpool.Pool, jwtSecret string) *Portal {
 	dir := filepath.Join("internal", "portal", "templates")
 	layout := filepath.Join(dir, "layout.html")
 
-	pages := []string{"dashboard", "transactions", "groups", "group_detail", "categories", "recurring", "budgets", "profile"}
+	pages := []string{"dashboard", "transactions", "groups", "group_detail", "categories", "recurring", "profile"}
 	tmpls := make(map[string]*template.Template, len(pages)+1)
 	for _, page := range pages {
 		tmpls[page] = template.Must(template.ParseFiles(layout, filepath.Join(dir, page+".html")))
@@ -69,7 +69,6 @@ func (p *Portal) RegisterRoutes(r *gin.Engine) {
 		auth.GET("/categories", p.categoriesPage)
 		auth.GET("/category-icons/:key", p.categoryIconServe)
 		auth.GET("/recurring", p.recurringPage)
-		auth.GET("/budgets", p.budgetsPage)
 		auth.GET("/profile", p.profilePage)
 		auth.GET("/logout", p.logout)
 	}
@@ -278,10 +277,11 @@ func (p *Portal) dashboardPage(c *gin.Context) {
 	// Budget
 	var budgetLimit float64
 	hasBudget := false
-	err := p.pool.QueryRow(c.Request.Context(),
-		`SELECT budget_limit FROM monthly_budgets WHERE user_id=$1 AND month=$2 AND year=$3`,
-		u.ID, int(now.Month()), now.Year()).Scan(&budgetLimit)
-	if err == nil {
+	var rawBudget *float64
+	if err := p.pool.QueryRow(c.Request.Context(),
+		`SELECT monthly_budget FROM users WHERE id=$1`, u.ID,
+	).Scan(&rawBudget); err == nil && rawBudget != nil {
+		budgetLimit = *rawBudget
 		hasBudget = true
 	}
 
@@ -983,76 +983,6 @@ func (p *Portal) recurringPage(c *gin.Context) {
 		"Recurring":   recs,
 		"Total":       len(recs),
 		"ActiveCount": activeCount,
-	})
-}
-
-// ── Budgets ───────────────────────────────────────────────────────────────────
-
-type portalBudget struct {
-	MonthName   string
-	Year        int
-	BudgetLimit string
-	Spent       string
-	Remaining   string
-	Pct         int
-	IsOver      bool
-}
-
-func (p *Portal) budgetsPage(c *gin.Context) {
-	u := p.currentUser(c)
-
-	rows, err := p.pool.Query(c.Request.Context(),
-		`SELECT mb.year, mb.month, mb.budget_limit,
-		        COALESCE((SELECT SUM(t.amount) FROM transactions t
-		                  WHERE t.user_id=mb.user_id AND t.type='expense'
-		                    AND EXTRACT(YEAR FROM t.date)=mb.year
-		                    AND EXTRACT(MONTH FROM t.date)=mb.month
-		                    AND t.is_deleted=FALSE), 0) AS spent
-		 FROM monthly_budgets mb
-		 WHERE mb.user_id=$1
-		 ORDER BY mb.year DESC, mb.month DESC`, u.ID)
-	if err != nil {
-		log.Printf("[PORTAL] budgetsPage: %v", err)
-		p.render(c, "budgets", gin.H{"Title": "Budgets", "Active": "budgets"})
-		return
-	}
-	defer rows.Close()
-
-	monthNames := [...]string{"", "January", "February", "March", "April", "May", "June",
-		"July", "August", "September", "October", "November", "December"}
-
-	var budgets []portalBudget
-	for rows.Next() {
-		var year, month int
-		var limit, spent float64
-		if rows.Scan(&year, &month, &limit, &spent) != nil {
-			continue
-		}
-		remaining := limit - spent
-		isOver := spent > limit
-		pct := 0
-		if limit > 0 {
-			p := (spent / limit) * 100
-			if p > 100 {
-				p = 100
-			}
-			pct = int(p)
-		}
-		budgets = append(budgets, portalBudget{
-			MonthName:   monthNames[month],
-			Year:        year,
-			BudgetLimit: fmt.Sprintf("%.2f", limit),
-			Spent:       fmt.Sprintf("%.2f", spent),
-			Remaining:   fmt.Sprintf("%.2f", math.Abs(remaining)),
-			Pct:         pct,
-			IsOver:      isOver,
-		})
-	}
-
-	p.render(c, "budgets", gin.H{
-		"Title":   "Budgets",
-		"Active":  "budgets",
-		"Budgets": budgets,
 	})
 }
 
