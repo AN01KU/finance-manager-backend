@@ -107,7 +107,12 @@ All requests pass through: `RequestLogger → CORS → (JWTAuth on protected rou
 
 ### Intentional Denormalizations
 
-- **`transactions.category`** is a free-text `VARCHAR(100)`, not FK'd to `custom_categories`. This is deliberate: categories are user-customizable labels, and transactions preserve the category name at the time of creation. Renaming a category does not retroactively change historical transactions.
+- **`transactions.category`** (also `recurring_transactions.category`, `group_transactions.category`) is a free-text `VARCHAR(100)`, not FK'd. It stores a **polymorphic key string**, not a display name:
+  - `<predefined_key>` — e.g. `electricity-gas`, `food-dining`. Resolved client-side against the cached predefined list and any user override row.
+  - `cc-<uuid>` — a custom category owned by some user. Resolved client-side against `GET /categories`.
+  - **Never** `oc-<predefined_key>` — overrides are a presentation layer; the txn always stores the underlying predefined key so the row survives override deletion.
+  - No server-side validation (format or existence). The client owns rendering and rename/hide resolution.
+  - Group transactions may carry `cc-<uuid>` keys owned by any group member; cross-user resolution is a client concern — the backend just returns the raw key.
 - **`transactions.group_id`** exists alongside `group_transaction_id`. For group expenses, the group can be derived via `group_transactions.group_id`. However, settlement transactions have a `group_id` but no `group_transaction_id`, so the direct `group_id` column is needed for those. Both columns are nullable and serve different use cases.
 
 ### Authentication
@@ -115,13 +120,16 @@ All requests pass through: `RequestLogger → CORS → (JWTAuth on protected rou
 - JWT claims carry `UserID` (UUID) and `Email`
 - The `middleware/jwt.go` middleware injects the parsed claims into the Gin context
 - Handlers extract the user ID via the context key set by the middleware
+- **Per-user JWT-revocation timestamp**: `users.tokens_invalidated_after`. JWTAuth rejects any token whose `IssuedAt` is not strictly After this column. A small in-process cache (`middleware.JWTRevocationCache`, ~10s TTL) skips the per-request SELECT on the warm path; every code path that bumps the column must call `cache.Invalidate(userID)` to keep freshness.
+- **Single active sync session per user**: a successful login invalidates every prior `sync_sessions` row for that user (`invalidated_at = now()`, `invalidation_reason = 'new_login'`) **and** bumps `tokens_invalidated_after = now() - INTERVAL '1 second'` (the 1-second backwards offset keeps the brand-new JWT alive against its own bump). Net effect: at any moment exactly one device per user can mutate.
+- **Dual invalidation columns must always bump together on security events.** The two columns serve different layers — `users.tokens_invalidated_after` revokes JWTs (read-path enforcement in `JWTAuth`); `sync_sessions.invalidated_at` revokes sync sessions (write-path enforcement in `SyncSessionGuard`). Any new code path that triggers a security event (logout, password change, email change, force-revoke from admin, future password reset) must bump both, otherwise the device retains either read or write capability after the event. See `auth.invalidateJWTs` and `auth.invalidateAllSessions` for the canonical pair.
 
 ### Key Domain Rules
 
 - **Groups**: Creating a group auto-adds the creator as the first member. Group expenses require splits summing to the expense amount.
 - **Categories**: 15 predefined categories are seeded on signup via `SeedPredefinedCategories()`. Custom categories are user-scoped. Both share the `custom_categories` table (`is_predefined` flag distinguishes them).
 - **Recurring transactions**: `last_added_date` tracks when the last transaction instance was generated. Supports both expense and income types. Scheduling logic lives in `recurring/`.
-- **Settlements**: Recorded as `from_user → to_user` payments within a group; affect balance calculations. Creating a settlement also inserts an income transaction for the `to_user`.
+- **Settlements**: Recorded as `from_user → to_user` payments within a group; affect balance calculations. Personal-ledger side-effects are emitted **only for the excess portion** (`amount − max(0, pairwiseDebt)`); pure debt-clearing settlements produce no personal txns. When excess > 0 a **pair** is inserted (`expense` for `from_user` + `income` for `to_user`) linked by `settlement_id`. Inverted-direction settlements (recipient already owes payer) are allowed and book the whole amount as excess. Cross-currency settlements are rejected (`400 MIXED_CURRENCY_SETTLEMENT`). On `DeleteSettlement` the linked pair is **soft-deleted** (1-day undo); on `UpdateSettlement` (amount changed) it is **hard-deleted** and recreated. See [Docs/adr/0002-settlement-excess-only-ledger-model.md](Docs/adr/0002-settlement-excess-only-ledger-model.md).
 
 ### API Response Shape
 

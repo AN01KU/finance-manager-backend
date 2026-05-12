@@ -12,6 +12,12 @@ import (
 // hardDeleteAfterDays controls how long invalidated sync_sessions rows linger
 // before being hard-deleted from the table. Without this the table grows
 // unbounded over time (one row per login event per user, forever).
+//
+// 180 days is a deliberate balance: long enough to debug "why did my session
+// get invalidated last month" from the row's invalidation_reason; short
+// enough that the table stays bounded for an active user (~365 / 180 ≈ 2
+// invalidated-row generations per year per device). No regulatory driver;
+// revisit if a forensic / audit requirement asks for longer retention.
 const hardDeleteAfterDays = 180
 
 // StartSessionCleanup runs a background goroutine that:

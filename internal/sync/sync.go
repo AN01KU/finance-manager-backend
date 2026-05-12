@@ -95,6 +95,15 @@ func ValidateSession(c *gin.Context, database *db.DB, syncSessionID uuid.UUID, j
 // On successful validation, last_seen_at is refreshed so an actively-syncing
 // client never gets expired by the TTL cleanup just because it doesn't call
 // preflight on every batch.
+//
+// **Refresh is write-only:** only routes that flow through SyncSessionGuard
+// (i.e. mutating endpoints) bump last_seen_at. Read-only requests under
+// JWTAuth alone never touch the column. This is intentional for a
+// write-heavy app like ours — a user who is actively recording transactions
+// keeps their session alive without needing a separate heartbeat. A user
+// who is purely browsing does not, and will eventually expire by idle TTL.
+// If pure-reader sessions ever need keep-alive, add a refresh hook to
+// /sync/preflight (already done) or to JWTAuth.
 func SyncSessionGuard(database *db.DB) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		sessionHeader := c.GetHeader("X-Sync-Session-ID")
