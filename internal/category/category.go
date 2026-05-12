@@ -87,19 +87,18 @@ func IconSVG(key string) ([]byte, bool) {
 // either a predefined category (with optional user override applied), or a
 // user's custom category.
 type Category struct {
-	ID            uuid.UUID            `json:"id"`
-	Key           string               `json:"key"`
-	UserID        uuid.UUID            `json:"user_id"`
-	Name          string               `json:"name,omitempty"`
-	Icon          string               `json:"icon,omitempty"`
-	Color         string               `json:"color,omitempty"`
-	IsHidden      bool                 `json:"is_hidden"`
-	IsPredefined  bool                 `json:"is_predefined"`
-	PredefinedKey *string              `json:"predefined_key,omitempty"`
-	IsDeleted     bool                 `json:"is_deleted,omitempty"`
-	DeletedAt     *helpers.EpochMillis `json:"deleted_at,omitempty"`
-	CreatedAt     helpers.EpochMillis  `json:"created_at,omitempty"`
-	UpdatedAt     helpers.EpochMillis  `json:"updated_at,omitempty"`
+	ID            uuid.UUID           `json:"id"`
+	Key           string              `json:"key"`
+	UserID        uuid.UUID           `json:"user_id"`
+	Name          string              `json:"name,omitempty"`
+	Icon          string              `json:"icon,omitempty"`
+	Color         string              `json:"color,omitempty"`
+	IsHidden      bool                `json:"is_hidden"`
+	IsPredefined  bool                `json:"is_predefined"`
+	PredefinedKey *string             `json:"predefined_key,omitempty"`
+	IsDeleted     bool                `json:"is_deleted,omitempty"`
+	CreatedAt     helpers.EpochMillis `json:"created_at,omitempty"`
+	UpdatedAt     helpers.EpochMillis `json:"updated_at,omitempty"`
 }
 
 // PredefinedCategory is the public shape returned by GET /predefined-categories.
@@ -356,10 +355,10 @@ func ListCategories(c *gin.Context, d *db.DB) {
 	}
 
 	rows, err := d.Pool.Query(c.Request.Context(),
-		`SELECT id, key, user_id, name, icon, color, is_hidden, is_predefined, predefined_key, deleted_at, created_at, updated_at
+		`SELECT id, key, user_id, name, icon, color, is_hidden, is_predefined, predefined_key, is_deleted, created_at, updated_at
 		   FROM custom_categories
 		  WHERE user_id = $1
-		    AND deleted_at IS NULL
+		    AND is_deleted = FALSE
 		  ORDER BY created_at ASC`,
 		userID)
 	if err != nil {
@@ -372,19 +371,13 @@ func ListCategories(c *gin.Context, d *db.DB) {
 	for rows.Next() {
 		var cat Category
 		var rawCreatedAt, rawUpdatedAt time.Time
-		var rawDeletedAt *time.Time
 		if err := rows.Scan(&cat.ID, &cat.Key, &cat.UserID, &cat.Name, &cat.Icon, &cat.Color,
-			&cat.IsHidden, &cat.IsPredefined, &cat.PredefinedKey, &rawDeletedAt, &rawCreatedAt, &rawUpdatedAt); err != nil {
+			&cat.IsHidden, &cat.IsPredefined, &cat.PredefinedKey, &cat.IsDeleted, &rawCreatedAt, &rawUpdatedAt); err != nil {
 			c.JSON(500, gin.H{"error": "failed to scan category"})
 			return
 		}
 		cat.CreatedAt = helpers.FromTime(rawCreatedAt)
 		cat.UpdatedAt = helpers.FromTime(rawUpdatedAt)
-		if rawDeletedAt != nil {
-			t := helpers.FromTime(*rawDeletedAt)
-			cat.DeletedAt = &t
-			cat.IsDeleted = true
-		}
 		// Override rows: expose the predefined key so the client can match it back.
 		if cat.IsPredefined && cat.PredefinedKey != nil {
 			cat.Key = *cat.PredefinedKey
@@ -618,7 +611,7 @@ func DeleteCategory(c *gin.Context, d *db.DB) {
 			return
 		}
 		if _, err := tx.Exec(c.Request.Context(),
-			`UPDATE custom_categories SET deleted_at = NOW(), updated_at = NOW() WHERE id = $1`, categoryID); err != nil {
+			`UPDATE custom_categories SET is_deleted = TRUE, updated_at = NOW() WHERE id = $1`, categoryID); err != nil {
 			c.JSON(500, gin.H{"error": "failed to delete category"})
 			return
 		}
@@ -633,7 +626,7 @@ func DeleteCategory(c *gin.Context, d *db.DB) {
 	// Predefined override row — soft-delete so the client gets a tombstone and
 	// knows to revert to the predefined default.
 	if _, err := d.Pool.Exec(c.Request.Context(),
-		`UPDATE custom_categories SET deleted_at = NOW(), updated_at = NOW() WHERE id = $1`, categoryID); err != nil {
+		`UPDATE custom_categories SET is_deleted = TRUE, updated_at = NOW() WHERE id = $1`, categoryID); err != nil {
 		c.JSON(500, gin.H{"error": "failed to reset category"})
 		return
 	}

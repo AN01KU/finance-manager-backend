@@ -46,8 +46,8 @@ func StartSoftDeleteCleanup(ctx context.Context, database *db.DB, tombstoneReten
 func purgeCategoryTombstones(ctx context.Context, database *db.DB, retentionDays int) error {
 	tag, err := database.Pool.Exec(ctx,
 		`DELETE FROM custom_categories
-		 WHERE deleted_at IS NOT NULL
-		   AND deleted_at < NOW() - MAKE_INTERVAL(days => $1)`,
+		 WHERE is_deleted = TRUE
+		   AND updated_at < NOW() - MAKE_INTERVAL(days => $1)`,
 		retentionDays,
 	)
 	if err != nil {

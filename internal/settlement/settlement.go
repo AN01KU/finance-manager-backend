@@ -97,8 +97,8 @@ var validate = validator.New()
 type Settlement struct {
 	ID        uuid.UUID           `json:"id"`
 	GroupID   uuid.UUID           `json:"group_id"`
-	FromUser  uuid.UUID           `json:"from_user"`
-	ToUser    uuid.UUID           `json:"to_user"`
+	FromUser  *uuid.UUID          `json:"from_user"`
+	ToUser    *uuid.UUID          `json:"to_user"`
 	Amount    float64             `json:"amount"`
 	Notes     *string             `json:"notes,omitempty"`
 	IsDeleted bool                `json:"is_deleted"`
@@ -314,7 +314,8 @@ func DeleteSettlement(c *gin.Context, database *db.DB) {
 		return
 	}
 
-	if userID != s.FromUser && userID != s.ToUser {
+	isParty := (s.FromUser != nil && userID == *s.FromUser) || (s.ToUser != nil && userID == *s.ToUser)
+	if !isParty {
 		c.JSON(403, gin.H{"error": "you must be either the payer or the recipient"})
 		return
 	}
@@ -372,7 +373,8 @@ func UpdateSettlement(c *gin.Context, database *db.DB) {
 		return
 	}
 
-	if userID != s.FromUser && userID != s.ToUser {
+	isParty2 := (s.FromUser != nil && userID == *s.FromUser) || (s.ToUser != nil && userID == *s.ToUser)
+	if !isParty2 {
 		c.JSON(403, gin.H{"error": "you must be either the payer or the recipient"})
 		return
 	}
@@ -442,12 +444,18 @@ func UpdateSettlement(c *gin.Context, database *db.DB) {
 	// server-managed and have no externally-referenced IDs — they only ever
 	// existed as a side effect of this settlement.
 	if newAmount != nil {
+		// If either party was deleted (NULL), we can't recompute excess — skip.
+		if s.FromUser == nil || s.ToUser == nil {
+			c.JSON(409, gin.H{"error": "cannot update amount: one or more parties have been deleted"})
+			return
+		}
+
 		// Re-validate currencies in case a party changed users.currency
 		// between create and update — guards the same invariant as Create.
 		var distinctCurrencies int
 		if err := dbTx.QueryRow(c.Request.Context(),
 			`SELECT COUNT(DISTINCT currency) FROM users WHERE id IN ($1, $2)`,
-			s.FromUser, s.ToUser,
+			*s.FromUser, *s.ToUser,
 		).Scan(&distinctCurrencies); err != nil {
 			c.JSON(500, gin.H{"error": "failed to validate currencies"})
 			return
@@ -463,7 +471,7 @@ func UpdateSettlement(c *gin.Context, database *db.DB) {
 			return
 		}
 
-		debt, err := pairwiseDebt(c.Request.Context(), dbTx, s.GroupID, s.FromUser, s.ToUser, &id)
+		debt, err := pairwiseDebt(c.Request.Context(), dbTx, s.GroupID, *s.FromUser, *s.ToUser, &id)
 		if err != nil {
 			c.JSON(500, gin.H{"error": "failed to compute pairwise debt"})
 			return
@@ -473,14 +481,14 @@ func UpdateSettlement(c *gin.Context, database *db.DB) {
 			if _, err = dbTx.Exec(c.Request.Context(),
 				`INSERT INTO transactions (user_id, type, amount, category, date, description, notes, group_id, settlement_id)
 				 VALUES ($1, 'income', $2, 'other', NOW(), $3, $4, $5, $6)`,
-				s.ToUser, excess, "Settlement excess received", s.Notes, s.GroupID, s.ID); err != nil {
+				*s.ToUser, excess, "Settlement excess received", s.Notes, s.GroupID, s.ID); err != nil {
 				c.JSON(500, gin.H{"error": "failed to recreate income transaction for settlement excess"})
 				return
 			}
 			if _, err = dbTx.Exec(c.Request.Context(),
 				`INSERT INTO transactions (user_id, type, amount, category, date, description, notes, group_id, settlement_id)
 				 VALUES ($1, 'expense', $2, 'other', NOW(), $3, $4, $5, $6)`,
-				s.FromUser, excess, "Settlement excess paid", s.Notes, s.GroupID, s.ID); err != nil {
+				*s.FromUser, excess, "Settlement excess paid", s.Notes, s.GroupID, s.ID); err != nil {
 				c.JSON(500, gin.H{"error": "failed to recreate expense transaction for settlement excess"})
 				return
 			}

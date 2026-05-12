@@ -51,7 +51,7 @@ type GroupWithDetails struct {
 type GroupTransaction struct {
 	ID           uuid.UUID           `json:"id"`
 	GroupID      uuid.UUID           `json:"group_id"`
-	PaidByUserID uuid.UUID           `json:"paid_by_user_id"`
+	PaidByUserID *uuid.UUID          `json:"paid_by_user_id"`
 	TotalAmount  float64             `json:"total_amount"`
 	Category     string              `json:"category"`
 	Date         helpers.EpochMillis `json:"date"`
@@ -243,11 +243,15 @@ func GetUserGroups(c *gin.Context, database *db.DB) {
 		return
 	}
 
-	// Fetch balance data: payer side from group_transactions
+	// Fetch balance data: payer side from group_transactions.
+	// IS NOT NULL filter: paid_by_user_id goes NULL when the payer's account is
+	// deleted (ON DELETE SET NULL). Exclude those rows from balance calculations
+	// — the debt can no longer be attributed to an active user.
 	gtRows, err := database.Pool.Query(c.Request.Context(),
 		`SELECT group_id, paid_by_user_id, total_amount
 		 FROM group_transactions
-		 WHERE group_id = ANY($1) AND is_deleted = FALSE`, groupIDs)
+		 WHERE group_id = ANY($1) AND is_deleted = FALSE
+		   AND paid_by_user_id IS NOT NULL`, groupIDs)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "failed to get group transactions"})
 		return
@@ -269,12 +273,14 @@ func GetUserGroups(c *gin.Context, database *db.DB) {
 		return
 	}
 
-	// Fetch split side
+	// Fetch split side. user_id IS NOT NULL: split rows whose owner was deleted
+	// are excluded so their share doesn't distort remaining balances.
 	splitRows, err := database.Pool.Query(c.Request.Context(),
 		`SELECT gts.user_id, gts.amount, gt.group_id
 		 FROM group_transaction_splits gts
 		 JOIN group_transactions gt ON gts.group_transaction_id = gt.id
-		 WHERE gt.group_id = ANY($1) AND gt.is_deleted = FALSE`, groupIDs)
+		 WHERE gt.group_id = ANY($1) AND gt.is_deleted = FALSE
+		   AND gts.user_id IS NOT NULL`, groupIDs)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "failed to get splits"})
 		return
@@ -296,10 +302,12 @@ func GetUserGroups(c *gin.Context, database *db.DB) {
 		return
 	}
 
-	// Fetch settlements
+	// Fetch settlements. Exclude rows where either party was deleted.
 	settRows, err := database.Pool.Query(c.Request.Context(),
 		`SELECT from_user, to_user, amount, group_id
-		 FROM settlements WHERE group_id = ANY($1) AND is_deleted = FALSE`, groupIDs)
+		 FROM settlements
+		 WHERE group_id = ANY($1) AND is_deleted = FALSE
+		   AND from_user IS NOT NULL AND to_user IS NOT NULL`, groupIDs)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "failed to get settlements"})
 		return
@@ -397,14 +405,16 @@ func GetGroup(c *gin.Context, database *db.DB) {
 	}
 
 	// Fetch payer and split data in a single query using UNION ALL.
+	// IS NOT NULL: exclude rows whose user was hard-deleted (ON DELETE SET NULL).
 	balanceRows, err := database.Pool.Query(c.Request.Context(),
 		`SELECT 'payer' AS kind, paid_by_user_id, total_amount
-		   FROM group_transactions WHERE group_id = $1 AND is_deleted = FALSE
+		   FROM group_transactions
+		   WHERE group_id = $1 AND is_deleted = FALSE AND paid_by_user_id IS NOT NULL
 		 UNION ALL
 		 SELECT 'split', gts.user_id, gts.amount
 		   FROM group_transaction_splits gts
 		   JOIN group_transactions gt ON gts.group_transaction_id = gt.id
-		   WHERE gt.group_id = $1 AND gt.is_deleted = FALSE`, groupID)
+		   WHERE gt.group_id = $1 AND gt.is_deleted = FALSE AND gts.user_id IS NOT NULL`, groupID)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "failed to get balance data"})
 		return
@@ -429,7 +439,11 @@ func GetGroup(c *gin.Context, database *db.DB) {
 	}
 
 	settRows, err := database.Pool.Query(c.Request.Context(),
-		`SELECT id, from_user, to_user, amount, notes, created_at FROM settlements WHERE group_id = $1 AND is_deleted = FALSE ORDER BY created_at DESC`, groupID)
+		`SELECT id, from_user, to_user, amount, notes, created_at
+		 FROM settlements
+		 WHERE group_id = $1 AND is_deleted = FALSE
+		   AND from_user IS NOT NULL AND to_user IS NOT NULL
+		 ORDER BY created_at DESC`, groupID)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "failed to get settlements"})
 		return
@@ -438,8 +452,8 @@ func GetGroup(c *gin.Context, database *db.DB) {
 
 	type settlementResponse struct {
 		ID        uuid.UUID           `json:"id"`
-		FromUser  uuid.UUID           `json:"from_user"`
-		ToUser    uuid.UUID           `json:"to_user"`
+		FromUser  *uuid.UUID          `json:"from_user"`
+		ToUser    *uuid.UUID          `json:"to_user"`
 		Amount    float64             `json:"amount"`
 		Notes     *string             `json:"notes,omitempty"`
 		CreatedAt helpers.EpochMillis `json:"created_at"`
@@ -450,12 +464,16 @@ func GetGroup(c *gin.Context, database *db.DB) {
 		var s settlementEntry
 		var sr settlementResponse
 		var rawCreatedAt time.Time
-		if err := settRows.Scan(&sr.ID, &s.from, &s.to, &s.amount, &sr.Notes, &rawCreatedAt); err != nil {
+		if err := settRows.Scan(&sr.ID, &sr.FromUser, &sr.ToUser, &s.amount, &sr.Notes, &rawCreatedAt); err != nil {
 			c.JSON(500, gin.H{"error": "failed to scan settlement"})
 			return
 		}
-		sr.FromUser = s.from
-		sr.ToUser = s.to
+		if sr.FromUser != nil {
+			s.from = *sr.FromUser
+		}
+		if sr.ToUser != nil {
+			s.to = *sr.ToUser
+		}
 		sr.Amount = s.amount.InexactFloat64()
 		sr.CreatedAt = helpers.FromTime(rawCreatedAt)
 		setts = append(setts, s)
@@ -674,7 +692,9 @@ func GetBalances(c *gin.Context, database *db.DB) {
 	}
 
 	settRows, err := database.Pool.Query(c.Request.Context(),
-		"SELECT from_user, to_user, amount FROM settlements WHERE group_id = $1 AND is_deleted = FALSE", groupID)
+		`SELECT from_user, to_user, amount FROM settlements
+		 WHERE group_id = $1 AND is_deleted = FALSE
+		   AND from_user IS NOT NULL AND to_user IS NOT NULL`, groupID)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "failed to get settlements"})
 		return
@@ -739,7 +759,9 @@ func GetGroupSettlements(c *gin.Context, database *db.DB) {
 
 	rows, err := database.Pool.Query(c.Request.Context(),
 		`SELECT id, from_user, to_user, amount, notes, created_at
-		 FROM settlements WHERE group_id = $1 AND is_deleted = FALSE
+		 FROM settlements
+		 WHERE group_id = $1 AND is_deleted = FALSE
+		   AND from_user IS NOT NULL AND to_user IS NOT NULL
 		 ORDER BY created_at DESC LIMIT $2 OFFSET $3`, groupID, limit, offset)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "failed to get settlements"})
@@ -749,8 +771,8 @@ func GetGroupSettlements(c *gin.Context, database *db.DB) {
 
 	type settlementItem struct {
 		ID        uuid.UUID           `json:"id"`
-		FromUser  uuid.UUID           `json:"from_user"`
-		ToUser    uuid.UUID           `json:"to_user"`
+		FromUser  *uuid.UUID          `json:"from_user"`
+		ToUser    *uuid.UUID          `json:"to_user"`
 		Amount    float64             `json:"amount"`
 		Notes     *string             `json:"notes,omitempty"`
 		CreatedAt helpers.EpochMillis `json:"created_at"`
