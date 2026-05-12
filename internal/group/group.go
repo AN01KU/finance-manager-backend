@@ -867,17 +867,27 @@ func RemoveMember(c *gin.Context, database *db.DB) {
 		return
 	}
 
-	// Only the group creator can remove members
+	// Symmetric permission model (matches AddMember): any current member
+	// can remove any other current member, subject to the creator-protection
+	// and zero-balance preconditions below. Restricting removal to the
+	// creator deadlocks group cleanup when the creator goes inactive.
+	callerIsMember, err := helpers.IsGroupMember(c.Request.Context(), database, groupID, userID)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "database error"})
+		return
+	}
+	if !callerIsMember {
+		c.JSON(403, gin.H{"error": "not a member of the group"})
+		return
+	}
+
+	// Look up creator only to enforce the creator-cannot-be-removed rule.
 	var createdBy uuid.UUID
 	err = database.Pool.QueryRow(c.Request.Context(),
 		"SELECT created_by FROM groups WHERE id = $1 AND is_deleted = FALSE", groupID,
 	).Scan(&createdBy)
 	if err != nil {
 		c.JSON(404, gin.H{"error": "group not found"})
-		return
-	}
-	if createdBy != userID {
-		c.JSON(403, gin.H{"error": "only the group creator can remove members"})
 		return
 	}
 

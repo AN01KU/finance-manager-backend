@@ -284,3 +284,107 @@ func TestAddMember_AntiEnumerationErrorShape(t *testing.T) {
 	assert.Equal(t, "add_member_failed", bodyUnknown["code"],
 		"expected the generic add_member_failed code")
 }
+
+// TestRemoveMember_NonCreatorMemberCanRemove verifies the symmetric
+// permission model: any current member can remove any other current
+// member (subject to the zero-balance precondition and the creator
+// protection). Previously only the group creator could remove members,
+// which deadlocks cleanup when the creator goes inactive.
+func TestRemoveMember_NonCreatorMemberCanRemove(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	testDB := setupBalanceTestDB(t)
+	defer testDB.Close()
+
+	creator := createBalanceTestUser(t, testDB, "creator-rm@example.com")
+	memberA := createBalanceTestUser(t, testDB, "membera-rm@example.com")
+	memberB := createBalanceTestUser(t, testDB, "memberb-rm@example.com")
+	groupID := createBalanceTestGroup(t, testDB, creator)
+	addGroupMember(t, testDB, groupID, memberA)
+	addGroupMember(t, testDB, groupID, memberB)
+
+	// memberA (NOT the creator) removes memberB.
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Set("user_id", memberA)
+	c.Params = gin.Params{
+		{Key: "id", Value: groupID.String()},
+		{Key: "userId", Value: memberB.String()},
+	}
+	c.Request = httptest.NewRequest("DELETE",
+		"/groups/"+groupID.String()+"/members/"+memberB.String(), nil)
+	RemoveMember(c, testDB)
+
+	assert.Equal(t, 200, w.Code, "non-creator member must be allowed to remove another member; body=%s", w.Body.String())
+
+	// And memberB is actually gone.
+	stillMember, err := pgxBoolRow(t, testDB,
+		`SELECT EXISTS(SELECT 1 FROM group_members WHERE group_id=$1 AND user_id=$2)`,
+		groupID, memberB)
+	require.NoError(t, err)
+	assert.False(t, stillMember, "memberB should no longer be a member of the group")
+}
+
+// TestRemoveMember_CreatorStillCannotBeRemoved verifies the creator
+// protection survives the symmetric-permission change — any member can
+// remove anyone EXCEPT the creator.
+func TestRemoveMember_CreatorStillCannotBeRemoved(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	testDB := setupBalanceTestDB(t)
+	defer testDB.Close()
+
+	creator := createBalanceTestUser(t, testDB, "creator-rm2@example.com")
+	memberA := createBalanceTestUser(t, testDB, "membera-rm2@example.com")
+	groupID := createBalanceTestGroup(t, testDB, creator)
+	addGroupMember(t, testDB, groupID, memberA)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Set("user_id", memberA)
+	c.Params = gin.Params{
+		{Key: "id", Value: groupID.String()},
+		{Key: "userId", Value: creator.String()},
+	}
+	c.Request = httptest.NewRequest("DELETE",
+		"/groups/"+groupID.String()+"/members/"+creator.String(), nil)
+	RemoveMember(c, testDB)
+
+	assert.Equal(t, 400, w.Code,
+		"removing the creator must still be rejected; body=%s", w.Body.String())
+}
+
+// TestRemoveMember_NonMemberCannotRemove verifies that callers who are
+// not members of the group cannot remove anyone (closes a privilege
+// hole that the symmetric-permission change would otherwise open).
+func TestRemoveMember_NonMemberCannotRemove(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	testDB := setupBalanceTestDB(t)
+	defer testDB.Close()
+
+	creator := createBalanceTestUser(t, testDB, "creator-rm3@example.com")
+	memberA := createBalanceTestUser(t, testDB, "membera-rm3@example.com")
+	outsider := createBalanceTestUser(t, testDB, "outsider-rm3@example.com")
+	groupID := createBalanceTestGroup(t, testDB, creator)
+	addGroupMember(t, testDB, groupID, memberA)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Set("user_id", outsider)
+	c.Params = gin.Params{
+		{Key: "id", Value: groupID.String()},
+		{Key: "userId", Value: memberA.String()},
+	}
+	c.Request = httptest.NewRequest("DELETE",
+		"/groups/"+groupID.String()+"/members/"+memberA.String(), nil)
+	RemoveMember(c, testDB)
+
+	assert.Equal(t, 403, w.Code,
+		"non-member callers must not be able to remove anyone")
+}
+
+// pgxBoolRow runs a SELECT EXISTS-style query and returns the boolean.
+func pgxBoolRow(t *testing.T, testDB *db.DB, q string, args ...interface{}) (bool, error) {
+	t.Helper()
+	var b bool
+	err := testDB.Pool.QueryRow(context.Background(), q, args...).Scan(&b)
+	return b, err
+}
