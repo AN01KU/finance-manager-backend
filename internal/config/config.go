@@ -21,7 +21,7 @@ type Config struct {
 	ResendAPIKey            string
 	FromEmail               string
 	SyncSessionTTLDays      int
-	TombstoneRetentionDays  int
+	TombstoneRetentionDays  int // days to retain soft-deleted category rows before hard-purge
 	DBMaxConns              int32
 	DBMinConns              int32
 	ReminderThresholdAmount float64
