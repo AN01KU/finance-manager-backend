@@ -1,5 +1,21 @@
 {
   "enabledPlugins": {
     "frontend-design@claude-plugins-official": true
+  },
+  "permissions": {
+    "allow": [
+      "Read",
+      "Edit",
+      "Write",
+      "Bash(go build ./...)",
+      "Bash(go build ./... 2>&1)",
+      "Bash(go vet ./...)",
+      "Bash(go vet ./... 2>&1)",
+      "Bash(go test ./internal/middleware/... ./internal/config/... ./internal/recurring/... ./internal/helpers/...)",
+      "Bash(go test ./internal/middleware/... ./internal/config/... ./internal/recurring/... ./internal/helpers/... 2>&1)",
+      "Bash(go test ./...)",
+      "Bash(go test ./... 2>&1)",
+      "Bash(go test ./internal/*)"
+    ]
   }
 }
