@@ -158,7 +158,7 @@ func CreateTransaction(c *gin.Context, database *db.DB) {
 					c.JSON(409, gin.H{"error": "transaction ID conflict with another user", "code": "ID_OWNED_BY_ANOTHER_USER"})
 					return
 				}
-				if existingUpdatedAt.After(updatedAt) {
+				if IsStaleWrite(existingUpdatedAt, updatedAt) {
 					c.JSON(409, gin.H{"error": "stale write: a newer version exists on the server", "code": "STALE_WRITE"})
 					return
 				}
