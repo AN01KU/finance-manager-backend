@@ -77,21 +77,6 @@ func pairwiseDebt(ctx context.Context, q pairwiseQueryable, groupID, fromUser, t
 	return debt, err
 }
 
-// excessOver returns the portion of `amount` that exceeds the existing
-// from→to debt (treating negative debt as zero, since the payer owes nothing
-// and the entire amount is fresh cash flow).
-func excessOver(amount, debt decimal.Decimal) decimal.Decimal {
-	covered := debt
-	if covered.IsNegative() {
-		covered = decimal.Zero
-	}
-	excess := amount.Sub(covered)
-	if excess.IsNegative() {
-		return decimal.Zero
-	}
-	return excess
-}
-
 var validate = validator.New()
 
 type Settlement struct {
@@ -227,19 +212,19 @@ func CreateSettlement(c *gin.Context, db *db.DB) {
 		c.JSON(500, gin.H{"error": "failed to compute pairwise debt"})
 		return
 	}
-	excess := excessOver(amount, debt)
-	if excess.IsPositive() {
+	effect := ComputeSettlementEffect(debt, amount)
+	if effect.Excess.IsPositive() {
 		if _, err = dbTx.Exec(c.Request.Context(),
 			`INSERT INTO transactions (user_id, type, amount, category, date, description, notes, group_id, settlement_id)
 			 VALUES ($1, 'income', $2, 'other', NOW(), $3, $4, $5, $6)`,
-			req.ToUser, excess, "Settlement excess received", req.Notes, groupID, s.ID); err != nil {
+			req.ToUser, effect.Excess, "Settlement excess received", req.Notes, groupID, s.ID); err != nil {
 			c.JSON(500, gin.H{"error": "failed to create income transaction for settlement excess"})
 			return
 		}
 		if _, err = dbTx.Exec(c.Request.Context(),
 			`INSERT INTO transactions (user_id, type, amount, category, date, description, notes, group_id, settlement_id)
 			 VALUES ($1, 'expense', $2, 'other', NOW(), $3, $4, $5, $6)`,
-			req.FromUser, excess, "Settlement excess paid", req.Notes, groupID, s.ID); err != nil {
+			req.FromUser, effect.Excess, "Settlement excess paid", req.Notes, groupID, s.ID); err != nil {
 			c.JSON(500, gin.H{"error": "failed to create expense transaction for settlement excess"})
 			return
 		}
@@ -476,19 +461,19 @@ func UpdateSettlement(c *gin.Context, database *db.DB) {
 			c.JSON(500, gin.H{"error": "failed to compute pairwise debt"})
 			return
 		}
-		excess := excessOver(*newAmount, debt)
-		if excess.IsPositive() {
+		effect := ComputeSettlementEffect(debt, *newAmount)
+		if effect.Excess.IsPositive() {
 			if _, err = dbTx.Exec(c.Request.Context(),
 				`INSERT INTO transactions (user_id, type, amount, category, date, description, notes, group_id, settlement_id)
 				 VALUES ($1, 'income', $2, 'other', NOW(), $3, $4, $5, $6)`,
-				*s.ToUser, excess, "Settlement excess received", s.Notes, s.GroupID, s.ID); err != nil {
+				*s.ToUser, effect.Excess, "Settlement excess received", s.Notes, s.GroupID, s.ID); err != nil {
 				c.JSON(500, gin.H{"error": "failed to recreate income transaction for settlement excess"})
 				return
 			}
 			if _, err = dbTx.Exec(c.Request.Context(),
 				`INSERT INTO transactions (user_id, type, amount, category, date, description, notes, group_id, settlement_id)
 				 VALUES ($1, 'expense', $2, 'other', NOW(), $3, $4, $5, $6)`,
-				*s.FromUser, excess, "Settlement excess paid", s.Notes, s.GroupID, s.ID); err != nil {
+				*s.FromUser, effect.Excess, "Settlement excess paid", s.Notes, s.GroupID, s.ID); err != nil {
 				c.JSON(500, gin.H{"error": "failed to recreate expense transaction for settlement excess"})
 				return
 			}
