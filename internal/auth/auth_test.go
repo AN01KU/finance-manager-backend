@@ -5,40 +5,27 @@ import (
 	"context"
 	"encoding/json"
 	"net/http/httptest"
-	"os"
 	"testing"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/yanonymousV2/finance-manager-backend/internal/db"
 	"github.com/yanonymousV2/finance-manager-backend/internal/middleware"
+	"github.com/yanonymousV2/finance-manager-backend/internal/testutil"
 	"github.com/yanonymousV2/finance-manager-backend/internal/user"
 )
 
 func setupTestDB(t *testing.T) *db.DB {
-	dbURL := os.Getenv("DATABASE_URL")
-	if dbURL == "" {
-		dbURL = "postgres://postgres:postgres@localhost:5432/finance_manager_test?sslmode=disable"
-	}
-
-	err := db.RunMigrations(context.Background(), dbURL, "")
-	require.NoError(t, err)
-
-	pool, err := pgxpool.New(context.Background(), dbURL)
-	require.NoError(t, err)
-
-	// Clean up tables
-	_, err = pool.Exec(context.Background(), "TRUNCATE users CASCADE")
-	require.NoError(t, err)
-
-	return &db.DB{Pool: pool}
+	t.Helper()
+	database := testutil.SetupDB(t)
+	testutil.TruncateUsers(t, database)
+	return database
 }
 
 func TestSignup(t *testing.T) {

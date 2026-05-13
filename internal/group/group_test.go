@@ -5,68 +5,23 @@ import (
 	"context"
 	"encoding/json"
 	"net/http/httptest"
-	"os"
 	"testing"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/yanonymousV2/finance-manager-backend/internal/db"
+	"github.com/yanonymousV2/finance-manager-backend/internal/testutil"
 )
 
 func setupBalanceTestDB(t *testing.T) *db.DB {
-	dbURL := os.Getenv("DATABASE_URL")
-	if dbURL == "" {
-		dbURL = "postgres://postgres:postgres@localhost:5432/finance_manager_test?sslmode=disable"
-	}
-
-	err := db.RunMigrations(context.Background(), dbURL, "")
-	require.NoError(t, err)
-
-	pool, err := pgxpool.New(context.Background(), dbURL)
-	require.NoError(t, err)
-
-	// Clean up tables
-	_, err = pool.Exec(context.Background(), "TRUNCATE users, groups, group_members, group_transactions, group_transaction_splits, settlements CASCADE")
-	require.NoError(t, err)
-
-	return &db.DB{Pool: pool}
-}
-
-func createBalanceTestUser(t *testing.T, testDB *db.DB, email string) uuid.UUID {
-	userID := uuid.New()
-	_, err := testDB.Pool.Exec(context.Background(),
-		"INSERT INTO users (id, email, username, password_hash) VALUES ($1, $2, $3, $4)",
-		userID, email, "testuser", "hashedpassword")
-	require.NoError(t, err)
-	return userID
-}
-
-func createBalanceTestGroup(t *testing.T, testDB *db.DB, creatorID uuid.UUID) uuid.UUID {
-	groupID := uuid.New()
-	_, err := testDB.Pool.Exec(context.Background(),
-		"INSERT INTO groups (id, name, created_by) VALUES ($1, $2, $3)",
-		groupID, "Test Group", creatorID)
-	require.NoError(t, err)
-
-	// Add creator as member
-	_, err = testDB.Pool.Exec(context.Background(),
-		"INSERT INTO group_members (group_id, user_id) VALUES ($1, $2)",
-		groupID, creatorID)
-	require.NoError(t, err)
-
-	return groupID
-}
-
-func addGroupMember(t *testing.T, testDB *db.DB, groupID, userID uuid.UUID) {
-	_, err := testDB.Pool.Exec(context.Background(),
-		"INSERT INTO group_members (group_id, user_id) VALUES ($1, $2)",
-		groupID, userID)
-	require.NoError(t, err)
+	t.Helper()
+	database := testutil.SetupDB(t)
+	testutil.TruncateAll(t, database)
+	return database
 }
 
 func createGroupTx(t *testing.T, testDB *db.DB, groupID, paidBy uuid.UUID, total decimal.Decimal, splits map[uuid.UUID]decimal.Decimal) uuid.UUID {
@@ -86,26 +41,17 @@ func createGroupTx(t *testing.T, testDB *db.DB, groupID, paidBy uuid.UUID, total
 	return gtID
 }
 
-func createSettlement(t *testing.T, testDB *db.DB, groupID, fromUser, toUser uuid.UUID, amount decimal.Decimal) uuid.UUID {
-	settlementID := uuid.New()
-	_, err := testDB.Pool.Exec(context.Background(),
-		"INSERT INTO settlements (id, group_id, from_user, to_user, amount) VALUES ($1, $2, $3, $4, $5)",
-		settlementID, groupID, fromUser, toUser, amount)
-	require.NoError(t, err)
-	return settlementID
-}
-
 func TestBalanceCalculation(t *testing.T) {
 	testDB := setupBalanceTestDB(t)
 	defer testDB.Close()
 
-	userA := createBalanceTestUser(t, testDB, "a@example.com")
-	userB := createBalanceTestUser(t, testDB, "b@example.com")
-	userC := createBalanceTestUser(t, testDB, "c@example.com")
+	userA := testutil.CreateUser(t, testDB, "a@example.com", "usera", "password")
+	userB := testutil.CreateUser(t, testDB, "b@example.com", "userb", "password")
+	userC := testutil.CreateUser(t, testDB, "c@example.com", "userc", "password")
 
-	groupID := createBalanceTestGroup(t, testDB, userA)
-	addGroupMember(t, testDB, groupID, userB)
-	addGroupMember(t, testDB, groupID, userC)
+	groupID := testutil.CreateGroup(t, testDB, "Test Group", userA)
+	testutil.AddGroupMember(t, testDB, groupID, userB)
+	testutil.AddGroupMember(t, testDB, groupID, userC)
 
 	tests := []struct {
 		name     string
@@ -137,7 +83,7 @@ func TestBalanceCalculation(t *testing.T) {
 						userB: decimal.NewFromFloat(20),
 						userC: decimal.NewFromFloat(20),
 					})
-				createSettlement(t, testDB, groupID, userB, userA, decimal.NewFromFloat(20))
+				testutil.CreateSettlement(t, testDB, groupID, userB, userA, decimal.NewFromFloat(20))
 			},
 			expected: map[uuid.UUID]decimal.Decimal{
 				userA: decimal.NewFromFloat(60).Sub(decimal.NewFromFloat(20)).Sub(decimal.NewFromFloat(20)), // 60 - 20 (split) - 20 (received settlement) = 20
@@ -163,7 +109,7 @@ func TestBalanceCalculation(t *testing.T) {
 						userC: decimal.NewFromFloat(20),
 					})
 				// Settlement: C pays A 10
-				createSettlement(t, testDB, groupID, userC, userA, decimal.NewFromFloat(10))
+				testutil.CreateSettlement(t, testDB, groupID, userC, userA, decimal.NewFromFloat(10))
 			},
 			expected: map[uuid.UUID]decimal.Decimal{
 				userA: decimal.NewFromFloat(90).Sub(decimal.NewFromFloat(30)).Sub(decimal.NewFromFloat(20)).Sub(decimal.NewFromFloat(10)), // 90 - 30 (split) - 20 (split) - 10 (received settlement) = 30
@@ -253,10 +199,10 @@ func TestAddMember_AntiEnumerationErrorShape(t *testing.T) {
 	testDB := setupBalanceTestDB(t)
 	defer testDB.Close()
 
-	creator := createBalanceTestUser(t, testDB, "creator-anti@example.com")
-	already := createBalanceTestUser(t, testDB, "already-anti@example.com")
-	groupID := createBalanceTestGroup(t, testDB, creator)
-	addGroupMember(t, testDB, groupID, already)
+	creator := testutil.CreateUser(t, testDB, "creator-anti@example.com", "creator-anti", "password")
+	already := testutil.CreateUser(t, testDB, "already-anti@example.com", "already-anti", "password")
+	groupID := testutil.CreateGroup(t, testDB, "Test Group", creator)
+	testutil.AddGroupMember(t, testDB, groupID, already)
 
 	call := func(email string) (int, map[string]interface{}) {
 		w := httptest.NewRecorder()
@@ -295,12 +241,12 @@ func TestRemoveMember_NonCreatorMemberCanRemove(t *testing.T) {
 	testDB := setupBalanceTestDB(t)
 	defer testDB.Close()
 
-	creator := createBalanceTestUser(t, testDB, "creator-rm@example.com")
-	memberA := createBalanceTestUser(t, testDB, "membera-rm@example.com")
-	memberB := createBalanceTestUser(t, testDB, "memberb-rm@example.com")
-	groupID := createBalanceTestGroup(t, testDB, creator)
-	addGroupMember(t, testDB, groupID, memberA)
-	addGroupMember(t, testDB, groupID, memberB)
+	creator := testutil.CreateUser(t, testDB, "creator-rm@example.com", "creator-rm", "password")
+	memberA := testutil.CreateUser(t, testDB, "membera-rm@example.com", "membera-rm", "password")
+	memberB := testutil.CreateUser(t, testDB, "memberb-rm@example.com", "memberb-rm", "password")
+	groupID := testutil.CreateGroup(t, testDB, "Test Group", creator)
+	testutil.AddGroupMember(t, testDB, groupID, memberA)
+	testutil.AddGroupMember(t, testDB, groupID, memberB)
 
 	// memberA (NOT the creator) removes memberB.
 	w := httptest.NewRecorder()
@@ -332,10 +278,10 @@ func TestRemoveMember_CreatorStillCannotBeRemoved(t *testing.T) {
 	testDB := setupBalanceTestDB(t)
 	defer testDB.Close()
 
-	creator := createBalanceTestUser(t, testDB, "creator-rm2@example.com")
-	memberA := createBalanceTestUser(t, testDB, "membera-rm2@example.com")
-	groupID := createBalanceTestGroup(t, testDB, creator)
-	addGroupMember(t, testDB, groupID, memberA)
+	creator := testutil.CreateUser(t, testDB, "creator-rm2@example.com", "creator-rm2", "password")
+	memberA := testutil.CreateUser(t, testDB, "membera-rm2@example.com", "membera-rm2", "password")
+	groupID := testutil.CreateGroup(t, testDB, "Test Group", creator)
+	testutil.AddGroupMember(t, testDB, groupID, memberA)
 
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
@@ -360,11 +306,11 @@ func TestRemoveMember_NonMemberCannotRemove(t *testing.T) {
 	testDB := setupBalanceTestDB(t)
 	defer testDB.Close()
 
-	creator := createBalanceTestUser(t, testDB, "creator-rm3@example.com")
-	memberA := createBalanceTestUser(t, testDB, "membera-rm3@example.com")
-	outsider := createBalanceTestUser(t, testDB, "outsider-rm3@example.com")
-	groupID := createBalanceTestGroup(t, testDB, creator)
-	addGroupMember(t, testDB, groupID, memberA)
+	creator := testutil.CreateUser(t, testDB, "creator-rm3@example.com", "creator-rm3", "password")
+	memberA := testutil.CreateUser(t, testDB, "membera-rm3@example.com", "membera-rm3", "password")
+	outsider := testutil.CreateUser(t, testDB, "outsider-rm3@example.com", "outsider-rm3", "password")
+	groupID := testutil.CreateGroup(t, testDB, "Test Group", creator)
+	testutil.AddGroupMember(t, testDB, groupID, memberA)
 
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
