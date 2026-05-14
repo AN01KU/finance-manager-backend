@@ -9,9 +9,10 @@ A Go/Gin REST API for personal finance tracking and group expense splitting, bac
 - **Groups** — Create groups, manage members, auto-derive balances from splits + settlements
 - **Settlements** — Record payments between group members; creates an income transaction for the recipient
 - **Categories** — 15 predefined categories seeded on signup + custom user-defined categories
-- **Budgets** — Monthly budgets with upsert semantics
+- **Budgets** — Per-user monthly budget scalar (get/set via `/me/budget`)
 - **Recurring Transactions** — Daily/weekly/monthly/yearly recurring expense and income definitions
 - **Dashboard** — Monthly analytics with daily averages, projections, and category breakdown
+- **User Portal** — Web dashboard at `/dashboard` for browsing transactions, groups, budgets, and profile
 
 ## Prerequisites
 
@@ -332,55 +333,29 @@ Response `200`: `{ "message": "recurring transaction deleted successfully" }`
 
 ### Budgets
 
-#### POST /budgets
+A single monthly budget limit per user, stored on the user record.
 
-Creates or updates the budget for a given month/year. If `id` is provided, the request is idempotent.
-
-```json
-{
-  "id": "optional-client-uuid",
-  "limit": "30000",
-  "month": 3,
-  "year": 2026
-}
-```
-
-Response `200`: Budget object.
-
-#### GET /budgets
-
-Query params: `month` (1–12), `year` (2000–2100)
+#### GET /me/budget
 
 Response `200`:
 ```json
-{
-  "data": [
-    {
-      "id": "...",
-      "user_id": "...",
-      "limit": "30000",
-      "month": 3,
-      "year": 2026,
-      "created_at": 1748736000000,
-      "updated_at": 1748736000000
-    }
-  ]
-}
+{ "limit": 3000.00 }
 ```
 
-#### PATCH /budgets/:id
+`limit` is `null` if no budget has been set.
+
+#### PUT /me/budget
 
 ```json
-{
-  "limit": "35000"
-}
+{ "limit": 3000.00 }
 ```
 
-Response `200`: Updated budget object.
+Send `{ "limit": null }` to clear the budget.
 
-#### DELETE /budgets/:id
-
-Response `200`: `{ "message": "budget deleted successfully" }`
+Response `200`:
+```json
+{ "limit": 3000.00 }
+```
 
 ---
 
@@ -503,7 +478,7 @@ Response `200`:
 }
 ```
 
-`budget`, `remaining_budget`, and `projected_spending` are omitted if no budget is set for the month.
+`budget`, `remaining_budget`, and `projected_spending` are omitted if no budget has been set via `PUT /me/budget`.
 
 ---
 
@@ -735,6 +710,30 @@ Response `200`:
 
 ---
 
+## User Portal
+
+A server-rendered web dashboard is available at `/dashboard`. It is separate from the REST API and uses cookie-based session auth (not JWT headers).
+
+### Routes
+
+| Path | Description |
+|------|-------------|
+| `GET /dashboard/login` | Login page |
+| `POST /dashboard/login` | Submit credentials |
+| `GET /dashboard/` | Overview — monthly spend, budget bar, group balances, recent transactions |
+| `GET /dashboard/transactions` | Paginated transaction list with category/type filters and CSV export |
+| `GET /dashboard/groups` | Group list with net balances |
+| `GET /dashboard/groups/:id` | Group detail — members, transactions, settlements |
+| `GET /dashboard/budgets` | Last 6 months of spending vs. monthly budget limit |
+| `GET /dashboard/recurring` | Recurring transaction definitions with next-fire dates |
+| `GET /dashboard/categories` | Custom and predefined category list |
+| `GET /dashboard/profile` | Account summary and all-time spending breakdown |
+| `GET /dashboard/logout` | Clear session cookie and redirect to login |
+
+The portal uses the same user credentials as the REST API. The session cookie is `HttpOnly`; in production (`GIN_MODE=release`) it is also `Secure`.
+
+---
+
 ## Database Schema
 
 ### users
@@ -786,18 +785,13 @@ Response `200`:
 | `created_at` | TIMESTAMPTZ | |
 | `updated_at` | TIMESTAMPTZ | |
 
-### monthly_budgets
+### users (budget column)
+
+The monthly budget is stored as a single nullable column on the `users` table:
+
 | Column | Type | Notes |
 |--------|------|-------|
-| `id` | UUID | Primary key |
-| `user_id` | UUID | FK → users |
-| `year` | INTEGER | 2000–2100 |
-| `month` | INTEGER | 1–12 |
-| `budget_limit` | DECIMAL(12,2) | ≥ 0; exposed as `limit` in API |
-| `created_at` | TIMESTAMPTZ | |
-| `updated_at` | TIMESTAMPTZ | |
-
-Unique constraint: `(user_id, year, month)`
+| `monthly_budget` | DECIMAL(12,2) | `NULL` if unset; ≥ 0 when set |
 
 ### custom_categories
 | Column | Type | Notes |
@@ -900,15 +894,16 @@ cmd/
   main.go                    Entry point; wires all routes and middleware
 internal/
   auth/                      Signup/login handlers, bcrypt, JWT issuance
-  budget/                    Monthly budget CRUD
+  budget/                    Per-user monthly budget scalar (GET/PUT /me/budget)
   category/                  Predefined + custom categories
   config/                    Env-based config loading
-  dashboard/                 Monthly analytics aggregation
+  dashboard/                 Monthly analytics aggregation (GET /dashboard/monthly)
   db/                        pgx pool setup, golang-migrate runner
   db/migrations/             SQL migration files
   group/                     Group management, member ops, balances, group transactions
   helpers/                   Shared DB utilities and decimal serialization
   middleware/                JWT auth, CORS, rate limiter, request logger
+  portal/                    Server-rendered web dashboard at /dashboard
   recurring/                 Recurring transaction definitions + scheduling
   settlement/                Settlement recording between group members
   seed/                      Test data seeding with auto-cleanup on shutdown

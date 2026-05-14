@@ -69,6 +69,7 @@ func (p *Portal) RegisterRoutes(r *gin.Engine) {
 		auth.GET("/categories", p.categoriesPage)
 		auth.GET("/category-icons/:key", p.categoryIconServe)
 		auth.GET("/recurring", p.recurringPage)
+		auth.GET("/budgets", p.budgetsPage)
 		auth.GET("/profile", p.profilePage)
 		auth.GET("/logout", p.logout)
 	}
@@ -983,6 +984,79 @@ func (p *Portal) recurringPage(c *gin.Context) {
 		"Recurring":   recs,
 		"Total":       len(recs),
 		"ActiveCount": activeCount,
+	})
+}
+
+// ── Budgets ───────────────────────────────────────────────────────────────────
+
+type portalBudgetRow struct {
+	MonthName   string
+	Year        int
+	BudgetLimit string
+	Spent       string
+	Remaining   string
+	Pct         int
+	IsOver      bool
+}
+
+func (p *Portal) budgetsPage(c *gin.Context) {
+	u := p.currentUser(c)
+
+	var rawBudget *float64
+	_ = p.pool.QueryRow(c.Request.Context(),
+		`SELECT monthly_budget FROM users WHERE id=$1`, u.ID,
+	).Scan(&rawBudget)
+
+	if rawBudget == nil {
+		p.render(c, "budgets", gin.H{
+			"Title":          "Budgets",
+			"Active":         "budgets",
+			"CurrencySymbol": u.CurrencySymbol,
+		})
+		return
+	}
+	limit := *rawBudget
+
+	now := time.Now().UTC()
+	var rows []portalBudgetRow
+	for i := 0; i < 6; i++ {
+		t := now.AddDate(0, -i, 0)
+		start := time.Date(t.Year(), t.Month(), 1, 0, 0, 0, 0, time.UTC)
+		end := start.AddDate(0, 1, 0)
+
+		var spent float64
+		_ = p.pool.QueryRow(c.Request.Context(),
+			`SELECT COALESCE(SUM(amount),0) FROM transactions
+			 WHERE user_id=$1 AND type='expense' AND date>=$2 AND date<$3 AND is_deleted=FALSE`,
+			u.ID, start, end,
+		).Scan(&spent)
+
+		remaining := limit - spent
+		isOver := spent > limit
+		pct := 0
+		if limit > 0 {
+			p := (spent / limit) * 100
+			if p > 100 {
+				p = 100
+			}
+			pct = int(p)
+		}
+		rows = append(rows, portalBudgetRow{
+			MonthName:   t.Month().String(),
+			Year:        t.Year(),
+			BudgetLimit: fmt.Sprintf("%.2f", limit),
+			Spent:       fmt.Sprintf("%.2f", spent),
+			Remaining:   fmt.Sprintf("%.2f", remaining),
+			Pct:         pct,
+			IsOver:      isOver,
+		})
+	}
+
+	p.render(c, "budgets", gin.H{
+		"Title":          "Budgets",
+		"Active":         "budgets",
+		"CurrencySymbol": u.CurrencySymbol,
+		"Budgets":        rows,
 	})
 }
 
