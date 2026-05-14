@@ -2,6 +2,7 @@ package settlement
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -15,6 +16,16 @@ import (
 	"github.com/yanonymousV2/finance-manager-backend/internal/helpers"
 	"github.com/yanonymousV2/finance-manager-backend/internal/middleware"
 )
+
+// httpError is a sentinel that carries an HTTP status code and response body
+// through a WithTx closure so the handler can write the correct response after
+// the transaction is rolled back.
+type httpError struct {
+	status int
+	body   gin.H
+}
+
+func (e *httpError) Error() string { return fmt.Sprintf("http %d", e.status) }
 
 // pairwiseQueryable is the subset of pgx that pairwiseDebt needs. Both
 // *pgxpool.Pool and pgx.Tx satisfy it, so the helper can run inside or
@@ -77,28 +88,13 @@ func pairwiseDebt(ctx context.Context, q pairwiseQueryable, groupID, fromUser, t
 	return debt, err
 }
 
-// excessOver returns the portion of `amount` that exceeds the existing
-// from→to debt (treating negative debt as zero, since the payer owes nothing
-// and the entire amount is fresh cash flow).
-func excessOver(amount, debt decimal.Decimal) decimal.Decimal {
-	covered := debt
-	if covered.IsNegative() {
-		covered = decimal.Zero
-	}
-	excess := amount.Sub(covered)
-	if excess.IsNegative() {
-		return decimal.Zero
-	}
-	return excess
-}
-
 var validate = validator.New()
 
 type Settlement struct {
 	ID        uuid.UUID           `json:"id"`
 	GroupID   uuid.UUID           `json:"group_id"`
-	FromUser  uuid.UUID           `json:"from_user"`
-	ToUser    uuid.UUID           `json:"to_user"`
+	FromUser  *uuid.UUID          `json:"from_user"`
+	ToUser    *uuid.UUID          `json:"to_user"`
 	Amount    float64             `json:"amount"`
 	Notes     *string             `json:"notes,omitempty"`
 	IsDeleted bool                `json:"is_deleted"`
@@ -119,7 +115,7 @@ type CreateSettlementRequest struct {
 	Notes    *string   `json:"notes,omitempty"`
 }
 
-func CreateSettlement(c *gin.Context, db *db.DB) {
+func CreateSettlement(c *gin.Context, database *db.DB) {
 	userID, ok := middleware.RequireUserID(c)
 	if !ok {
 		return
@@ -139,19 +135,19 @@ func CreateSettlement(c *gin.Context, db *db.DB) {
 	groupID := req.GroupID
 
 	// Check if user is member of group
-	isMember, err := helpers.IsGroupMember(c.Request.Context(), db, groupID, userID)
+	isMember, err := helpers.IsGroupMember(c.Request.Context(), database, groupID, userID)
 	if err != nil || !isMember {
 		c.JSON(403, gin.H{"error": "not a member of the group"})
 		return
 	}
 
 	// Check from_user and to_user are members
-	isMember, err = helpers.IsGroupMember(c.Request.Context(), db, groupID, req.FromUser)
+	isMember, err = helpers.IsGroupMember(c.Request.Context(), database, groupID, req.FromUser)
 	if err != nil || !isMember {
 		c.JSON(400, gin.H{"error": "from_user is not a member of the group"})
 		return
 	}
-	isMember, err = helpers.IsGroupMember(c.Request.Context(), db, groupID, req.ToUser)
+	isMember, err = helpers.IsGroupMember(c.Request.Context(), database, groupID, req.ToUser)
 	if err != nil || !isMember {
 		c.JSON(400, gin.H{"error": "to_user is not a member of the group"})
 		return
@@ -180,7 +176,7 @@ func CreateSettlement(c *gin.Context, db *db.DB) {
 	// the excess-portion personal txs get booked in arbitrary currencies.
 	// Multi-currency support is R2.
 	var distinctCurrencies int
-	if err := db.Pool.QueryRow(c.Request.Context(),
+	if err := database.Pool.QueryRow(c.Request.Context(),
 		`SELECT COUNT(DISTINCT currency) FROM users WHERE id IN ($1, $2)`,
 		req.FromUser, req.ToUser,
 	).Scan(&distinctCurrencies); err != nil {
@@ -192,61 +188,50 @@ func CreateSettlement(c *gin.Context, db *db.DB) {
 		return
 	}
 
-	// Use a DB transaction so settlement + income transaction are atomic
-	dbTx, err := db.Pool.Begin(c.Request.Context())
-	if err != nil {
-		c.JSON(500, gin.H{"error": "failed to start transaction"})
-		return
-	}
-	defer func() { _ = dbTx.Rollback(c.Request.Context()) }()
-
-	// Insert settlement
+	// Use a DB transaction so settlement + personal transactions are atomic.
 	var s Settlement
 	var rawCreatedAt, rawUpdatedAt time.Time
-	err = dbTx.QueryRow(c.Request.Context(),
-		"INSERT INTO settlements (group_id, from_user, to_user, amount, notes) VALUES ($1, $2, $3, $4, $5) RETURNING id, group_id, from_user, to_user, amount, notes, is_deleted, created_at, updated_at",
-		groupID, req.FromUser, req.ToUser, amount, req.Notes).Scan(&s.ID, &s.GroupID, &s.FromUser, &s.ToUser, &s.Amount, &s.Notes, &s.IsDeleted, &rawCreatedAt, &rawUpdatedAt)
-	if err != nil {
+	if err := db.WithTx(c.Request.Context(), database.Pool, func(dbTx pgx.Tx) error {
+		err = dbTx.QueryRow(c.Request.Context(),
+			"INSERT INTO settlements (group_id, from_user, to_user, amount, notes) VALUES ($1, $2, $3, $4, $5) RETURNING id, group_id, from_user, to_user, amount, notes, is_deleted, created_at, updated_at",
+			groupID, req.FromUser, req.ToUser, amount, req.Notes).Scan(&s.ID, &s.GroupID, &s.FromUser, &s.ToUser, &s.Amount, &s.Notes, &s.IsDeleted, &rawCreatedAt, &rawUpdatedAt)
+		if err != nil {
+			return err
+		}
+		s.CreatedAt = helpers.FromTime(rawCreatedAt)
+		s.UpdatedAt = helpers.FromTime(rawUpdatedAt)
+
+		// Compute pairwise debt BEFORE this settlement and only book the excess
+		// portion as personal transactions. The "covered" portion (≤ existing
+		// debt) is already represented as expense rows in the original group
+		// transactions — booking it again would double-count in dashboards.
+		//
+		//   amount ≤ debt  → no rows (pure debt clearing)
+		//   amount > debt  → expense for from_user / income for to_user, equal
+		//                    to (amount − max(0, debt)). Linked via settlement_id
+		//                    so DeleteSettlement cascades cleanly.
+		debt, err := pairwiseDebt(c.Request.Context(), dbTx, groupID, req.FromUser, req.ToUser, nil)
+		if err != nil {
+			return err
+		}
+		effect := ComputeSettlementEffect(debt, amount)
+		if effect.Excess.IsPositive() {
+			if _, err = dbTx.Exec(c.Request.Context(),
+				`INSERT INTO transactions (user_id, type, amount, category, date, description, notes, group_id, settlement_id)
+				 VALUES ($1, 'income', $2, 'other', NOW(), $3, $4, $5, $6)`,
+				req.ToUser, effect.Excess, "Settlement excess received", req.Notes, groupID, s.ID); err != nil {
+				return err
+			}
+			if _, err = dbTx.Exec(c.Request.Context(),
+				`INSERT INTO transactions (user_id, type, amount, category, date, description, notes, group_id, settlement_id)
+				 VALUES ($1, 'expense', $2, 'other', NOW(), $3, $4, $5, $6)`,
+				req.FromUser, effect.Excess, "Settlement excess paid", req.Notes, groupID, s.ID); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
 		c.JSON(500, gin.H{"error": "failed to create settlement"})
-		return
-	}
-	s.CreatedAt = helpers.FromTime(rawCreatedAt)
-	s.UpdatedAt = helpers.FromTime(rawUpdatedAt)
-
-	// Compute pairwise debt BEFORE this settlement and only book the excess
-	// portion as personal transactions. The "covered" portion (≤ existing
-	// debt) is already represented as expense rows in the original group
-	// transactions — booking it again would double-count in dashboards.
-	//
-	//   amount ≤ debt  → no rows (pure debt clearing)
-	//   amount > debt  → expense for from_user / income for to_user, equal
-	//                    to (amount − max(0, debt)). Linked via settlement_id
-	//                    so DeleteSettlement cascades cleanly.
-	debt, err := pairwiseDebt(c.Request.Context(), dbTx, groupID, req.FromUser, req.ToUser, nil)
-	if err != nil {
-		c.JSON(500, gin.H{"error": "failed to compute pairwise debt"})
-		return
-	}
-	excess := excessOver(amount, debt)
-	if excess.IsPositive() {
-		if _, err = dbTx.Exec(c.Request.Context(),
-			`INSERT INTO transactions (user_id, type, amount, category, date, description, notes, group_id, settlement_id)
-			 VALUES ($1, 'income', $2, 'other', NOW(), $3, $4, $5, $6)`,
-			req.ToUser, excess, "Settlement excess received", req.Notes, groupID, s.ID); err != nil {
-			c.JSON(500, gin.H{"error": "failed to create income transaction for settlement excess"})
-			return
-		}
-		if _, err = dbTx.Exec(c.Request.Context(),
-			`INSERT INTO transactions (user_id, type, amount, category, date, description, notes, group_id, settlement_id)
-			 VALUES ($1, 'expense', $2, 'other', NOW(), $3, $4, $5, $6)`,
-			req.FromUser, excess, "Settlement excess paid", req.Notes, groupID, s.ID); err != nil {
-			c.JSON(500, gin.H{"error": "failed to create expense transaction for settlement excess"})
-			return
-		}
-	}
-
-	if err := dbTx.Commit(c.Request.Context()); err != nil {
-		c.JSON(500, gin.H{"error": "failed to commit"})
 		return
 	}
 
@@ -314,34 +299,22 @@ func DeleteSettlement(c *gin.Context, database *db.DB) {
 		return
 	}
 
-	if userID != s.FromUser && userID != s.ToUser {
+	isParty := (s.FromUser != nil && userID == *s.FromUser) || (s.ToUser != nil && userID == *s.ToUser)
+	if !isParty {
 		c.JSON(403, gin.H{"error": "you must be either the payer or the recipient"})
 		return
 	}
 
-	dbTx, err := database.Pool.Begin(c.Request.Context())
-	if err != nil {
-		c.JSON(500, gin.H{"error": "failed to start transaction"})
-		return
-	}
-	defer func() { _ = dbTx.Rollback(c.Request.Context()) }()
-
-	_, err = dbTx.Exec(c.Request.Context(),
-		`UPDATE transactions SET is_deleted = true, updated_at = NOW() WHERE settlement_id = $1`, id)
-	if err != nil {
-		c.JSON(500, gin.H{"error": "failed to delete linked transactions"})
-		return
-	}
-
-	_, err = dbTx.Exec(c.Request.Context(),
-		`UPDATE settlements SET is_deleted = true, updated_at = NOW() WHERE id = $1`, id)
-	if err != nil {
+	if err := db.WithTx(c.Request.Context(), database.Pool, func(dbTx pgx.Tx) error {
+		if _, err := dbTx.Exec(c.Request.Context(),
+			`UPDATE transactions SET is_deleted = true, updated_at = NOW() WHERE settlement_id = $1`, id); err != nil {
+			return err
+		}
+		_, err := dbTx.Exec(c.Request.Context(),
+			`UPDATE settlements SET is_deleted = true, updated_at = NOW() WHERE id = $1`, id)
+		return err
+	}); err != nil {
 		c.JSON(500, gin.H{"error": "failed to delete settlement"})
-		return
-	}
-
-	if err := dbTx.Commit(c.Request.Context()); err != nil {
-		c.JSON(500, gin.H{"error": "failed to commit"})
 		return
 	}
 
@@ -372,7 +345,8 @@ func UpdateSettlement(c *gin.Context, database *db.DB) {
 		return
 	}
 
-	if userID != s.FromUser && userID != s.ToUser {
+	isParty2 := (s.FromUser != nil && userID == *s.FromUser) || (s.ToUser != nil && userID == *s.ToUser)
+	if !isParty2 {
 		c.JSON(403, gin.H{"error": "you must be either the payer or the recipient"})
 		return
 	}
@@ -419,87 +393,83 @@ func UpdateSettlement(c *gin.Context, database *db.DB) {
 		RETURNING id, group_id, from_user, to_user, amount, notes, is_deleted, created_at, updated_at`, n)
 	args = append(args, id)
 
-	dbTx, err := database.Pool.Begin(c.Request.Context())
-	if err != nil {
-		c.JSON(500, gin.H{"error": "failed to start transaction"})
-		return
-	}
-	defer func() { _ = dbTx.Rollback(c.Request.Context()) }()
-
-	err = dbTx.QueryRow(c.Request.Context(), settleQuery, args...).Scan(
-		&s.ID, &s.GroupID, &s.FromUser, &s.ToUser, &s.Amount, &s.Notes, &s.IsDeleted, &rawCreatedAt, &rawUpdatedAt,
-	)
-	if err != nil {
-		c.JSON(500, gin.H{"error": "failed to update settlement"})
-		return
-	}
-	s.CreatedAt = helpers.FromTime(rawCreatedAt)
-	s.UpdatedAt = helpers.FromTime(rawUpdatedAt)
-
-	// If amount changed, the excess portion may have changed too. Drop any
-	// existing settlement-linked tx pair and recreate it for the new excess.
-	// Hard-DELETE here (instead of soft-delete) because these rows are
-	// server-managed and have no externally-referenced IDs — they only ever
-	// existed as a side effect of this settlement.
-	if newAmount != nil {
-		// Re-validate currencies in case a party changed users.currency
-		// between create and update — guards the same invariant as Create.
-		var distinctCurrencies int
-		if err := dbTx.QueryRow(c.Request.Context(),
-			`SELECT COUNT(DISTINCT currency) FROM users WHERE id IN ($1, $2)`,
-			s.FromUser, s.ToUser,
-		).Scan(&distinctCurrencies); err != nil {
-			c.JSON(500, gin.H{"error": "failed to validate currencies"})
-			return
-		}
-		if distinctCurrencies > 1 {
-			c.JSON(400, gin.H{"error": "settlement parties have different currencies", "code": "MIXED_CURRENCY_SETTLEMENT"})
-			return
-		}
-
-		if _, err = dbTx.Exec(c.Request.Context(),
-			`DELETE FROM transactions WHERE settlement_id = $1`, id); err != nil {
-			c.JSON(500, gin.H{"error": "failed to clear linked transactions"})
-			return
-		}
-
-		debt, err := pairwiseDebt(c.Request.Context(), dbTx, s.GroupID, s.FromUser, s.ToUser, &id)
-		if err != nil {
-			c.JSON(500, gin.H{"error": "failed to compute pairwise debt"})
-			return
-		}
-		excess := excessOver(*newAmount, debt)
-		if excess.IsPositive() {
-			if _, err = dbTx.Exec(c.Request.Context(),
-				`INSERT INTO transactions (user_id, type, amount, category, date, description, notes, group_id, settlement_id)
-				 VALUES ($1, 'income', $2, 'other', NOW(), $3, $4, $5, $6)`,
-				s.ToUser, excess, "Settlement excess received", s.Notes, s.GroupID, s.ID); err != nil {
-				c.JSON(500, gin.H{"error": "failed to recreate income transaction for settlement excess"})
-				return
-			}
-			if _, err = dbTx.Exec(c.Request.Context(),
-				`INSERT INTO transactions (user_id, type, amount, category, date, description, notes, group_id, settlement_id)
-				 VALUES ($1, 'expense', $2, 'other', NOW(), $3, $4, $5, $6)`,
-				s.FromUser, excess, "Settlement excess paid", s.Notes, s.GroupID, s.ID); err != nil {
-				c.JSON(500, gin.H{"error": "failed to recreate expense transaction for settlement excess"})
-				return
-			}
-		}
-	} else if req.Notes != nil {
-		// Amount unchanged but notes changed — sync notes onto whatever
-		// linked rows exist (there will be 0 or 2).
-		if _, err = dbTx.Exec(c.Request.Context(),
-			`UPDATE transactions SET notes = $1, updated_at = NOW()
-			 WHERE settlement_id = $2 AND is_deleted = FALSE`,
-			*req.Notes, id,
+	txErr := db.WithTx(c.Request.Context(), database.Pool, func(dbTx pgx.Tx) error {
+		if err := dbTx.QueryRow(c.Request.Context(), settleQuery, args...).Scan(
+			&s.ID, &s.GroupID, &s.FromUser, &s.ToUser, &s.Amount, &s.Notes, &s.IsDeleted, &rawCreatedAt, &rawUpdatedAt,
 		); err != nil {
-			c.JSON(500, gin.H{"error": "failed to sync linked transactions"})
+			return err
+		}
+		s.CreatedAt = helpers.FromTime(rawCreatedAt)
+		s.UpdatedAt = helpers.FromTime(rawUpdatedAt)
+
+		// If amount changed, the excess portion may have changed too. Drop any
+		// existing settlement-linked tx pair and recreate it for the new excess.
+		// Hard-DELETE here (instead of soft-delete) because these rows are
+		// server-managed and have no externally-referenced IDs — they only ever
+		// existed as a side effect of this settlement.
+		if newAmount != nil {
+			// If either party was deleted (NULL), we can't recompute excess — skip.
+			if s.FromUser == nil || s.ToUser == nil {
+				return &httpError{409, gin.H{"error": "cannot update amount: one or more parties have been deleted"}}
+			}
+
+			// Re-validate currencies in case a party changed users.currency
+			// between create and update — guards the same invariant as Create.
+			var distinctCurrencies int
+			if err := dbTx.QueryRow(c.Request.Context(),
+				`SELECT COUNT(DISTINCT currency) FROM users WHERE id IN ($1, $2)`,
+				*s.FromUser, *s.ToUser,
+			).Scan(&distinctCurrencies); err != nil {
+				return err
+			}
+			if distinctCurrencies > 1 {
+				return &httpError{400, gin.H{"error": "settlement parties have different currencies", "code": "MIXED_CURRENCY_SETTLEMENT"}}
+			}
+
+			if _, err := dbTx.Exec(c.Request.Context(),
+				`DELETE FROM transactions WHERE settlement_id = $1`, id); err != nil {
+				return err
+			}
+
+			debt, err := pairwiseDebt(c.Request.Context(), dbTx, s.GroupID, *s.FromUser, *s.ToUser, &id)
+			if err != nil {
+				return err
+			}
+			effect := ComputeSettlementEffect(debt, *newAmount)
+			if effect.Excess.IsPositive() {
+				if _, err = dbTx.Exec(c.Request.Context(),
+					`INSERT INTO transactions (user_id, type, amount, category, date, description, notes, group_id, settlement_id)
+					 VALUES ($1, 'income', $2, 'other', NOW(), $3, $4, $5, $6)`,
+					*s.ToUser, effect.Excess, "Settlement excess received", s.Notes, s.GroupID, s.ID); err != nil {
+					return err
+				}
+				if _, err = dbTx.Exec(c.Request.Context(),
+					`INSERT INTO transactions (user_id, type, amount, category, date, description, notes, group_id, settlement_id)
+					 VALUES ($1, 'expense', $2, 'other', NOW(), $3, $4, $5, $6)`,
+					*s.FromUser, effect.Excess, "Settlement excess paid", s.Notes, s.GroupID, s.ID); err != nil {
+					return err
+				}
+			}
+		} else if req.Notes != nil {
+			// Amount unchanged but notes changed — sync notes onto whatever
+			// linked rows exist (there will be 0 or 2).
+			if _, err := dbTx.Exec(c.Request.Context(),
+				`UPDATE transactions SET notes = $1, updated_at = NOW()
+				 WHERE settlement_id = $2 AND is_deleted = FALSE`,
+				*req.Notes, id,
+			); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if txErr != nil {
+		var he *httpError
+		if errors.As(txErr, &he) {
+			c.JSON(he.status, he.body)
 			return
 		}
-	}
-
-	if err := dbTx.Commit(c.Request.Context()); err != nil {
-		c.JSON(500, gin.H{"error": "failed to commit"})
+		c.JSON(500, gin.H{"error": "failed to update settlement"})
 		return
 	}
 

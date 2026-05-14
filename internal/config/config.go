@@ -2,7 +2,7 @@ package config
 
 import (
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"strconv"
 	"strings"
@@ -20,8 +20,9 @@ type Config struct {
 	PushyAPIKey             string
 	ResendAPIKey            string
 	FromEmail               string
+	LogLevel                string
 	SyncSessionTTLDays      int
-	TombstoneRetentionDays  int
+	TombstoneRetentionDays  int // days to retain soft-deleted category rows before hard-purge
 	DBMaxConns              int32
 	DBMinConns              int32
 	ReminderThresholdAmount float64
@@ -41,6 +42,7 @@ func Load() *Config {
 		PushyAPIKey:             getEnv("PUSHY_API_KEY", ""),
 		ResendAPIKey:            getEnv("RESEND_API_KEY", ""),
 		FromEmail:               getEnv("FROM_EMAIL", "Finance Manager <noreply@example.com>"),
+		LogLevel:                getEnv("LOG_LEVEL", "info"),
 		SyncSessionTTLDays:      getEnvInt("SYNC_SESSION_TTL_DAYS", 90),
 		TombstoneRetentionDays:  getEnvInt("TOMBSTONE_RETENTION_DAYS", 30),
 		DBMaxConns:              int32(getEnvInt("DB_MAX_CONNS", 25)),
@@ -51,7 +53,8 @@ func Load() *Config {
 
 	// Validate JWT secret strength
 	if len(cfg.JWTSecret) < 32 {
-		log.Fatal("JWT_SECRET must be at least 32 characters long for security")
+		slog.Error("JWT_SECRET must be at least 32 characters long for security")
+		os.Exit(1)
 	}
 
 	return cfg
@@ -63,10 +66,10 @@ func Load() *Config {
 func (c *Config) Validate(ginMode string) error {
 	if ginMode != "release" {
 		if c.CORSOrigin == "*" {
-			log.Println("Warning: CORS_ORIGIN=* — set a specific origin in production")
+			slog.Warn("CORS_ORIGIN=* — set a specific origin in production")
 		}
 		if strings.Contains(c.DBURL, "sslmode=disable") {
-			log.Println("Warning: DATABASE_URL uses sslmode=disable — enable SSL in production")
+			slog.Warn("DATABASE_URL uses sslmode=disable — enable SSL in production")
 		}
 		return nil
 	}
@@ -77,7 +80,7 @@ func (c *Config) Validate(ginMode string) error {
 		errs = append(errs, "CORS_ORIGIN must not be '*' in release mode")
 	}
 	if strings.Contains(c.DBURL, "sslmode=disable") {
-		log.Println("Warning: DATABASE_URL uses sslmode=disable — acceptable for internal/Docker networks, ensure DB is not publicly exposed")
+		slog.Warn("DATABASE_URL uses sslmode=disable — acceptable for internal/Docker networks, ensure DB is not publicly exposed")
 	}
 	if c.AdminPassword == "" {
 		errs = append(errs, "ADMIN_PASSWORD must be set when admin is enabled in release mode")
@@ -100,7 +103,7 @@ func getEnvInt(key string, defaultValue int) int {
 		if n, err := strconv.Atoi(value); err == nil {
 			return n
 		}
-		log.Printf("Warning: invalid integer for %s, using default %d", key, defaultValue)
+		slog.Warn("invalid integer env var, using default", "key", key, "default", defaultValue)
 	}
 	return defaultValue
 }
@@ -110,7 +113,7 @@ func getEnvFloat(key string, defaultValue float64) float64 {
 		if f, err := strconv.ParseFloat(value, 64); err == nil {
 			return f
 		}
-		log.Printf("Warning: invalid float for %s, using default %g", key, defaultValue)
+		slog.Warn("invalid float env var, using default", "key", key, "default", defaultValue)
 	}
 	return defaultValue
 }
@@ -118,7 +121,8 @@ func getEnvFloat(key string, defaultValue float64) float64 {
 func getEnvRequired(key string) string {
 	value := os.Getenv(key)
 	if value == "" {
-		log.Fatalf("%s environment variable is required", key)
+		slog.Error("required environment variable not set", "key", key)
+		os.Exit(1)
 	}
 	return value
 }

@@ -3,13 +3,13 @@ package transaction
 import (
 	"encoding/csv"
 	"io"
-	"log"
 	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/shopspring/decimal"
 
+	"github.com/yanonymousV2/finance-manager-backend/internal/applog"
 	"github.com/yanonymousV2/finance-manager-backend/internal/db"
 	"github.com/yanonymousV2/finance-manager-backend/internal/middleware"
 )
@@ -104,7 +104,7 @@ func ExportTransactionsCSV(c *gin.Context, database *db.DB) {
 
 	rows, err := database.Pool.Query(c.Request.Context(), query, args...)
 	if err != nil {
-		log.Printf("[ERROR] ExportTransactionsCSV query: %v", err)
+		applog.From(c).Error("export transactions query failed", applog.KeyError, err)
 		c.JSON(500, gin.H{"error": "failed to export transactions"})
 		return
 	}
@@ -122,7 +122,7 @@ func ExportTransactionsCSV(c *gin.Context, database *db.DB) {
 		var description, notes, groupName *string
 
 		if err := rows.Scan(&txType, &amount, &category, &date, &description, &notes, &groupName); err != nil {
-			log.Printf("[ERROR] ExportTransactionsCSV scan: %v", err)
+			applog.From(c).Error("export transactions scan failed", applog.KeyError, err)
 			return
 		}
 
@@ -135,12 +135,12 @@ func ExportTransactionsCSV(c *gin.Context, database *db.DB) {
 			Notes:       notes,
 			GroupName:   groupName,
 		}); err != nil {
-			log.Printf("[ERROR] ExportTransactionsCSV write: %v", err)
+			applog.From(c).Error("export transactions write failed", applog.KeyError, err)
 			return
 		}
 	}
 
 	if err := rows.Err(); err != nil {
-		log.Printf("[ERROR] ExportTransactionsCSV rows: %v", err)
+		applog.From(c).Error("export transactions rows iteration failed", applog.KeyError, err)
 	}
 }

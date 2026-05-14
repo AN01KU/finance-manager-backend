@@ -106,6 +106,19 @@ func CreateRecurringTransaction(c *gin.Context, db *db.DB) {
 		}
 	}
 
+	// Silently clear fields that don't apply to the chosen frequency so the DB
+	// never holds stale day_of_month / days_of_week values that confuse the
+	// scheduling logic on future reads.
+	switch req.Frequency {
+	case "daily", "yearly":
+		req.DayOfMonth = nil
+		req.DaysOfWeek = nil
+	case "weekly":
+		req.DayOfMonth = nil
+	case "monthly":
+		req.DaysOfWeek = nil
+	}
+
 	if req.EndDate != nil && *req.EndDate <= req.StartDate {
 		c.JSON(400, gin.H{"error": "end_date must be after start_date"})
 		return
@@ -201,7 +214,8 @@ func CreateRecurringTransaction(c *gin.Context, db *db.DB) {
 	rt.LastAddedDate = helpers.FromTimePtr(rawLastAddedDate)
 	rt.CreatedAt = helpers.FromTime(rawCreatedAt)
 	rt.UpdatedAt = helpers.FromTime(rawUpdatedAt)
-	rt.NextOccurrence = computeNextOccurrence(&rt)
+	loc, _ := loadUserTimezone(c.Request.Context(), db, userID)
+	rt.NextOccurrence = computeNextOccurrence(&rt, loc)
 
 	c.JSON(201, rt)
 }
@@ -244,6 +258,8 @@ func ListRecurringTransactions(c *gin.Context, db *db.DB) {
 	}
 	defer rows.Close()
 
+	loc, _ := loadUserTimezone(c.Request.Context(), db, userID)
+
 	var transactions []RecurringTransaction
 	var total int
 	for rows.Next() {
@@ -262,7 +278,7 @@ func ListRecurringTransactions(c *gin.Context, db *db.DB) {
 		rt.LastAddedDate = helpers.FromTimePtr(rawLastAddedDate)
 		rt.CreatedAt = helpers.FromTime(rawCreatedAt)
 		rt.UpdatedAt = helpers.FromTime(rawUpdatedAt)
-		rt.NextOccurrence = computeNextOccurrence(&rt)
+		rt.NextOccurrence = computeNextOccurrence(&rt, loc)
 		transactions = append(transactions, rt)
 	}
 	if err := rows.Err(); err != nil {
@@ -316,7 +332,8 @@ func GetRecurringTransaction(c *gin.Context, db *db.DB) {
 	rt.LastAddedDate = helpers.FromTimePtr(rawLastAddedDate)
 	rt.CreatedAt = helpers.FromTime(rawCreatedAt)
 	rt.UpdatedAt = helpers.FromTime(rawUpdatedAt)
-	rt.NextOccurrence = computeNextOccurrence(&rt)
+	loc, _ := loadUserTimezone(c.Request.Context(), db, userID)
+	rt.NextOccurrence = computeNextOccurrence(&rt, loc)
 
 	c.JSON(200, rt)
 }
@@ -346,19 +363,32 @@ func UpdateRecurringTransaction(c *gin.Context, db *db.DB) {
 	}
 
 	if req.Frequency != nil {
+		// F.2: changing frequency must also supply the field required by the new
+		// frequency, because the old value in the DB may not be valid for it.
 		if *req.Frequency == "weekly" && len(req.DaysOfWeek) == 0 {
-			c.JSON(400, gin.H{"error": "days_of_week is required for weekly frequency"})
+			c.JSON(400, gin.H{"error": "days_of_week is required when changing frequency to weekly"})
 			return
 		}
 		if *req.Frequency == "monthly" {
 			if req.DayOfMonth == nil {
-				c.JSON(400, gin.H{"error": "day_of_month is required for monthly frequency"})
+				c.JSON(400, gin.H{"error": "day_of_month is required when changing frequency to monthly"})
 				return
 			}
 			if *req.DayOfMonth < 1 || *req.DayOfMonth > 31 {
 				c.JSON(400, gin.H{"error": "day_of_month must be between 1 and 31"})
 				return
 			}
+		}
+
+		// F.1: clear fields that don't apply to the new frequency.
+		switch *req.Frequency {
+		case "daily", "yearly":
+			req.DayOfMonth = nil
+			req.DaysOfWeek = nil
+		case "weekly":
+			req.DayOfMonth = nil
+		case "monthly":
+			req.DaysOfWeek = nil
 		}
 	}
 
@@ -489,7 +519,8 @@ func UpdateRecurringTransaction(c *gin.Context, db *db.DB) {
 	rt.LastAddedDate = helpers.FromTimePtr(rawLastAddedDate)
 	rt.CreatedAt = helpers.FromTime(rawCreatedAt)
 	rt.UpdatedAt = helpers.FromTime(rawUpdatedAt)
-	rt.NextOccurrence = computeNextOccurrence(&rt)
+	loc, _ := loadUserTimezone(c.Request.Context(), db, userID)
+	rt.NextOccurrence = computeNextOccurrence(&rt, loc)
 
 	c.JSON(200, rt)
 }
@@ -529,23 +560,21 @@ func DeleteRecurringTransaction(c *gin.Context, db *db.DB) {
 	c.JSON(200, gin.H{"message": "recurring transaction deleted successfully"})
 }
 
-// computeNextOccurrence populates the NextOccurrence field on a RecurringTransaction
-// after its date fields have been assigned from a DB scan.
-func computeNextOccurrence(rt *RecurringTransaction) *helpers.EpochMillis {
+// computeNextOccurrence returns the next_occurrence for a RecurringTransaction
+// evaluated in the user's timezone `loc`. Pass time.UTC when loc is unavailable.
+func computeNextOccurrence(rt *RecurringTransaction, loc *time.Location) *helpers.EpochMillis {
 	if !rt.IsActive {
 		return nil
+	}
+	if loc == nil {
+		loc = time.UTC
 	}
 	var endDate *time.Time
 	if rt.EndDate != nil {
 		t := rt.EndDate.Time
 		endDate = &t
 	}
-	// Use lastAddedDate as the baseline if set, otherwise startDate
-	baseline := rt.StartDate.Time
-	if rt.LastAddedDate != nil {
-		baseline = rt.LastAddedDate.Time
-	}
-	next := NextFutureOccurrence(baseline, rt.Frequency, rt.DayOfMonth, rt.DaysOfWeek, startOfDay(time.Now()))
+	next := NextFutureOccurrence(rt.StartDate.Time, rt.Frequency, rt.DayOfMonth, rt.DaysOfWeek, startOfDayIn(time.Now(), loc), loc)
 	if next == nil {
 		return nil
 	}

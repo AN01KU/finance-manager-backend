@@ -3,15 +3,22 @@ package sync
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"time"
 
+	"github.com/yanonymousV2/finance-manager-backend/internal/applog"
 	"github.com/yanonymousV2/finance-manager-backend/internal/db"
 )
 
 // hardDeleteAfterDays controls how long invalidated sync_sessions rows linger
 // before being hard-deleted from the table. Without this the table grows
 // unbounded over time (one row per login event per user, forever).
+//
+// 180 days is a deliberate balance: long enough to debug "why did my session
+// get invalidated last month" from the row's invalidation_reason; short
+// enough that the table stays bounded for an active user (~365 / 180 ≈ 2
+// invalidated-row generations per year per device). No regulatory driver;
+// revisit if a forensic / audit requirement asks for longer retention.
 const hardDeleteAfterDays = 180
 
 // StartSessionCleanup runs a background goroutine that:
@@ -22,31 +29,32 @@ const hardDeleteAfterDays = 180
 //
 // It stops when the context is cancelled.
 func StartSessionCleanup(ctx context.Context, database *db.DB, ttlDays int) {
+	logger := slog.Default().With("job", "sync_session_cleanup")
 	ticker := time.NewTicker(24 * time.Hour)
 	go func() {
 		defer ticker.Stop()
 		for {
 			select {
 			case <-ctx.Done():
-				log.Println("[SYNC] session cleanup stopped")
+				logger.Info("session cleanup stopped")
 				return
 			case <-ticker.C:
 				expired, err := expireSessions(ctx, database, ttlDays)
 				if err != nil {
-					log.Printf("[SYNC] session cleanup error: %v", err)
+					logger.Error("session cleanup error", applog.KeyError, err)
 				} else if expired > 0 {
-					log.Printf("[SYNC] session cleanup expired %d sessions (idle ttl=%d days)", expired, ttlDays)
+					logger.Info("session cleanup expired sessions", "expired", expired, "idle_ttl_days", ttlDays)
 				}
 				deleted, err := purgeInvalidatedSessions(ctx, database, hardDeleteAfterDays)
 				if err != nil {
-					log.Printf("[SYNC] session purge error: %v", err)
+					logger.Error("session purge error", applog.KeyError, err)
 				} else if deleted > 0 {
-					log.Printf("[SYNC] session purge hard-deleted %d invalidated rows (>%d days old)", deleted, hardDeleteAfterDays)
+					logger.Info("session purge hard-deleted invalidated rows", "deleted", deleted, "older_than_days", hardDeleteAfterDays)
 				}
 			}
 		}
 	}()
-	log.Printf("✓ Sync session cleanup started (idle TTL=%d days, hard-delete after=%d days)", ttlDays, hardDeleteAfterDays)
+	logger.Info("sync session cleanup started", "idle_ttl_days", ttlDays, "hard_delete_after_days", hardDeleteAfterDays)
 }
 
 // expireSessions invalidates sessions whose last_seen_at is older than

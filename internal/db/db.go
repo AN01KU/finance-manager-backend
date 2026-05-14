@@ -3,7 +3,7 @@ package db
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"time"
 
 	"github.com/golang-migrate/migrate/v4"
@@ -53,29 +53,23 @@ func (db *DB) Close() {
 // custom overrides). Otherwise the embedded migrations are used so the binary
 // works regardless of the working directory.
 func RunMigrations(ctx context.Context, dbURL, migrationsPath string) error {
-	log.Println("  → Creating migration pool connection...")
+	slog.Debug("creating migration pool connection")
 	pool, err := pgxpool.New(ctx, dbURL)
 	if err != nil {
 		return fmt.Errorf("failed to create pool for migration: %w", err)
 	}
-	log.Println("  ✓ Migration pool connected")
 
-	log.Println("  → Pinging database...")
 	if err := pool.Ping(ctx); err != nil {
 		return fmt.Errorf("failed to ping database: %w", err)
 	}
-	log.Println("  ✓ Database ping successful")
 
 	sqlDB := stdlib.OpenDBFromPool(pool)
 
-	log.Println("  → Creating Postgres driver...")
 	driver, err := postgres.WithInstance(sqlDB, &postgres.Config{})
 	if err != nil {
 		return fmt.Errorf("failed to create postgres driver: %w", err)
 	}
-	log.Println("  ✓ Postgres driver created")
 
-	log.Println("  → Initializing migration instance...")
 	var m *migrate.Migrate
 	if migrationsPath != "" {
 		m, err = migrate.NewWithDatabaseInstance(
@@ -91,13 +85,12 @@ func RunMigrations(ctx context.Context, dbURL, migrationsPath string) error {
 	if err != nil {
 		return fmt.Errorf("failed to create migrate instance: %w", err)
 	}
-	log.Println("  ✓ Migration instance initialized")
 
-	log.Println("  → Executing migrations...")
+	slog.Debug("executing migrations")
 	if err := m.Up(); err != nil && err != migrate.ErrNoChange {
 		return fmt.Errorf("failed to run migrations: %w", err)
 	}
-	log.Println("  ✓ All migrations executed successfully")
+	slog.Info("migrations executed")
 
 	// Note: Not closing the migration pool here to avoid deadlocks with the migrate library
 	// The pool will be garbage collected when the function returns

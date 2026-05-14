@@ -68,10 +68,12 @@ func GetMonthlyDashboard(c *gin.Context, db *db.DB) {
 
 	var budgetAmount decimal.Decimal
 	var budget *float64
+	var rawBudget *decimal.Decimal
 	err := db.Pool.QueryRow(c.Request.Context(),
-		`SELECT COALESCE(budget_limit, 0) FROM monthly_budgets WHERE user_id = $1 AND month = $2 AND year = $3`,
-		userID, month, year).Scan(&budgetAmount)
-	if err == nil {
+		`SELECT monthly_budget FROM users WHERE id = $1`, userID,
+	).Scan(&rawBudget)
+	if err == nil && rawBudget != nil {
+		budgetAmount = *rawBudget
 		v := budgetAmount.InexactFloat64()
 		budget = &v
 	}

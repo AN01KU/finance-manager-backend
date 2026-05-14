@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"time"
 )
@@ -48,7 +48,7 @@ type sendResponse struct {
 // Send sends an email. Returns an error if delivery fails.
 func (c *Client) Send(to, subject, html string) error {
 	if !c.Enabled() {
-		log.Printf("[EMAIL] email disabled, would send to=%s subject=%q", to, subject)
+		slog.Info("email disabled, would send", "to", to, "subject", subject)
 		return nil
 	}
 

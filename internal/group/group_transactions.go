@@ -128,83 +128,89 @@ func CreateGroupTransaction(c *gin.Context, database *db.DB) {
 		updatedAt = time.UnixMilli(*req.UpdatedAt).UTC()
 	}
 
-	tx, err := database.Pool.Begin(c.Request.Context())
-	if err != nil {
-		c.JSON(500, gin.H{"error": "failed to start transaction"})
-		return
-	}
-	defer func() { _ = tx.Rollback(c.Request.Context()) }()
-
-	// Upsert group_transaction. The WHERE clause on ON CONFLICT defends against
-	// cross-group UUID collisions: if the row exists but belongs to a different
-	// group, the WHERE filters it out, no row is updated, RETURNING is empty,
-	// and we surface a 409. (Without this, a client could silently overwrite
-	// another group's transaction by reusing its UUID.)
+	// Upsert group_transaction + splits atomically.
 	var gt GroupTransaction
 	var rawGTDate, rawGTCreatedAt, rawGTUpdatedAt time.Time
-	err = tx.QueryRow(c.Request.Context(),
-		`INSERT INTO group_transactions (id, group_id, paid_by_user_id, total_amount, category, date, description, notes, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-		 ON CONFLICT (id) DO UPDATE SET
-		   paid_by_user_id = EXCLUDED.paid_by_user_id,
-		   total_amount = EXCLUDED.total_amount,
-		   category = EXCLUDED.category,
-		   date = EXCLUDED.date,
-		   description = EXCLUDED.description,
-		   notes = EXCLUDED.notes,
-		   is_deleted = FALSE,
-		   updated_at = EXCLUDED.updated_at
-		 WHERE group_transactions.group_id = EXCLUDED.group_id
-		   AND group_transactions.updated_at <= EXCLUDED.updated_at
-		 RETURNING id, group_id, paid_by_user_id, total_amount, category, date, description, notes, is_deleted, created_at, updated_at`,
-		gtID, groupID, req.PaidByUserID, totalAmount, resolvedCategory, gtDate, req.Description, req.Notes, updatedAt,
-	).Scan(
-		&gt.ID, &gt.GroupID, &gt.PaidByUserID, &gt.TotalAmount, &gt.Category, &rawGTDate,
-		&gt.Description, &gt.Notes, &gt.IsDeleted, &rawGTCreatedAt, &rawGTUpdatedAt,
-	)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			// Distinguish: row exists but the WHERE rejected the update.
-			// Either (a) UUID belongs to another group, or (b) the existing
-			// row is newer than this incoming write (stale write). Stale
-			// reject = full no-op (splits untouched, since we return before
-			// applySplitsInPlace).
-			var existingGroupID uuid.UUID
-			var existingUpdatedAt time.Time
-			lookupErr := database.Pool.QueryRow(c.Request.Context(),
-				`SELECT group_id, updated_at FROM group_transactions WHERE id = $1`, gtID,
-			).Scan(&existingGroupID, &existingUpdatedAt)
-			if lookupErr == nil {
-				if existingGroupID != groupID {
-					c.JSON(409, gin.H{"error": "group transaction ID already exists in another group", "code": "ID_OWNED_BY_ANOTHER_GROUP"})
-					return
+	var splits []SplitDetail
+
+	// Sentinel errors for specific 409 cases that need to be surfaced before
+	// the generic 500 fallback.
+	var errIDOwnedByAnotherGroup = errors.New("ID_OWNED_BY_ANOTHER_GROUP")
+	var errStaleWrite = errors.New("STALE_WRITE")
+	var errIDConflict = errors.New("ID_CONFLICT")
+
+	txErr := db.WithTx(c.Request.Context(), database.Pool, func(tx pgx.Tx) error {
+		// Upsert group_transaction. The WHERE clause on ON CONFLICT defends against
+		// cross-group UUID collisions: if the row exists but belongs to a different
+		// group, the WHERE filters it out, no row is updated, RETURNING is empty,
+		// and we surface a 409. (Without this, a client could silently overwrite
+		// another group's transaction by reusing its UUID.)
+		err := tx.QueryRow(c.Request.Context(),
+			`INSERT INTO group_transactions (id, group_id, paid_by_user_id, total_amount, category, date, description, notes, updated_at)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+			 ON CONFLICT (id) DO UPDATE SET
+			   paid_by_user_id = EXCLUDED.paid_by_user_id,
+			   total_amount = EXCLUDED.total_amount,
+			   category = EXCLUDED.category,
+			   date = EXCLUDED.date,
+			   description = EXCLUDED.description,
+			   notes = EXCLUDED.notes,
+			   is_deleted = FALSE,
+			   updated_at = EXCLUDED.updated_at
+			 WHERE group_transactions.group_id = EXCLUDED.group_id
+			   AND group_transactions.updated_at <= EXCLUDED.updated_at
+			 RETURNING id, group_id, paid_by_user_id, total_amount, category, date, description, notes, is_deleted, created_at, updated_at`,
+			gtID, groupID, req.PaidByUserID, totalAmount, resolvedCategory, gtDate, req.Description, req.Notes, updatedAt,
+		).Scan(
+			&gt.ID, &gt.GroupID, &gt.PaidByUserID, &gt.TotalAmount, &gt.Category, &rawGTDate,
+			&gt.Description, &gt.Notes, &gt.IsDeleted, &rawGTCreatedAt, &rawGTUpdatedAt,
+		)
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				// Distinguish: row exists but the WHERE rejected the update.
+				// Either (a) UUID belongs to another group, or (b) the existing
+				// row is newer than this incoming write (stale write). Stale
+				// reject = full no-op (splits untouched, since we return before
+				// applySplitsInPlace).
+				var existingGroupID uuid.UUID
+				var existingUpdatedAt time.Time
+				lookupErr := database.Pool.QueryRow(c.Request.Context(),
+					`SELECT group_id, updated_at FROM group_transactions WHERE id = $1`, gtID,
+				).Scan(&existingGroupID, &existingUpdatedAt)
+				if lookupErr == nil {
+					if existingGroupID != groupID {
+						return errIDOwnedByAnotherGroup
+					}
+					if existingUpdatedAt.After(updatedAt) {
+						return errStaleWrite
+					}
 				}
-				if existingUpdatedAt.After(updatedAt) {
-					c.JSON(409, gin.H{"error": "stale write: a newer version exists on the server", "code": "STALE_WRITE"})
-					return
-				}
+				return errIDConflict
 			}
-			c.JSON(409, gin.H{"error": "group transaction ID conflict"})
-			return
+			return err
 		}
-		c.JSON(500, gin.H{"error": "failed to create group transaction"})
-		return
-	}
-	gt.Date = helpers.FromTime(rawGTDate)
-	gt.CreatedAt = helpers.FromTime(rawGTCreatedAt)
-	gt.UpdatedAt = helpers.FromTime(rawGTUpdatedAt)
+		gt.Date = helpers.FromTime(rawGTDate)
+		gt.CreatedAt = helpers.FromTime(rawGTCreatedAt)
+		gt.UpdatedAt = helpers.FromTime(rawGTUpdatedAt)
 
-	// Apply splits in-place. On first insert this is just N inserts; on
-	// idempotent retry (same id, same group) it becomes upsert + soft-remove,
-	// preserving personal transaction IDs across re-syncs.
-	splits, err := applySplitsInPlace(c.Request.Context(), tx, gt.ID, req.Splits, splitAmounts, resolvedCategory, gtDate, req.Description, req.Notes)
-	if err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
-		return
-	}
-
-	if err := tx.Commit(c.Request.Context()); err != nil {
-		c.JSON(500, gin.H{"error": "failed to commit"})
+		// Apply splits in-place. On first insert this is just N inserts; on
+		// idempotent retry (same id, same group) it becomes upsert + soft-remove,
+		// preserving personal transaction IDs across re-syncs.
+		var splitErr error
+		splits, splitErr = applySplitsInPlace(c.Request.Context(), tx, gt.ID, req.Splits, splitAmounts, resolvedCategory, gtDate, req.Description, req.Notes)
+		return splitErr
+	})
+	if txErr != nil {
+		switch {
+		case errors.Is(txErr, errIDOwnedByAnotherGroup):
+			c.JSON(409, gin.H{"error": "group transaction ID already exists in another group", "code": "ID_OWNED_BY_ANOTHER_GROUP"})
+		case errors.Is(txErr, errStaleWrite):
+			c.JSON(409, gin.H{"error": "stale write: a newer version exists on the server", "code": "STALE_WRITE"})
+		case errors.Is(txErr, errIDConflict):
+			c.JSON(409, gin.H{"error": "group transaction ID conflict"})
+		default:
+			c.JSON(500, gin.H{"error": txErr.Error()})
+		}
 		return
 	}
 
@@ -553,24 +559,26 @@ func UpdateGroupTransaction(c *gin.Context, database *db.DB) {
 		return
 	}
 
-	isMember, err := helpers.IsGroupMember(c.Request.Context(), database, groupID, userID)
-	if err != nil || !isMember {
-		c.JSON(403, gin.H{"error": "not a member of the group"})
-		return
-	}
-
-	// Only the payer can update
-	var paidByUserID uuid.UUID
+	// Authorization: anyone involved (payer OR any split member) can update.
+	// This matches Delete semantics and prevents "immortal transaction" where
+	// the original payer leaves the group.
+	var currentPaidByUserID uuid.UUID
+	var isInvolved bool
 	err = database.Pool.QueryRow(c.Request.Context(),
-		`SELECT paid_by_user_id FROM group_transactions WHERE id = $1 AND group_id = $2`,
-		txID, groupID,
-	).Scan(&paidByUserID)
+		`SELECT gt.paid_by_user_id,
+		        gt.paid_by_user_id = $3
+		        OR EXISTS (SELECT 1 FROM group_transaction_splits s
+		                   WHERE s.group_transaction_id = gt.id AND s.user_id = $3) AS involved
+		 FROM group_transactions gt
+		 WHERE gt.id = $1 AND gt.group_id = $2 AND gt.is_deleted = FALSE`,
+		txID, groupID, userID,
+	).Scan(&currentPaidByUserID, &isInvolved)
 	if err != nil {
 		c.JSON(404, gin.H{"error": "group transaction not found"})
 		return
 	}
-	if paidByUserID != userID {
-		c.JSON(403, gin.H{"error": "only the payer can update this transaction"})
+	if !isInvolved {
+		c.JSON(403, gin.H{"error": "only the payer or someone in the splits can update this transaction"})
 		return
 	}
 
@@ -585,15 +593,42 @@ func UpdateGroupTransaction(c *gin.Context, database *db.DB) {
 		return
 	}
 
-	gtQuery := `UPDATE group_transactions SET updated_at = NOW()`
-	args := []interface{}{}
-	n := 1
+	// LWW: client may supply the version timestamp it's editing from.
+	updatedAt := time.Now()
+	if req.UpdatedAt != nil {
+		updatedAt = time.UnixMilli(*req.UpdatedAt).UTC()
+	}
+
+	// Resolve the effective payer after this update — used for member + currency checks below.
+	effectivePayer := currentPaidByUserID
+	if req.PaidByUserID != nil {
+		effectivePayer = *req.PaidByUserID
+	}
+
+	gtQuery := `UPDATE group_transactions SET updated_at = $1`
+	args := []interface{}{updatedAt}
+	n := 2 // $1 is updatedAt
 
 	// Track which personal-transaction fields need syncing
 	personalQuery := `UPDATE transactions SET updated_at = NOW()`
 	var personalArgs []interface{}
 	pn := 1
 
+	if req.PaidByUserID != nil {
+		// Validate new payer is a current group member.
+		isMember, err := helpers.IsGroupMember(c.Request.Context(), database, groupID, *req.PaidByUserID)
+		if err != nil {
+			c.JSON(500, gin.H{"error": "failed to validate new payer membership"})
+			return
+		}
+		if !isMember {
+			c.JSON(400, gin.H{"error": "paid_by_user_id is not a member of the group"})
+			return
+		}
+		gtQuery += fmt.Sprintf(", paid_by_user_id = $%d", n)
+		args = append(args, *req.PaidByUserID)
+		n++
+	}
 	if req.Category != nil {
 		resolvedCat, err := helpers.ResolveCategoryKey(c.Request.Context(), database.Pool, userID, *req.Category)
 		if err != nil {
@@ -701,10 +736,9 @@ func UpdateGroupTransaction(c *gin.Context, database *db.DB) {
 			return
 		}
 
-		// Mixed-currency reject on splits change: payer (fixed on update) +
-		// every desired split member must share the same users.currency.
-		// Multi-currency support is R2.
-		ccCheck := append([]uuid.UUID{paidByUserID}, uids...)
+		// Mixed-currency reject: effective payer + all split members must share
+		// the same users.currency. Multi-currency support is R2.
+		ccCheck := append([]uuid.UUID{effectivePayer}, uids...)
 		var distinctCurrencies int
 		if err := database.Pool.QueryRow(c.Request.Context(),
 			`SELECT COUNT(DISTINCT currency) FROM users WHERE id = ANY($1)`,
@@ -717,80 +751,102 @@ func UpdateGroupTransaction(c *gin.Context, database *db.DB) {
 			c.JSON(400, gin.H{"error": "group transaction users have different currencies", "code": "MIXED_CURRENCY_GROUP_TX"})
 			return
 		}
+	} else if req.PaidByUserID != nil {
+		// Payer change without splits: re-check currency against existing split members.
+		var distinctCurrencies int
+		if err := database.Pool.QueryRow(c.Request.Context(),
+			`SELECT COUNT(DISTINCT u.currency)
+			 FROM users u
+			 WHERE u.id = $1
+			    OR u.id IN (SELECT user_id FROM group_transaction_splits WHERE group_transaction_id = $2)`,
+			effectivePayer, txID,
+		).Scan(&distinctCurrencies); err != nil {
+			c.JSON(500, gin.H{"error": "failed to validate currencies"})
+			return
+		}
+		if distinctCurrencies > 1 {
+			c.JSON(400, gin.H{"error": "group transaction users have different currencies", "code": "MIXED_CURRENCY_GROUP_TX"})
+			return
+		}
 	}
 
-	if n == 1 && !hasSplits {
+	if n == 2 && !hasSplits {
 		c.JSON(400, gin.H{"error": "no fields to update"})
 		return
 	}
 
-	gtQuery += fmt.Sprintf(` WHERE id = $%d
+	// LWW guard: reject if server row is newer than client's version.
+	// On conflict: follow-up SELECT distinguishes 404 vs STALE_WRITE.
+	gtQuery += fmt.Sprintf(` WHERE id = $%d AND updated_at <= $1
 		RETURNING id, group_id, paid_by_user_id, total_amount, category, date, description, notes, is_deleted, created_at, updated_at`, n)
 	args = append(args, txID)
 
 	personalQuery += fmt.Sprintf(` WHERE group_transaction_id = $%d AND is_deleted = FALSE`, pn)
 	personalArgs = append(personalArgs, txID)
 
-	dbTx, err := database.Pool.Begin(c.Request.Context())
-	if err != nil {
-		c.JSON(500, gin.H{"error": "failed to start transaction"})
-		return
-	}
-	defer func() { _ = dbTx.Rollback(c.Request.Context()) }()
-
 	var gt GroupTransaction
 	var rawDate, rawCreatedAt, rawUpdatedAt time.Time
 
-	if n > 1 {
-		// There are group_transaction fields to update
-		err = dbTx.QueryRow(c.Request.Context(), gtQuery, args...).Scan(
-			&gt.ID, &gt.GroupID, &gt.PaidByUserID, &gt.TotalAmount, &gt.Category, &rawDate,
-			&gt.Description, &gt.Notes, &gt.IsDeleted, &rawCreatedAt, &rawUpdatedAt,
-		)
-		if err != nil {
-			c.JSON(500, gin.H{"error": "failed to update group transaction"})
-			return
-		}
-	} else {
-		// Only splits changed, just fetch the current row
-		err = dbTx.QueryRow(c.Request.Context(),
-			`UPDATE group_transactions SET updated_at = NOW() WHERE id = $1
-			 RETURNING id, group_id, paid_by_user_id, total_amount, category, date, description, notes, is_deleted, created_at, updated_at`,
-			txID,
-		).Scan(
-			&gt.ID, &gt.GroupID, &gt.PaidByUserID, &gt.TotalAmount, &gt.Category, &rawDate,
-			&gt.Description, &gt.Notes, &gt.IsDeleted, &rawCreatedAt, &rawUpdatedAt,
-		)
-		if err != nil {
-			c.JSON(500, gin.H{"error": "failed to update group transaction"})
-			return
-		}
-	}
-	gt.Date = helpers.FromTime(rawDate)
-	gt.CreatedAt = helpers.FromTime(rawCreatedAt)
-	gt.UpdatedAt = helpers.FromTime(rawUpdatedAt)
+	var errUpdateStaleWrite = errors.New("STALE_WRITE")
+	var errUpdateNotFound = errors.New("NOT_FOUND")
 
-	if hasSplits {
-		// Reconcile in place — preserve personal transaction IDs for unchanged
-		// members; insert for new members; soft-delete + remove for removed.
-		splits, err := applySplitsInPlace(c.Request.Context(), dbTx, gt.ID, req.Splits, splitAmounts, gt.Category, rawDate, gt.Description, gt.Notes)
+	txErr := db.WithTx(c.Request.Context(), database.Pool, func(dbTx pgx.Tx) error {
+		err := dbTx.QueryRow(c.Request.Context(), gtQuery, args...).Scan(
+			&gt.ID, &gt.GroupID, &gt.PaidByUserID, &gt.TotalAmount, &gt.Category, &rawDate,
+			&gt.Description, &gt.Notes, &gt.IsDeleted, &rawCreatedAt, &rawUpdatedAt,
+		)
 		if err != nil {
-			c.JSON(500, gin.H{"error": err.Error()})
-			return
+			if errors.Is(err, pgx.ErrNoRows) {
+				// Distinguish 404 vs stale write via follow-up SELECT.
+				var existingUpdatedAt time.Time
+				lookupErr := database.Pool.QueryRow(c.Request.Context(),
+					`SELECT updated_at FROM group_transactions WHERE id = $1 AND group_id = $2 AND is_deleted = FALSE`,
+					txID, groupID,
+				).Scan(&existingUpdatedAt)
+				if lookupErr == nil && req.UpdatedAt != nil && existingUpdatedAt.After(updatedAt) {
+					return errUpdateStaleWrite
+				}
+				return errUpdateNotFound
+			}
+			return err
 		}
-		gt.Splits = splits
-	} else {
-		// Sync the same field changes to linked personal transactions.
-		if len(personalArgs) > 1 {
-			if _, err = dbTx.Exec(c.Request.Context(), personalQuery, personalArgs...); err != nil {
-				c.JSON(500, gin.H{"error": "failed to sync personal transactions"})
-				return
+		gt.Date = helpers.FromTime(rawDate)
+		gt.CreatedAt = helpers.FromTime(rawCreatedAt)
+		gt.UpdatedAt = helpers.FromTime(rawUpdatedAt)
+
+		if hasSplits {
+			// Reconcile in place — preserve personal transaction IDs for unchanged
+			// members; insert for new members; soft-delete + remove for removed.
+			splits, splitErr := applySplitsInPlace(c.Request.Context(), dbTx, gt.ID, req.Splits, splitAmounts, gt.Category, rawDate, gt.Description, gt.Notes)
+			if splitErr != nil {
+				return splitErr
+			}
+			gt.Splits = splits
+		} else {
+			// Sync field changes to linked personal transactions.
+			if len(personalArgs) > 1 {
+				if _, err = dbTx.Exec(c.Request.Context(), personalQuery, personalArgs...); err != nil {
+					return err
+				}
 			}
 		}
-	}
 
-	if err := dbTx.Commit(c.Request.Context()); err != nil {
-		c.JSON(500, gin.H{"error": "failed to commit"})
+		// When paid_by_user_id changes, the old payer's personal expense row (which
+		// is keyed by group_transaction_id but NOT by paid_by_user_id) stays owned
+		// by whoever holds the split for that user. There is no separate "payer
+		// personal tx" — the payer's personal expense is the split row for their
+		// share. No additional sync needed beyond what applySplitsInPlace handles.
+		return nil
+	})
+	if txErr != nil {
+		switch {
+		case errors.Is(txErr, errUpdateStaleWrite):
+			c.JSON(409, gin.H{"error": "stale write: a newer version exists on the server", "code": "STALE_WRITE"})
+		case errors.Is(txErr, errUpdateNotFound):
+			c.JSON(404, gin.H{"error": "group transaction not found"})
+		default:
+			c.JSON(500, gin.H{"error": "failed to update group transaction"})
+		}
 		return
 	}
 
@@ -870,32 +926,19 @@ func DeleteGroupTransaction(c *gin.Context, database *db.DB) {
 		return
 	}
 
-	dbTx, err := database.Pool.Begin(c.Request.Context())
-	if err != nil {
-		c.JSON(500, gin.H{"error": "failed to start transaction"})
-		return
-	}
-	defer func() { _ = dbTx.Rollback(c.Request.Context()) }()
-
-	// Soft-delete all linked personal transactions
-	_, err = dbTx.Exec(c.Request.Context(),
-		`UPDATE transactions SET is_deleted = true, updated_at = NOW()
-		 WHERE group_transaction_id = $1`, txID)
-	if err != nil {
-		c.JSON(500, gin.H{"error": "failed to delete personal transactions"})
-		return
-	}
-
-	// Soft-delete the group transaction
-	_, err = dbTx.Exec(c.Request.Context(),
-		`UPDATE group_transactions SET is_deleted = true, updated_at = NOW() WHERE id = $1`, txID)
-	if err != nil {
+	if err := db.WithTx(c.Request.Context(), database.Pool, func(dbTx pgx.Tx) error {
+		// Soft-delete all linked personal transactions
+		if _, err := dbTx.Exec(c.Request.Context(),
+			`UPDATE transactions SET is_deleted = true, updated_at = NOW()
+			 WHERE group_transaction_id = $1`, txID); err != nil {
+			return err
+		}
+		// Soft-delete the group transaction
+		_, err := dbTx.Exec(c.Request.Context(),
+			`UPDATE group_transactions SET is_deleted = true, updated_at = NOW() WHERE id = $1`, txID)
+		return err
+	}); err != nil {
 		c.JSON(500, gin.H{"error": "failed to delete group transaction"})
-		return
-	}
-
-	if err := dbTx.Commit(c.Request.Context()); err != nil {
-		c.JSON(500, gin.H{"error": "failed to commit"})
 		return
 	}
 

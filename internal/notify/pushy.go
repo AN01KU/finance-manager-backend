@@ -5,12 +5,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/yanonymousV2/finance-manager-backend/internal/applog"
 )
 
 // Client sends push notifications via Pushy.
@@ -104,38 +106,38 @@ func (c *Client) send(tokens []string, data map[string]any, notification *IOSNot
 
 	body, err := json.Marshal(req)
 	if err != nil {
-		log.Printf("[NOTIFY] failed to marshal push request: %v", err)
+		slog.Error("failed to marshal push request", applog.KeyError, err)
 		return
 	}
 
 	url := fmt.Sprintf("https://api.pushy.me/push?api_key=%s", c.apiKey)
 	httpReq, err := http.NewRequest("POST", url, bytes.NewReader(body))
 	if err != nil {
-		log.Printf("[NOTIFY] failed to create push request: %v", err)
+		slog.Error("failed to create push request", applog.KeyError, err)
 		return
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
-		log.Printf("[NOTIFY] push request failed: %v", err)
+		slog.Error("push request failed", applog.KeyError, err)
 		return
 	}
 	defer resp.Body.Close() //nolint:errcheck
 
 	var result pushResponse
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		log.Printf("[NOTIFY] failed to decode push response: %v", err)
+		slog.Error("failed to decode push response", applog.KeyError, err)
 		return
 	}
 
 	if !result.Success && result.Error != "" {
-		log.Printf("[NOTIFY] push failed: %s (%s)", result.Error, result.Code)
+		slog.Error("push delivery failed", "pushy_error", result.Error, "pushy_code", result.Code)
 		return
 	}
 
 	if len(result.Info.Failed) > 0 {
-		log.Printf("[NOTIFY] %d tokens failed delivery, cleaning up", len(result.Info.Failed))
+		slog.Warn("push tokens failed delivery, cleaning up", "failed_tokens", len(result.Info.Failed))
 		c.removeInvalidTokens(result.Info.Failed)
 	}
 }

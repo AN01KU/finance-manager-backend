@@ -3,26 +3,30 @@ package recurring
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 
+	"github.com/yanonymousV2/finance-manager-backend/internal/applog"
 	"github.com/yanonymousV2/finance-manager-backend/internal/db"
 )
 
-// GenerateDueTransactions checks all active recurring transactions for the
-// given user and inserts EVERY missed transaction instance between the rule's
-// last fire (or start_date) and `now`, evaluated in the user's timezone.
+// GenerateDueTransactions fires today's recurring transactions for the given
+// user, evaluated in the user's timezone. It inserts at most one transaction
+// per rule per scheduler tick (today's occurrence only).
 //
 // Idempotency:
 //   - Inserts use ON CONFLICT (user_id, recurring_transaction_id, date) DO
 //     NOTHING so a re-run never duplicates.
-//   - Dates present in recurring_skipped_occurrences (populated when the user
-//     manually deletes a generated instance) are filtered out so the user's
-//     intentional deletes are respected.
+//   - Dates present in recurring_skipped_occurrences are skipped so the user's
+//     intentional manual deletes are respected.
 //
-// Called by the scheduler tick and on demand from GET /transactions.
+// Catch-up for missed past occurrences is handled by the admin backfill
+// endpoint (POST /admin/recurring/:id/backfill), not by this scheduler tick.
+//
+// Called by the scheduler tick.
 func GenerateDueTransactions(ctx context.Context, userID uuid.UUID, database *db.DB, now time.Time) error {
 	loc, err := loadUserTimezone(ctx, database, userID)
 	if err != nil {
@@ -32,7 +36,7 @@ func GenerateDueTransactions(ctx context.Context, userID uuid.UUID, database *db
 
 	rows, err := database.Pool.Query(ctx,
 		`SELECT id, type, name, amount, category, frequency, day_of_month, days_of_week,
-		        start_date, end_date, last_added_date
+		        start_date, end_date
 		 FROM recurring_transactions
 		 WHERE user_id = $1 AND is_active = true`,
 		userID)
@@ -42,17 +46,16 @@ func GenerateDueTransactions(ctx context.Context, userID uuid.UUID, database *db
 	defer rows.Close()
 
 	type recurringRow struct {
-		id            uuid.UUID
-		txType        string
-		name          string
-		amount        decimal.Decimal
-		category      string
-		frequency     string
-		dayOfMonth    *int
-		daysOfWeek    []int32
-		startDate     time.Time
-		endDate       *time.Time
-		lastAddedDate *time.Time
+		id         uuid.UUID
+		txType     string
+		name       string
+		amount     decimal.Decimal
+		category   string
+		frequency  string
+		dayOfMonth *int
+		daysOfWeek []int32
+		startDate  time.Time
+		endDate    *time.Time
 	}
 
 	var recs []recurringRow
@@ -61,7 +64,7 @@ func GenerateDueTransactions(ctx context.Context, userID uuid.UUID, database *db
 		if err := rows.Scan(
 			&r.id, &r.txType, &r.name, &r.amount, &r.category,
 			&r.frequency, &r.dayOfMonth, &r.daysOfWeek,
-			&r.startDate, &r.endDate, &r.lastAddedDate,
+			&r.startDate, &r.endDate,
 		); err != nil {
 			return fmt.Errorf("scan recurring: %w", err)
 		}
@@ -75,78 +78,70 @@ func GenerateDueTransactions(ctx context.Context, userID uuid.UUID, database *db
 			dow[i] = int(v)
 		}
 
-		dates := allMissedOccurrences(r.startDate, r.frequency, r.dayOfMonth, dow, r.lastAddedDate, today, loc)
-		if r.endDate != nil {
-			endDay := startOfDayIn(*r.endDate, loc)
-			filtered := dates[:0]
-			for _, d := range dates {
-				if !d.After(endDay) {
-					filtered = append(filtered, d)
-				}
-			}
-			dates = filtered
+		if !firesToday(r.startDate, r.frequency, r.dayOfMonth, dow, today, loc) {
+			continue
 		}
-		if len(dates) == 0 {
+		if r.endDate != nil && today.After(startOfDayIn(*r.endDate, loc)) {
 			continue
 		}
 
-		// Filter out dates the user previously deleted manually.
+		// Skip if the user manually deleted this occurrence.
 		skipped, err := loadSkippedDates(ctx, database, r.id)
 		if err != nil {
 			return fmt.Errorf("load skipped for recurring %s: %w", r.id, err)
 		}
-		var toGenerate []time.Time
-		for _, d := range dates {
-			if _, isSkipped := skipped[d.Format("2006-01-02")]; isSkipped {
-				continue
-			}
-			toGenerate = append(toGenerate, d)
-		}
-		if len(toGenerate) == 0 {
+		if _, isSkipped := skipped[today.Format("2006-01-02")]; isSkipped {
 			continue
 		}
 
-		tx, err := database.Pool.Begin(ctx)
-		if err != nil {
-			return fmt.Errorf("begin tx for recurring %s: %w", r.id, err)
-		}
-
-		for _, d := range toGenerate {
-			txID := uuid.New()
-			_, err = tx.Exec(ctx,
-				`INSERT INTO transactions (id, user_id, type, amount, category, date, description, notes, recurring_transaction_id, updated_at)
-				 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
-				 ON CONFLICT (user_id, recurring_transaction_id, date) WHERE recurring_transaction_id IS NOT NULL DO NOTHING`,
-				txID, userID, r.txType, r.amount, r.category, d, r.name, nil, r.id,
-			)
-			if err != nil {
-				_ = tx.Rollback(ctx)
-				return fmt.Errorf("insert transaction for recurring %s: %w", r.id, err)
-			}
-		}
-
-		// Bump last_added_date to the latest generated date so the next tick
-		// starts strictly after it. GREATEST guards against rare out-of-order
-		// concurrent inserts (e.g. on-demand generation racing the scheduler).
-		latest := toGenerate[len(toGenerate)-1]
-		_, err = tx.Exec(ctx,
-			`UPDATE recurring_transactions
-			 SET last_added_date = GREATEST(COALESCE(last_added_date, '-infinity'::timestamptz), $1),
-			     updated_at = NOW()
-			 WHERE id = $2`,
-			latest, r.id,
+		txID := uuid.New()
+		_, err = database.Pool.Exec(ctx,
+			`INSERT INTO transactions (id, user_id, type, amount, category, date, description, notes, recurring_transaction_id, updated_at)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+			 ON CONFLICT (user_id, recurring_transaction_id, date) WHERE recurring_transaction_id IS NOT NULL DO NOTHING`,
+			txID, userID, r.txType, r.amount, r.category, today, r.name, nil, r.id,
 		)
 		if err != nil {
-			_ = tx.Rollback(ctx)
-			return fmt.Errorf("update last_added_date for recurring %s: %w", r.id, err)
-		}
-
-		if err := tx.Commit(ctx); err != nil {
-			return fmt.Errorf("commit tx for recurring %s: %w", r.id, err)
+			return fmt.Errorf("insert transaction for recurring %s: %w", r.id, err)
 		}
 	}
 
 	return nil
+}
+
+// firesToday reports whether a recurring rule fires on `today` (in `loc`).
+// `today` must already be the start-of-day in `loc`.
+func firesToday(startDate time.Time, frequency string, dayOfMonth *int, daysOfWeek []int, today time.Time, loc *time.Location) bool {
+	if loc == nil {
+		loc = time.UTC
+	}
+	startDay := startOfDayIn(startDate, loc)
+	if today.Before(startDay) {
+		return false
+	}
+	switch frequency {
+	case "daily":
+		return true
+	case "weekly":
+		if len(daysOfWeek) == 0 {
+			// Fallback: every 7 days from start_date.
+			diff := int(today.Sub(startDay).Hours() / 24)
+			return diff%7 == 0
+		}
+		return containsInt(daysOfWeek, int(today.Weekday()))
+	case "monthly":
+		td := startDay.Day()
+		if dayOfMonth != nil {
+			td = *dayOfMonth
+		}
+		fire := resolveMonthDay(today.Year(), today.Month(), td, loc)
+		return fire.Equal(today)
+	case "yearly":
+		fire := resolveMonthDay(today.Year(), startDay.Month(), startDay.Day(), loc)
+		return fire.Equal(today)
+	default:
+		return false
+	}
 }
 
 // loadUserTimezone looks up the user's IANA timezone and resolves it to a
@@ -163,6 +158,10 @@ func loadUserTimezone(ctx context.Context, database *db.DB, userID uuid.UUID) (*
 	}
 	loc, err := time.LoadLocation(tzName)
 	if err != nil || loc == nil {
+		// Stored timezone unparseable (e.g. tzdata change). Warn and degrade
+		// to UTC so the user's recurring transactions still fire today.
+		slog.Warn("user timezone unparseable, falling back to UTC for recurring generation",
+			applog.KeyUserID, userID, "timezone", tzName, applog.KeyError, err)
 		return time.UTC, nil
 	}
 	return loc, nil
@@ -350,11 +349,20 @@ func nextOccurrence(startDate time.Time, frequency string, dayOfMonth *int, days
 	return &last
 }
 
-// NextFutureOccurrence returns the next occurrence strictly after `today`.
-// Used for the API response's next_occurrence field. UTC-only — the response
-// is informational and doesn't drive generation.
-func NextFutureOccurrence(startDate time.Time, frequency string, dayOfMonth *int, daysOfWeek []int, today time.Time) *time.Time {
-	return nextOccurrenceAfter(startDate, frequency, dayOfMonth, daysOfWeek, today, time.UTC)
+// MissedOccurrences returns every date the rule should have fired on or before
+// `today` that hasn't been generated yet (strictly after `lastAdded` when set).
+// All comparisons use `loc`; pass time.UTC when no timezone context is available.
+// This is the exported version of allMissedOccurrences for use by callers outside
+// this package (e.g. the admin backfill endpoint).
+func MissedOccurrences(startDate time.Time, frequency string, dayOfMonth *int, daysOfWeek []int, lastAdded *time.Time, today time.Time, loc *time.Location) []time.Time {
+	return allMissedOccurrences(startDate, frequency, dayOfMonth, daysOfWeek, lastAdded, today, loc)
+}
+
+// NextFutureOccurrence returns the next occurrence strictly after `today` in
+// the given timezone. Used for the API response's next_occurrence field.
+// Pass time.UTC when the caller has no timezone context.
+func NextFutureOccurrence(startDate time.Time, frequency string, dayOfMonth *int, daysOfWeek []int, today time.Time, loc *time.Location) *time.Time {
+	return nextOccurrenceAfter(startDate, frequency, dayOfMonth, daysOfWeek, today, loc)
 }
 
 // nextOccurrenceAfter returns the first occurrence strictly greater than
