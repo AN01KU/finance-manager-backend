@@ -65,7 +65,7 @@ type GroupTransaction struct {
 
 type SplitDetail struct {
 	ID            uuid.UUID  `json:"id"`
-	UserID        uuid.UUID  `json:"user_id"`
+	UserID        *uuid.UUID `json:"user_id"`
 	Amount        float64    `json:"amount"`
 	TransactionID *uuid.UUID `json:"transaction_id,omitempty"`
 }
