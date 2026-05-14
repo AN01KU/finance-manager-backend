@@ -41,7 +41,7 @@ func New(pool *pgxpool.Pool, jwtSecret string) *Portal {
 	dir := filepath.Join("internal", "portal", "templates")
 	layout := filepath.Join(dir, "layout.html")
 
-	pages := []string{"dashboard", "transactions", "groups", "group_detail", "categories", "recurring", "profile"}
+	pages := []string{"dashboard", "transactions", "groups", "group_detail", "categories", "recurring", "budgets", "profile"}
 	tmpls := make(map[string]*template.Template, len(pages)+1)
 	for _, page := range pages {
 		tmpls[page] = template.Must(template.ParseFiles(layout, filepath.Join(dir, page+".html")))
