@@ -315,7 +315,7 @@ func TestLogin_BumpsTokenInvalidationButNewJWTSurvives(t *testing.T) {
 	assert.True(t,
 		claims.IssuedAt.After(*afterBump),
 		"new JWT IssuedAt (%s) must be After bumped tokens_invalidated_after (%s)",
-		claims.IssuedAt.Time.Format(time.RFC3339Nano),
+		claims.IssuedAt.Format(time.RFC3339Nano),
 		afterBump.Format(time.RFC3339Nano),
 	)
 }
