@@ -3,12 +3,13 @@ package notify
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 
+	"github.com/yanonymousV2/finance-manager-backend/internal/applog"
 	"github.com/yanonymousV2/finance-manager-backend/internal/db"
 	"github.com/yanonymousV2/finance-manager-backend/internal/helpers"
 )
@@ -48,12 +49,13 @@ func shouldSendReminder(balance, threshold decimal.Decimal, daysOutstanding, min
 // once per day and sends push notifications to users with overdue balances.
 // It stops when ctx is cancelled.
 func StartSettlementReminders(ctx context.Context, database *db.DB, push *Client, cfg ReminderConfig) {
+	logger := slog.Default().With("job", "settlement_reminders")
 	if !push.Enabled() {
-		log.Println("[REMINDERS] push notifications disabled — settlement reminders inactive")
+		logger.Info("push notifications disabled — settlement reminders inactive")
 		return
 	}
 	if cfg.ThresholdAmount.IsZero() {
-		log.Println("[REMINDERS] threshold is zero — settlement reminders inactive")
+		logger.Info("threshold is zero — settlement reminders inactive")
 		return
 	}
 
@@ -61,31 +63,34 @@ func StartSettlementReminders(ctx context.Context, database *db.DB, push *Client
 	go func() {
 		defer ticker.Stop()
 		// Run once at startup.
-		sendOverdueReminders(ctx, database, push, cfg)
+		sendOverdueReminders(ctx, database, push, cfg, logger)
 		for {
 			select {
 			case <-ctx.Done():
-				log.Println("[REMINDERS] settlement reminder job stopped")
+				logger.Info("settlement reminder job stopped")
 				return
 			case <-ticker.C:
-				sendOverdueReminders(ctx, database, push, cfg)
+				sendOverdueReminders(ctx, database, push, cfg, logger)
 			}
 		}
 	}()
-	log.Printf("✓ Settlement reminders started (threshold=%s, min_days=%d, every 24h)",
-		cfg.ThresholdAmount, cfg.DaysOutstanding)
+	logger.Info("settlement reminders started",
+		"threshold", cfg.ThresholdAmount.String(),
+		"min_days", cfg.DaysOutstanding,
+		"interval", "24h",
+	)
 }
 
 // sendOverdueReminders queries all active groups, computes per-member balances,
 // and fires a reminder push for any member that meets the threshold criteria.
-func sendOverdueReminders(ctx context.Context, database *db.DB, push *Client, cfg ReminderConfig) {
+func sendOverdueReminders(ctx context.Context, database *db.DB, push *Client, cfg ReminderConfig, logger *slog.Logger) {
 	rows, err := database.Pool.Query(ctx,
 		`SELECT DISTINCT gm.group_id, g.name
 		 FROM group_members gm
 		 JOIN groups g ON gm.group_id = g.id
 		 WHERE g.is_deleted = FALSE`)
 	if err != nil {
-		log.Printf("[REMINDERS] failed to query groups: %v", err)
+		logger.Error("failed to query groups", applog.KeyError, err)
 		return
 	}
 
@@ -97,7 +102,7 @@ func sendOverdueReminders(ctx context.Context, database *db.DB, push *Client, cf
 	for rows.Next() {
 		var gr groupRow
 		if err := rows.Scan(&gr.id, &gr.name); err != nil {
-			log.Printf("[REMINDERS] failed to scan group: %v", err)
+			logger.Error("failed to scan group", applog.KeyError, err)
 			rows.Close()
 			return
 		}
@@ -105,7 +110,7 @@ func sendOverdueReminders(ctx context.Context, database *db.DB, push *Client, cf
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
-		log.Printf("[REMINDERS] group query error: %v", err)
+		logger.Error("group query error", applog.KeyError, err)
 		return
 	}
 
@@ -123,7 +128,7 @@ func sendOverdueReminders(ctx context.Context, database *db.DB, push *Client, cf
 				'-infinity'::timestamptz
 			)`, g.id).Scan(&lastActivity)
 		if err != nil {
-			log.Printf("[REMINDERS] failed to get last activity for group %s: %v", g.id, err)
+			logger.Error("failed to get last activity", applog.KeyGroupID, g.id, applog.KeyError, err)
 			continue
 		}
 
@@ -133,7 +138,7 @@ func sendOverdueReminders(ctx context.Context, database *db.DB, push *Client, cf
 		memberRows, err := database.Pool.Query(ctx,
 			`SELECT user_id FROM group_members WHERE group_id = $1`, g.id)
 		if err != nil {
-			log.Printf("[REMINDERS] failed to get members for group %s: %v", g.id, err)
+			logger.Error("failed to get members", applog.KeyGroupID, g.id, applog.KeyError, err)
 			continue
 		}
 
@@ -141,7 +146,7 @@ func sendOverdueReminders(ctx context.Context, database *db.DB, push *Client, cf
 		for memberRows.Next() {
 			var uid uuid.UUID
 			if err := memberRows.Scan(&uid); err != nil {
-				log.Printf("[REMINDERS] failed to scan member: %v", err)
+				logger.Error("failed to scan member", applog.KeyGroupID, g.id, applog.KeyError, err)
 				memberRows.Close()
 				break
 			}
@@ -149,14 +154,14 @@ func sendOverdueReminders(ctx context.Context, database *db.DB, push *Client, cf
 		}
 		memberRows.Close()
 		if err := memberRows.Err(); err != nil {
-			log.Printf("[REMINDERS] member query error for group %s: %v", g.id, err)
+			logger.Error("member query error", applog.KeyGroupID, g.id, applog.KeyError, err)
 			continue
 		}
 
 		for _, uid := range memberIDs {
 			balance, err := helpers.GetUserGroupBalance(ctx, database, g.id, uid)
 			if err != nil {
-				log.Printf("[REMINDERS] failed to get balance for user %s in group %s: %v", uid, g.id, err)
+				logger.Error("failed to get balance", applog.KeyUserID, uid, applog.KeyGroupID, g.id, applog.KeyError, err)
 				continue
 			}
 
@@ -175,8 +180,12 @@ func sendOverdueReminders(ctx context.Context, database *db.DB, push *Client, cf
 				Sound: "default",
 			})
 
-			log.Printf("[REMINDERS] sent reminder to user %s in group %s (balance=%s, days=%d)",
-				uid, g.id, balance, daysOutstanding)
+			logger.Info("sent settlement reminder",
+				applog.KeyUserID, uid,
+				applog.KeyGroupID, g.id,
+				"balance", balance.String(),
+				"days_outstanding", daysOutstanding,
+			)
 		}
 	}
 }

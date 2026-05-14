@@ -3,11 +3,13 @@ package recurring
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 
+	"github.com/yanonymousV2/finance-manager-backend/internal/applog"
 	"github.com/yanonymousV2/finance-manager-backend/internal/db"
 )
 
@@ -156,6 +158,10 @@ func loadUserTimezone(ctx context.Context, database *db.DB, userID uuid.UUID) (*
 	}
 	loc, err := time.LoadLocation(tzName)
 	if err != nil || loc == nil {
+		// Stored timezone unparseable (e.g. tzdata change). Warn and degrade
+		// to UTC so the user's recurring transactions still fire today.
+		slog.Warn("user timezone unparseable, falling back to UTC for recurring generation",
+			applog.KeyUserID, userID, "timezone", tzName, applog.KeyError, err)
 		return time.UTC, nil
 	}
 	return loc, nil

@@ -2,13 +2,13 @@ package sync
 
 import (
 	"errors"
-	"log"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/yanonymousV2/finance-manager-backend/internal/applog"
 	"github.com/yanonymousV2/finance-manager-backend/internal/db"
 )
 
@@ -26,11 +26,11 @@ const (
 func checkSyncVersion(c *gin.Context) {
 	version := c.GetHeader("X-Sync-Version")
 	if version == "" {
-		log.Printf("[WARN] X-Sync-Version header missing, path=%s", c.Request.URL.Path)
+		applog.From(c).Warn("X-Sync-Version header missing", "path", c.Request.URL.Path)
 		return
 	}
 	if version != currentSyncVersion {
-		log.Printf("[WARN] X-Sync-Version unrecognised, version=%s path=%s", version, c.Request.URL.Path)
+		applog.From(c).Warn("X-Sync-Version unrecognised", "version", version, "path", c.Request.URL.Path)
 	}
 }
 
@@ -64,27 +64,28 @@ func ValidateSession(c *gin.Context, database *db.DB, syncSessionID uuid.UUID, j
 		syncSessionID,
 	).Scan(&sessionUserID, &invalidatedAt, &createdAt)
 
+	logger := applog.From(c)
 	if errors.Is(err, pgx.ErrNoRows) {
-		log.Printf("[SYNC] sync_session_not_found session_id=%s", syncSessionID)
+		logger.Warn("sync session not found", "sync_session_id", syncSessionID)
 		return false, ReasonNotFound, false
 	}
 	if err != nil {
 		// Transient DB error — caller should let the client retry rather than
 		// trash its offline queue.
-		log.Printf("[SYNC] sync_session_transient session_id=%s err=%v", syncSessionID, err)
+		logger.Error("sync session transient error", "sync_session_id", syncSessionID, applog.KeyError, err)
 		return false, ReasonTransient, true
 	}
 	if invalidatedAt != nil {
 		ageDays := int(time.Since(createdAt).Hours() / 24)
-		log.Printf("[SYNC] sync_session_expired session_id=%s session_age_days=%d", syncSessionID, ageDays)
+		logger.Info("sync session expired", "sync_session_id", syncSessionID, "session_age_days", ageDays)
 		return false, ReasonExpired, false
 	}
 	if sessionUserID != jwtUserID {
-		log.Printf("[SYNC] sync_session_mismatch jwt_user_id=%s session_user_id=%s session_id=%s", jwtUserID, sessionUserID, syncSessionID)
+		logger.Warn("sync session mismatch", "jwt_user_id", jwtUserID, "session_user_id", sessionUserID, "sync_session_id", syncSessionID)
 		return false, ReasonMismatch, false
 	}
 
-	log.Printf("[SYNC] sync_preflight_ok session_id=%s user_id=%s", syncSessionID, jwtUserID)
+	logger.Debug("sync preflight ok", "sync_session_id", syncSessionID, applog.KeyUserID, jwtUserID)
 	return true, "", false
 }
 
@@ -154,7 +155,7 @@ func SyncSessionGuard(database *db.DB) gin.HandlerFunc {
 			`UPDATE sync_sessions SET last_seen_at = now() WHERE id = $1`,
 			syncSessionID,
 		); err != nil {
-			log.Printf("[SYNC] failed to refresh last_seen_at session_id=%s err=%v", syncSessionID, err)
+			applog.From(c).Warn("failed to refresh sync session last_seen_at", "sync_session_id", syncSessionID, applog.KeyError, err)
 		}
 
 		c.Next()

@@ -3,7 +3,6 @@ package transaction
 import (
 	"errors"
 	"fmt"
-	"log"
 	"strconv"
 	"time"
 
@@ -13,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/shopspring/decimal"
 
+	"github.com/yanonymousV2/finance-manager-backend/internal/applog"
 	"github.com/yanonymousV2/finance-manager-backend/internal/db"
 	"github.com/yanonymousV2/finance-manager-backend/internal/helpers"
 	"github.com/yanonymousV2/finance-manager-backend/internal/middleware"
@@ -166,7 +166,7 @@ func CreateTransaction(c *gin.Context, database *db.DB) {
 			c.JSON(409, gin.H{"error": "transaction ID conflict"})
 			return
 		}
-		log.Printf("[ERROR] CreateTransaction: %v", err)
+		applog.From(c).Error("create transaction failed", applog.KeyError, err)
 		c.JSON(500, gin.H{"error": "failed to create transaction"})
 		return
 	}
@@ -287,7 +287,7 @@ func ListTransactions(c *gin.Context, database *db.DB) {
 
 	rows, err := database.Pool.Query(c.Request.Context(), query, args...)
 	if err != nil {
-		log.Printf("[ERROR] ListTransactions query: %v", err)
+		applog.From(c).Error("list transactions query failed", applog.KeyError, err)
 		c.JSON(500, gin.H{"error": "failed to retrieve transactions"})
 		return
 	}
@@ -305,7 +305,7 @@ func ListTransactions(c *gin.Context, database *db.DB) {
 			&tx.IsDeleted, &rawCreatedAt, &rawUpdatedAt,
 			&total,
 		); err != nil {
-			log.Printf("[ERROR] ListTransactions scan: %v", err)
+			applog.From(c).Error("list transactions scan failed", applog.KeyError, err)
 			c.JSON(500, gin.H{"error": "failed to scan transaction"})
 			return
 		}
@@ -315,7 +315,7 @@ func ListTransactions(c *gin.Context, database *db.DB) {
 		txs = append(txs, tx)
 	}
 	if err := rows.Err(); err != nil {
-		log.Printf("[ERROR] ListTransactions rows: %v", err)
+		applog.From(c).Error("list transactions rows iteration failed", applog.KeyError, err)
 		c.JSON(500, gin.H{"error": "database iteration failed"})
 		return
 	}
@@ -565,7 +565,7 @@ func DeleteTransaction(c *gin.Context, database *db.DB) {
 			 ON CONFLICT DO NOTHING`,
 			*recurringTxID, txDate,
 		); err != nil {
-			log.Printf("[WARN] failed to record recurring skip for tx %s: %v", id, err)
+			applog.From(c).Warn("failed to record recurring skip", "transaction_id", id, applog.KeyError, err)
 			// Non-fatal: even if the skip row insert fails, the user's delete
 			// already happened. Worst case the next tick regenerates one row.
 		}

@@ -5,12 +5,13 @@ package seed
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 
+	"github.com/yanonymousV2/finance-manager-backend/internal/applog"
 	"github.com/yanonymousV2/finance-manager-backend/internal/db"
 )
 
@@ -46,7 +47,7 @@ var seededUserIDs = []uuid.UUID{UserAnkushID, UserPriyaID, UserRahulID, UserSara
 // Seed inserts all test data into the database.
 // It is idempotent — safe to call on every startup.
 func Seed(ctx context.Context, database *db.DB) error {
-	log.Println("[seed] Seeding test data...")
+	slog.Info("seed: seeding test data")
 
 	now := time.Now()
 	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.Local)
@@ -83,7 +84,7 @@ func Seed(ctx context.Context, database *db.DB) error {
 			return fmt.Errorf("insert user %s: %w", u.email, err)
 		}
 	}
-	log.Println("[seed] ✓ Users")
+	slog.Debug("seed: users created")
 
 	// ── Sync sessions ─────────────────────────────────────────────────────────
 	syncSessions := []struct {
@@ -103,7 +104,7 @@ func Seed(ctx context.Context, database *db.DB) error {
 			return fmt.Errorf("insert sync session for user %s: %w", ss.userID, err)
 		}
 	}
-	log.Println("[seed] ✓ Sync sessions")
+	slog.Debug("seed: sync sessions created")
 
 	// ── Category overrides & custom categories ────────────────────────────────
 	// Predefined categories live in the predefined_categories table — rows here
@@ -154,14 +155,14 @@ func Seed(ctx context.Context, database *db.DB) error {
 			return fmt.Errorf("insert category %s: %w", cc.name, err)
 		}
 	}
-	log.Println("[seed] ✓ Categories")
+	slog.Debug("seed: categories created")
 
 	// ── Budget (Ankush) ────────────────────────────────────────────────────────
 	if _, err := database.Pool.Exec(ctx,
 		`UPDATE users SET monthly_budget = 30000.00 WHERE id = $1`, UserAnkushID); err != nil {
 		return fmt.Errorf("set budget: %w", err)
 	}
-	log.Println("[seed] ✓ Budget")
+	slog.Debug("seed: budget created")
 
 	// ── Recurring transactions (Ankush) ────────────────────────────────────────
 	recs := []struct {
@@ -197,7 +198,7 @@ func Seed(ctx context.Context, database *db.DB) error {
 			return fmt.Errorf("insert recurring %s: %w", r.name, err)
 		}
 	}
-	log.Println("[seed] ✓ Recurring transactions")
+	slog.Debug("seed: recurring transactions created")
 
 	// ── Personal transactions (Ankush) ─────────────────────────────────────────
 	// type: 'expense' or 'income'
@@ -264,7 +265,7 @@ func Seed(ctx context.Context, database *db.DB) error {
 			return fmt.Errorf("insert transaction %s: %w", t.description, err)
 		}
 	}
-	log.Println("[seed] ✓ Personal transactions")
+	slog.Debug("seed: personal transactions created")
 
 	// ── Groups ─────────────────────────────────────────────────────────────────
 	for _, g := range []struct {
@@ -296,7 +297,7 @@ func Seed(ctx context.Context, database *db.DB) error {
 			return fmt.Errorf("insert group member: %w", err)
 		}
 	}
-	log.Println("[seed] ✓ Groups & members")
+	slog.Debug("seed: groups and members created")
 
 	// ── Group transactions with splits ─────────────────────────────────────────
 	type splitInput struct {
@@ -407,7 +408,7 @@ func Seed(ctx context.Context, database *db.DB) error {
 			}
 		}
 	}
-	log.Println("[seed] ✓ Group transactions & splits")
+	slog.Debug("seed: group transactions and splits created")
 
 	// ── Settlements ────────────────────────────────────────────────────────────
 	type settlementRow struct {
@@ -469,15 +470,15 @@ func Seed(ctx context.Context, database *db.DB) error {
 			return fmt.Errorf("insert settlement expense tx: %w", err)
 		}
 	}
-	log.Println("[seed] ✓ Settlements")
+	slog.Debug("seed: settlements created")
 
-	log.Println("[seed] ✓ All test data seeded successfully")
+	slog.Info("seed: all test data seeded successfully")
 	return nil
 }
 
 // Cleanup removes all seeded test data. Called on graceful shutdown.
 func Cleanup(ctx context.Context, database *db.DB) {
-	log.Println("[seed] Cleaning up test data...")
+	slog.Info("seed: cleaning up test data")
 
 	userIDStrs := make([]string, len(seededUserIDs))
 	for i, id := range seededUserIDs {
@@ -504,11 +505,11 @@ func Cleanup(ctx context.Context, database *db.DB) {
 
 	for _, sql := range cleanupSQL {
 		if _, err := database.Pool.Exec(ctx, sql); err != nil {
-			log.Printf("[seed] Warning: cleanup query failed: %v\nSQL: %s", err, sql)
+			slog.Warn("seed: cleanup query failed", applog.KeyError, err, "sql", sql)
 		}
 	}
 
-	log.Println("[seed] ✓ Test data cleaned up")
+	slog.Info("seed: test data cleaned up")
 }
 
 func intPtr(v int) *int { return &v }

@@ -68,6 +68,7 @@ docker-compose up --build
 | `TOMBSTONE_RETENTION_DAYS` | No | `30` | Days to keep soft-deleted category tombstones before hard-purging; clients use tombstones to purge stale overrides |
 | `REMINDER_THRESHOLD_AMOUNT` | No | `20.0` | Minimum outstanding balance (absolute value) before a settlement reminder is sent |
 | `REMINDER_DAYS_OUTSTANDING` | No | `7` | Minimum days since last group activity before a settlement reminder fires |
+| `LOG_LEVEL` | No | `info` | Minimum slog level: `debug`, `info`, `warn`, `error` (case-insensitive); unrecognised values fall back to `info` |
 
 Migrations run automatically on startup via `golang-migrate`. No manual migration step needed.
 

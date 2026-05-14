@@ -7,7 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
-	"log"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"path/filepath"
@@ -22,6 +22,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/yanonymousV2/finance-manager-backend/internal/applog"
 	"github.com/yanonymousV2/finance-manager-backend/internal/category"
 	"github.com/yanonymousV2/finance-manager-backend/internal/recurring"
 )
@@ -208,7 +209,7 @@ func (a *Admin) RegisterRoutes(r *gin.Engine, rateLimiter gin.HandlerFunc) {
 func (a *Admin) generateSession() string {
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
-		log.Printf("admin: failed to generate session: %v", err)
+		slog.Error("admin: failed to generate session", applog.KeyError, err)
 		return ""
 	}
 	return hex.EncodeToString(b)
@@ -852,7 +853,7 @@ func (a *Admin) recurringBackfill(c *gin.Context) {
 			 ON CONFLICT (user_id, recurring_transaction_id, date) WHERE recurring_transaction_id IS NOT NULL DO NOTHING`,
 			txID, userID, txType, amount, txCategory, fireDate, name, ruleID)
 		if err != nil {
-			log.Printf("admin: backfill insert error for rule %s date %s: %v", ruleID, fireDate.Format("2006-01-02"), err)
+			applog.From(c).Error("admin: backfill insert error", "recurring_id", ruleID, "fire_date", fireDate.Format("2006-01-02"), applog.KeyError, err)
 			continue
 		}
 		if tag.RowsAffected() > 0 {
@@ -1140,7 +1141,7 @@ func (a *Admin) rowDelete(c *gin.Context) {
 	query := fmt.Sprintf("DELETE FROM %s WHERE %s", quoteIdent(table), strings.Join(whereParts, " AND "))
 	_, err := a.pool.Exec(c.Request.Context(), query, args...)
 	if err != nil {
-		log.Printf("admin: delete error: %v", err)
+		applog.From(c).Error("admin: delete row failed", "table", table, applog.KeyError, err)
 		c.Redirect(http.StatusFound, "/admin/tables/"+table+"?error="+url.QueryEscape(err.Error()))
 		return
 	}
@@ -1823,12 +1824,12 @@ func (a *Admin) render(c *gin.Context, name string, data gin.H) {
 	key := strings.TrimSuffix(name, ".html")
 	tmpl, ok := a.tmpls[key]
 	if !ok {
-		log.Printf("admin: unknown template %q", key)
+		applog.From(c).Error("admin: unknown template", "template", key)
 		c.String(500, "Unknown template: %s", key)
 		return
 	}
 	if err := tmpl.ExecuteTemplate(c.Writer, "layout", data); err != nil {
-		log.Printf("admin: template error (%s): %v", name, err)
+		applog.From(c).Error("admin: template execute failed", "template", name, applog.KeyError, err)
 		c.String(500, "Template error: %v", err)
 	}
 }

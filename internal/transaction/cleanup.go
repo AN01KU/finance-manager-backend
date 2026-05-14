@@ -3,9 +3,10 @@ package transaction
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"time"
 
+	"github.com/yanonymousV2/finance-manager-backend/internal/applog"
 	"github.com/yanonymousV2/finance-manager-backend/internal/db"
 )
 
@@ -15,35 +16,39 @@ import (
 //
 // It stops when the context is cancelled.
 func StartSoftDeleteCleanup(ctx context.Context, database *db.DB, tombstoneRetentionDays int) {
+	logger := slog.Default().With("job", "transaction_soft_delete_cleanup")
 	ticker := time.NewTicker(24 * time.Hour)
 	go func() {
 		defer ticker.Stop()
 		// Run once immediately on startup, then on each tick.
-		if err := purgeSoftDeleted(ctx, database); err != nil {
-			log.Printf("[TRANSACTION] soft-delete cleanup error: %v", err)
+		if err := purgeSoftDeleted(ctx, database, logger); err != nil {
+			logger.Error("soft-delete cleanup error", applog.KeyError, err)
 		}
-		if err := purgeCategoryTombstones(ctx, database, tombstoneRetentionDays); err != nil {
-			log.Printf("[TRANSACTION] category tombstone purge error: %v", err)
+		if err := purgeCategoryTombstones(ctx, database, tombstoneRetentionDays, logger); err != nil {
+			logger.Error("category tombstone purge error", applog.KeyError, err)
 		}
 		for {
 			select {
 			case <-ctx.Done():
-				log.Println("[TRANSACTION] soft-delete cleanup stopped")
+				logger.Info("soft-delete cleanup stopped")
 				return
 			case <-ticker.C:
-				if err := purgeSoftDeleted(ctx, database); err != nil {
-					log.Printf("[TRANSACTION] soft-delete cleanup error: %v", err)
+				if err := purgeSoftDeleted(ctx, database, logger); err != nil {
+					logger.Error("soft-delete cleanup error", applog.KeyError, err)
 				}
-				if err := purgeCategoryTombstones(ctx, database, tombstoneRetentionDays); err != nil {
-					log.Printf("[TRANSACTION] category tombstone purge error: %v", err)
+				if err := purgeCategoryTombstones(ctx, database, tombstoneRetentionDays, logger); err != nil {
+					logger.Error("category tombstone purge error", applog.KeyError, err)
 				}
 			}
 		}
 	}()
-	log.Printf("✓ Transaction soft-delete cleanup started (TTL=1 day, category tombstones=%d days)", tombstoneRetentionDays)
+	logger.Info("transaction soft-delete cleanup started",
+		"ttl_days", 1,
+		"category_tombstone_retention_days", tombstoneRetentionDays,
+	)
 }
 
-func purgeCategoryTombstones(ctx context.Context, database *db.DB, retentionDays int) error {
+func purgeCategoryTombstones(ctx context.Context, database *db.DB, retentionDays int, logger *slog.Logger) error {
 	tag, err := database.Pool.Exec(ctx,
 		`DELETE FROM custom_categories
 		 WHERE is_deleted = TRUE
@@ -54,12 +59,12 @@ func purgeCategoryTombstones(ctx context.Context, database *db.DB, retentionDays
 		return fmt.Errorf("purge category tombstones: %w", err)
 	}
 	if tag.RowsAffected() > 0 {
-		log.Printf("[TRANSACTION] purged %d category tombstones (>%d days old)", tag.RowsAffected(), retentionDays)
+		logger.Info("purged category tombstones", "count", tag.RowsAffected(), "older_than_days", retentionDays)
 	}
 	return nil
 }
 
-func purgeSoftDeleted(ctx context.Context, database *db.DB) error {
+func purgeSoftDeleted(ctx context.Context, database *db.DB, logger *slog.Logger) error {
 	// Order: delete the most-dependent tables first so FK CASCADE / SET NULL
 	// doesn't fight us on shared rows.
 	//   transactions     → may reference settlements / group_transactions / groups (SET NULL on FK)
@@ -107,8 +112,12 @@ func purgeSoftDeleted(ctx context.Context, database *db.DB) error {
 	settleCount := settleTag.RowsAffected()
 	groupCount := groupTag.RowsAffected()
 	if txCount > 0 || gtCount > 0 || settleCount > 0 || groupCount > 0 {
-		log.Printf("[TRANSACTION] purged %d transactions, %d group_transactions, %d settlements, %d groups",
-			txCount, gtCount, settleCount, groupCount)
+		logger.Info("purged soft-deleted rows",
+			"transactions", txCount,
+			"group_transactions", gtCount,
+			"settlements", settleCount,
+			"groups", groupCount,
+		)
 	}
 	return nil
 }

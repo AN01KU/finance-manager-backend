@@ -4,7 +4,6 @@ import (
 	"crypto/subtle"
 	"fmt"
 	"html/template"
-	"log"
 	"math"
 	"net/http"
 	"path/filepath"
@@ -18,6 +17,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/crypto/bcrypt"
 
+	"github.com/yanonymousV2/finance-manager-backend/internal/applog"
 	"github.com/yanonymousV2/finance-manager-backend/internal/category"
 	"github.com/yanonymousV2/finance-manager-backend/internal/recurring"
 	"github.com/yanonymousV2/finance-manager-backend/internal/user"
@@ -565,7 +565,7 @@ func (p *Portal) groupsPage(c *gin.Context) {
 		 WHERE gm.user_id=$1 AND g.is_deleted=FALSE
 		 ORDER BY g.created_at DESC`, u.ID)
 	if err != nil {
-		log.Printf("[PORTAL] groupsPage: %v", err)
+		applog.From(c).Error("portal: groupsPage failed", applog.KeyError, err)
 		p.render(c, "groups", gin.H{"Title": "Groups", "Active": "groups"})
 		return
 	}
@@ -798,7 +798,7 @@ func (p *Portal) categoriesPage(c *gin.Context) {
 	predRows, err := p.pool.Query(c.Request.Context(),
 		`SELECT key, name, icon, color FROM predefined_categories WHERE is_hidden = FALSE ORDER BY name ASC`)
 	if err != nil {
-		log.Printf("[PORTAL] categoriesPage predefined: %v", err)
+		applog.From(c).Error("portal: categoriesPage predefined query failed", applog.KeyError, err)
 		p.render(c, "categories", gin.H{"Title": "Categories", "Active": "categories"})
 		return
 	}
@@ -829,7 +829,7 @@ func (p *Portal) categoriesPage(c *gin.Context) {
 		 GROUP BY cc.name, cc.icon, cc.color, cc.is_predefined, cc.is_hidden, cc.predefined_key
 		 ORDER BY cc.name ASC`, u.ID)
 	if err != nil {
-		log.Printf("[PORTAL] categoriesPage user rows: %v", err)
+		applog.From(c).Error("portal: categoriesPage user query failed", applog.KeyError, err)
 		p.render(c, "categories", gin.H{"Title": "Categories", "Active": "categories"})
 		return
 	}
@@ -938,7 +938,7 @@ func (p *Portal) recurringPage(c *gin.Context) {
 		        last_added_date, start_date, end_date, day_of_month, days_of_week
 		 FROM recurring_transactions WHERE user_id=$1 ORDER BY is_active DESC, name ASC`, u.ID)
 	if err != nil {
-		log.Printf("[PORTAL] recurringPage: %v", err)
+		applog.From(c).Error("portal: recurringPage failed", applog.KeyError, err)
 		p.render(c, "recurring", gin.H{"Title": "Recurring", "Active": "recurring"})
 		return
 	}
@@ -1172,7 +1172,7 @@ func (p *Portal) render(c *gin.Context, name string, data gin.H) {
 	c.Writer.Header().Set("Content-Type", "text/html; charset=utf-8")
 	tmpl, ok := p.tmpls[name]
 	if !ok {
-		log.Printf("[PORTAL] unknown template %q", name)
+		applog.From(c).Error("portal: unknown template", "template", name)
 		c.String(500, "Unknown template: %s", name)
 		return
 	}
@@ -1181,7 +1181,7 @@ func (p *Portal) render(c *gin.Context, name string, data gin.H) {
 	data["Email"] = u.Email
 	data["CurrencySymbol"] = u.CurrencySymbol
 	if err := tmpl.ExecuteTemplate(c.Writer, "layout", data); err != nil {
-		log.Printf("[PORTAL] template error (%s): %v", name, err)
+		applog.From(c).Error("portal: template execute failed", "template", name, applog.KeyError, err)
 		c.String(500, "Template error: %v", err)
 	}
 }
@@ -1189,6 +1189,6 @@ func (p *Portal) render(c *gin.Context, name string, data gin.H) {
 func (p *Portal) renderLogin(c *gin.Context, errMsg string) {
 	c.Writer.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := p.tmpls["login"].Execute(c.Writer, gin.H{"Error": errMsg}); err != nil {
-		log.Printf("[PORTAL] login template error: %v", err)
+		applog.From(c).Error("portal: login template execute failed", applog.KeyError, err)
 	}
 }

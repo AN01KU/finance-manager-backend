@@ -282,6 +282,15 @@ func CreateCategory(c *gin.Context, d *db.DB) {
 func createPredefinedOverride(c *gin.Context, d *db.DB, userID uuid.UUID, req CreateCategoryRequest) {
 	key := *req.PredefinedKey
 
+	// The "other" category is the catch-all bucket and cannot be hidden.
+	if key == ProtectedKey && req.IsHidden != nil && *req.IsHidden {
+		c.JSON(400, gin.H{
+			"error": fmt.Sprintf("the %q category cannot be hidden", ProtectedKey),
+			"code":  "PROTECTED_CATEGORY",
+		})
+		return
+	}
+
 	// Look up the predefined defaults. is_hidden = TRUE means the admin has
 	// retired the category from user-facing surfaces — reject the override.
 	var def predefinedRow
@@ -463,6 +472,13 @@ func UpdateCategory(c *gin.Context, d *db.DB) {
 			c.JSON(404, gin.H{"error": "category not found"})
 			return
 		}
+		if matched.Key == ProtectedKey && req.IsHidden != nil && *req.IsHidden {
+			c.JSON(400, gin.H{
+				"error": fmt.Sprintf("the %q category cannot be hidden", ProtectedKey),
+				"code":  "PROTECTED_CATEGORY",
+			})
+			return
+		}
 
 		name := matched.Name
 		icon := matched.Icon
@@ -506,6 +522,20 @@ func UpdateCategory(c *gin.Context, d *db.DB) {
 	if ownerID != userID {
 		c.JSON(403, gin.H{"error": "not authorized to update this category"})
 		return
+	}
+
+	// Guard: the "other" predefined category cannot be hidden via an existing override row.
+	if req.IsHidden != nil && *req.IsHidden {
+		var predKey *string
+		_ = d.Pool.QueryRow(c.Request.Context(),
+			`SELECT predefined_key FROM custom_categories WHERE id = $1`, categoryID).Scan(&predKey)
+		if predKey != nil && *predKey == ProtectedKey {
+			c.JSON(400, gin.H{
+				"error": fmt.Sprintf("the %q category cannot be hidden", ProtectedKey),
+				"code":  "PROTECTED_CATEGORY",
+			})
+			return
+		}
 	}
 
 	// Existing DB row — build dynamic update.

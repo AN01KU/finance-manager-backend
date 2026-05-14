@@ -9,6 +9,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 
+	"github.com/yanonymousV2/finance-manager-backend/internal/applog"
 	"github.com/yanonymousV2/finance-manager-backend/internal/db"
 	"github.com/yanonymousV2/finance-manager-backend/internal/user"
 )
@@ -87,6 +88,7 @@ func JWTAuth(jwtSecret string, database *db.DB, cache *JWTRevocationCache) gin.H
 
 		c.Set("user_id", claims.UserID)
 		c.Set("email", claims.Email)
+		applog.With(c, applog.From(c).With(applog.KeyUserID, claims.UserID))
 		c.Next()
 	}
 }

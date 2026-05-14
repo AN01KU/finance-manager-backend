@@ -2,7 +2,7 @@ package main
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -16,6 +16,7 @@ import (
 	"github.com/shopspring/decimal"
 
 	"github.com/yanonymousV2/finance-manager-backend/internal/admin"
+	"github.com/yanonymousV2/finance-manager-backend/internal/applog"
 	"github.com/yanonymousV2/finance-manager-backend/internal/auth"
 	"github.com/yanonymousV2/finance-manager-backend/internal/budget"
 	"github.com/yanonymousV2/finance-manager-backend/internal/category"
@@ -37,17 +38,20 @@ import (
 func main() {
 	// Load .env file
 	if err := godotenv.Load(); err != nil {
-		log.Println("No .env file found, using system environment variables")
+		slog.Info("no .env file found, using system environment variables")
 	}
 
 	cfg := config.Load()
+
+	// Initialise structured logging now that we know the desired level.
+	applog.Init(cfg.LogLevel)
+
 	if err := cfg.Validate(gin.Mode()); err != nil {
-		log.Fatal("Config validation failed: ", err)
+		slog.Error("config validation failed", applog.KeyError, err)
+		os.Exit(1)
 	}
 
-	log.Println("==============================================")
-	log.Println("Finance Manager Backend starting...")
-	log.Println("==============================================")
+	slog.Info("finance manager backend starting", "mode", gin.Mode())
 
 	// Initialize Sentry for error tracking (optional — skipped if SENTRY_DSN is empty)
 	if cfg.SentryDSN != "" {
@@ -56,36 +60,38 @@ func main() {
 			Environment:      gin.Mode(),
 			TracesSampleRate: 0.2,
 		}); err != nil {
-			log.Printf("Warning: Sentry initialization failed: %v", err)
+			slog.Warn("sentry initialization failed", applog.KeyError, err)
 		} else {
 			defer sentry.Flush(2 * time.Second)
-			log.Println("✓ Sentry error tracking enabled")
+			slog.Info("sentry error tracking enabled")
 		}
 	}
 
 	ctx, ctxCancel := context.WithCancel(context.Background())
 
 	// Connect to DB
-	log.Println("Connecting to database...")
+	slog.Info("connecting to database")
 	database, err := db.New(ctx, cfg.DBURL, cfg.DBMaxConns, cfg.DBMinConns)
 	if err != nil {
-		log.Fatal("Failed to connect to database:", err)
+		slog.Error("failed to connect to database", applog.KeyError, err)
+		os.Exit(1)
 	}
-	log.Println("✓ Database connection established")
+	slog.Info("database connection established")
 
 	// Run migrations — use embedded FS by default; override with MIGRATION_PATH env var.
-	log.Println("Running database migrations...")
+	slog.Info("running database migrations")
 	migrationsPath := os.Getenv("MIGRATION_PATH")
 	if err := db.RunMigrations(ctx, cfg.DBURL, migrationsPath); err != nil {
-		log.Fatal("Failed to run migrations:", err)
+		slog.Error("failed to run migrations", applog.KeyError, err)
+		os.Exit(1)
 	}
-	log.Println("✓ Migrations completed successfully")
+	slog.Info("migrations completed")
 
 	// Seed test data (development only)
 	if gin.Mode() != gin.ReleaseMode {
-		log.Println("Seeding test data...")
+		slog.Info("seeding test data")
 		if err := seed.Seed(ctx, database); err != nil {
-			log.Printf("Warning: failed to seed test data: %v", err)
+			slog.Warn("failed to seed test data", applog.KeyError, err)
 		}
 	}
 
@@ -97,7 +103,7 @@ func main() {
 	// Initialize push notification client (optional — disabled if PUSHY_API_KEY is empty)
 	pushClient := notify.New(cfg.PushyAPIKey, database.Pool)
 	if pushClient.Enabled() {
-		log.Println("✓ Push notifications enabled (Pushy)")
+		slog.Info("push notifications enabled (Pushy)")
 	}
 
 	// Start settlement reminder background job
@@ -111,8 +117,10 @@ func main() {
 	// Disable trusted proxy headers unless explicitly configured.
 	// Set TRUSTED_PROXIES env var to a comma-separated CIDR list when behind a load balancer.
 	if err := r.SetTrustedProxies(nil); err != nil {
-		log.Fatal("Failed to set trusted proxies:", err)
+		slog.Error("failed to set trusted proxies", applog.KeyError, err)
+		os.Exit(1)
 	}
+	r.Use(middleware.RequestID())        // must come first so every downstream log entry has request_id
 	r.Use(middleware.BodyLimit(1 << 20)) // 1 MiB max request body
 	r.Use(middleware.SecurityHeaders())
 	if cfg.SentryDSN != "" {
@@ -151,7 +159,7 @@ func main() {
 	// Email client (optional — disabled if RESEND_API_KEY is empty)
 	emailClient := email.New(cfg.ResendAPIKey, cfg.FromEmail)
 	if emailClient.Enabled() {
-		log.Println("✓ Email delivery enabled (Resend)")
+		slog.Info("email delivery enabled (Resend)")
 	}
 
 	// JWT-revocation cache: ~10s TTL skips the per-request SELECT against
@@ -265,18 +273,17 @@ func main() {
 	}
 
 	go func() {
-		log.Println("==============================================")
-		log.Printf("🚀 Server listening on http://localhost:%s", cfg.Port)
-		log.Println("==============================================")
+		slog.Info("server listening", "url", "http://localhost:"+cfg.Port)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatal("Failed to start server:", err)
+			slog.Error("failed to start server", applog.KeyError, err)
+			os.Exit(1)
 		}
 	}()
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
-	log.Println("Shutting down server...")
+	slog.Info("shutting down server")
 
 	// Correct shutdown order: cancel background jobs first, then drain HTTP,
 	// then close DB so no background goroutine touches the pool after Close().
@@ -286,7 +293,8 @@ func main() {
 	defer cancel()
 
 	if err := srv.Shutdown(shutdownCtx); err != nil {
-		log.Fatal("Server forced to shutdown:", err)
+		slog.Error("server forced to shutdown", applog.KeyError, err)
+		os.Exit(1)
 	}
 
 	// Cleanup test data (development only)
@@ -295,5 +303,5 @@ func main() {
 	}
 
 	database.Close()
-	log.Println("Server exited gracefully")
+	slog.Info("server exited gracefully")
 }
