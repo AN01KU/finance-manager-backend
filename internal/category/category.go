@@ -336,19 +336,18 @@ func createPredefinedOverride(c *gin.Context, d *db.DB, userID uuid.UUID, req Cr
 	err = d.Pool.QueryRow(c.Request.Context(),
 		`INSERT INTO custom_categories (id, user_id, name, icon, color, is_hidden, is_predefined, predefined_key, key)
 		 VALUES ($1, $2, $3, $4, $5, $6, TRUE, $7, $8)
+		 ON CONFLICT (id) DO UPDATE
+		   SET name = EXCLUDED.name,
+		       icon = EXCLUDED.icon,
+		       color = EXCLUDED.color,
+		       is_hidden = EXCLUDED.is_hidden,
+		       is_deleted = FALSE,
+		       updated_at = NOW()
 		 RETURNING id, key, user_id, name, icon, color, is_hidden, is_predefined, predefined_key, created_at, updated_at`,
 		overrideID, userID, name, icon, color, isHidden, def.Key, overrideKey).Scan(
 		&cat.ID, &cat.Key, &cat.UserID, &cat.Name, &cat.Icon, &cat.Color,
 		&cat.IsHidden, &cat.IsPredefined, &cat.PredefinedKey, &rawCreatedAt, &rawUpdatedAt)
 	if err != nil {
-		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
-			c.JSON(409, gin.H{
-				"error": fmt.Sprintf("an override for predefined category %q already exists; use PATCH /categories/:id to update it", def.Key),
-				"code":  "OVERRIDE_ALREADY_EXISTS",
-			})
-			return
-		}
 		c.JSON(500, gin.H{"error": "failed to create category override"})
 		return
 	}
