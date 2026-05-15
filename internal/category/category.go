@@ -539,7 +539,9 @@ func UpdateCategory(c *gin.Context, d *db.DB) {
 	}
 
 	// Existing DB row — build dynamic update.
-	query := `UPDATE custom_categories SET `
+	// Always clear is_deleted so that PATCHing a soft-deleted predefined override
+	// resurrects it rather than silently updating a row that the list won't return.
+	query := `UPDATE custom_categories SET is_deleted = FALSE, `
 	args := []interface{}{}
 	argCount := 1
 	if req.Name != nil {
